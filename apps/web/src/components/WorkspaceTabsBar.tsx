@@ -1253,6 +1253,9 @@ function displayTabFor(
     library: 'Library',
     brands: t('entry.navBrands'),
     integrations: t('entry.navIntegrations'),
+    database: t('entry.navDatabase'),
+    apps: t('entry.navApps'),
+    organization: t('entry.navOrganization'),
   };
   const entryIcon: Record<EntryHomeView, IconName> = {
     home: 'home',
@@ -1264,6 +1267,9 @@ function displayTabFor(
     library: 'image',
     brands: 'blocks',
     integrations: 'link',
+    database: 'layout',
+    apps: 'blocks',
+    organization: 'orbit',
   };
   return {
     id: tab.id,

@@ -2853,3 +2853,324 @@ export async function fetchLibraryConnection(): Promise<LibraryConnectionStatus 
     return null;
   }
 }
+
+// --- Organizations, apps, and the organization database --------------------
+
+import type {
+  AppShareLink,
+  AppShareLinkCreatedResponse,
+  AuthContextResponse,
+  CreateAppShareLinkRequest,
+  CreateOrgInviteRequest,
+  CreateWorkspaceRecordRequest,
+  CreateWorkspaceTableRequest,
+  OrgApp,
+  OrgInvite,
+  OrgInviteCreatedResponse,
+  OrgInvitePreview,
+  OrgMember,
+  OrgRole,
+  OrganizationMembershipView,
+  PublishAppRequest,
+  QueryWorkspaceRecordsRequest,
+  UpdateAppRequest,
+  UpdateWorkspaceRecordRequest,
+  WorkspaceAuditEventsResponse,
+  WorkspaceRecord,
+  WorkspaceRecordRevision,
+  WorkspaceTable,
+} from '@open-design/contracts';
+import { activeOrgIdForRequests } from '../org/OrgContext';
+
+/** Every org-scoped call carries the active organization, so the daemon and
+ * the UI can never disagree about which organization a request meant. */
+function orgHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const orgId = activeOrgIdForRequests();
+  return { ...(orgId ? { 'x-od-org': orgId } : {}), ...extra };
+}
+
+async function workspaceDataJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const resp = await fetch(url, {
+    ...init,
+    headers: orgHeaders((init.headers ?? {}) as Record<string, string>),
+  });
+  if (!resp.ok) {
+    let message = `HTTP ${resp.status}`;
+    try {
+      const body = (await resp.json()) as { error?: { message?: string } | string };
+      message =
+        typeof body.error === 'string' ? body.error : (body.error?.message ?? message);
+    } catch {
+      // keep the status fallback
+    }
+    throw new Error(message);
+  }
+  return (await resp.json()) as T;
+}
+
+const jsonBody = (body: unknown): RequestInit => ({
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+export async function fetchAuthContext(): Promise<AuthContextResponse> {
+  return workspaceDataJson<AuthContextResponse>('/api/auth/context');
+}
+
+export async function fetchOrganizations(): Promise<OrganizationMembershipView[]> {
+  const json = await workspaceDataJson<{ organizations: OrganizationMembershipView[] }>('/api/orgs');
+  return json.organizations;
+}
+
+export async function createOrganization(name: string): Promise<{ id: string; name: string } | null> {
+  const json = await workspaceDataJson<{ organization: { id: string; name: string } }>('/api/orgs', {
+    method: 'POST',
+    ...jsonBody({ name }),
+  });
+  return json.organization;
+}
+
+export async function renameOrganization(orgId: string, name: string): Promise<void> {
+  await workspaceDataJson(`/api/orgs/${encodeURIComponent(orgId)}`, {
+    method: 'PATCH',
+    ...jsonBody({ name }),
+  });
+}
+
+export async function fetchOrgMembers(orgId: string): Promise<OrgMember[]> {
+  const json = await workspaceDataJson<{ members: OrgMember[] }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/members`,
+  );
+  return json.members;
+}
+
+export async function updateOrgMemberRole(
+  orgId: string,
+  memberId: string,
+  role: OrgRole,
+): Promise<OrgMember> {
+  const json = await workspaceDataJson<{ member: OrgMember }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
+    { method: 'PATCH', ...jsonBody({ role }) },
+  );
+  return json.member;
+}
+
+export async function removeOrgMember(orgId: string, memberId: string): Promise<OrgMember> {
+  const json = await workspaceDataJson<{ member: OrgMember }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
+    { method: 'DELETE' },
+  );
+  return json.member;
+}
+
+export async function fetchOrgInvites(orgId: string): Promise<OrgInvite[]> {
+  const json = await workspaceDataJson<{ invites: OrgInvite[] }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/invites`,
+  );
+  return json.invites;
+}
+
+export async function createOrgInvite(
+  orgId: string,
+  request: CreateOrgInviteRequest = {},
+): Promise<OrgInviteCreatedResponse> {
+  return workspaceDataJson<OrgInviteCreatedResponse>(
+    `/api/orgs/${encodeURIComponent(orgId)}/invites`,
+    { method: 'POST', ...jsonBody(request) },
+  );
+}
+
+export async function revokeOrgInvite(orgId: string, inviteId: string): Promise<OrgInvite> {
+  const json = await workspaceDataJson<{ invite: OrgInvite }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/revoke`,
+    { method: 'POST' },
+  );
+  return json.invite;
+}
+
+export async function fetchInvitePreview(token: string): Promise<OrgInvitePreview> {
+  return workspaceDataJson<OrgInvitePreview>(`/api/invites/${encodeURIComponent(token)}`);
+}
+
+export async function acceptInvite(token: string): Promise<{ organization: { id: string; name: string } }> {
+  return workspaceDataJson(`/api/invites/${encodeURIComponent(token)}/accept`, { method: 'POST' });
+}
+
+// --- Apps -----------------------------------------------------------------
+
+export async function fetchOrgApps(orgId: string): Promise<OrgApp[]> {
+  const json = await workspaceDataJson<{ apps: OrgApp[] }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps`,
+  );
+  return json.apps;
+}
+
+export async function publishApp(orgId: string, request: PublishAppRequest): Promise<OrgApp> {
+  const json = await workspaceDataJson<{ app: OrgApp }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps`,
+    { method: 'POST', ...jsonBody(request) },
+  );
+  return json.app;
+}
+
+export async function updateOrgApp(
+  orgId: string,
+  appId: string,
+  request: UpdateAppRequest,
+): Promise<OrgApp> {
+  const json = await workspaceDataJson<{ app: OrgApp }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}`,
+    { method: 'PATCH', ...jsonBody(request) },
+  );
+  return json.app;
+}
+
+export async function recordOrgAppOpen(orgId: string, appId: string): Promise<void> {
+  await workspaceDataJson(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/open`,
+    { method: 'POST' },
+  );
+}
+
+export async function fetchAppShareLinks(orgId: string, appId: string): Promise<AppShareLink[]> {
+  const json = await workspaceDataJson<{ shares: AppShareLink[] }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/shares`,
+  );
+  return json.shares;
+}
+
+export async function createAppShareLink(
+  orgId: string,
+  appId: string,
+  request: CreateAppShareLinkRequest = {},
+): Promise<AppShareLinkCreatedResponse> {
+  return workspaceDataJson<AppShareLinkCreatedResponse>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/shares`,
+    { method: 'POST', ...jsonBody(request) },
+  );
+}
+
+export async function revokeAppShareLink(
+  orgId: string,
+  appId: string,
+  shareId: string,
+): Promise<AppShareLink> {
+  const json = await workspaceDataJson<{ share: AppShareLink }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/shares/${encodeURIComponent(shareId)}/revoke`,
+    { method: 'POST' },
+  );
+  return json.share;
+}
+
+export async function fetchWorkspaceTables(orgId: string): Promise<WorkspaceTable[]> {
+  const json = await workspaceDataJson<{ tables: WorkspaceTable[] }>(
+    `/api/data/orgs/${encodeURIComponent(orgId)}/tables`,
+  );
+  return json.tables;
+}
+
+export async function createWorkspaceTable(
+  orgId: string,
+  request: CreateWorkspaceTableRequest,
+): Promise<WorkspaceTable> {
+  const json = await workspaceDataJson<{ table: WorkspaceTable }>(
+    `/api/data/orgs/${encodeURIComponent(orgId)}/tables`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+  );
+  return json.table;
+}
+
+export async function queryWorkspaceRecords(
+  orgId: string,
+  tableRef: string,
+  request: QueryWorkspaceRecordsRequest = {},
+): Promise<{ records: WorkspaceRecord[]; nextCursor: string | null }> {
+  return workspaceDataJson(
+    `/api/data/orgs/${encodeURIComponent(orgId)}/tables/${encodeURIComponent(tableRef)}/records/query`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function createWorkspaceRecord(
+  orgId: string,
+  tableRef: string,
+  request: CreateWorkspaceRecordRequest,
+): Promise<WorkspaceRecord> {
+  const json = await workspaceDataJson<{ record: WorkspaceRecord }>(
+    `/api/data/orgs/${encodeURIComponent(orgId)}/tables/${encodeURIComponent(tableRef)}/records`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+  );
+  return json.record;
+}
+
+export async function updateWorkspaceRecord(
+  orgId: string,
+  recordId: string,
+  request: UpdateWorkspaceRecordRequest,
+): Promise<WorkspaceRecord> {
+  const json = await workspaceDataJson<{ record: WorkspaceRecord }>(
+    `/api/data/orgs/${encodeURIComponent(orgId)}/records/${encodeURIComponent(recordId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+  );
+  return json.record;
+}
+
+export async function softDeleteWorkspaceRecord(
+  orgId: string,
+  recordId: string,
+): Promise<WorkspaceRecord> {
+  const json = await workspaceDataJson<{ record: WorkspaceRecord }>(
+    `/api/data/orgs/${encodeURIComponent(orgId)}/records/${encodeURIComponent(recordId)}/soft-delete`,
+    { method: 'POST' },
+  );
+  return json.record;
+}
+
+export async function restoreWorkspaceRecord(
+  orgId: string,
+  recordId: string,
+): Promise<WorkspaceRecord> {
+  const json = await workspaceDataJson<{ record: WorkspaceRecord }>(
+    `/api/data/orgs/${encodeURIComponent(orgId)}/records/${encodeURIComponent(recordId)}/restore`,
+    { method: 'POST' },
+  );
+  return json.record;
+}
+
+export async function fetchWorkspaceRecordRevisions(
+  orgId: string,
+  recordId: string,
+): Promise<WorkspaceRecordRevision[]> {
+  const json = await workspaceDataJson<{ revisions: WorkspaceRecordRevision[] }>(
+    `/api/data/orgs/${encodeURIComponent(orgId)}/records/${encodeURIComponent(recordId)}/revisions`,
+  );
+  return json.revisions;
+}
+
+export async function fetchWorkspaceAuditEvents(
+  orgId: string,
+  options: { tableId?: string; limit?: number } = {},
+): Promise<WorkspaceAuditEventsResponse> {
+  const query = new URLSearchParams();
+  if (options.tableId) query.set('tableId', options.tableId);
+  if (options.limit) query.set('limit', String(options.limit));
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  return workspaceDataJson(`/api/data/orgs/${encodeURIComponent(orgId)}/audit${suffix}`);
+}

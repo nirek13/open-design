@@ -1,0 +1,255 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebarHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebarTitle {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.tableList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tableBtn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.tableBtn:hover {
+  background: var(--od-surface-2, rgba(127, 127, 127, 0.12));
+}
+
+.tableBtnActive {
+  background: var(--od-surface-2, rgba(127, 127, 127, 0.16));
+  border-color: var(--od-border, rgba(127, 127, 127, 0.28));
+}
+
+.tableBtnName {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tableBtnMeta {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.panelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.panelTitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.panelActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
+  border-radius: 10px;
+}
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.grid th,
+.grid td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--od-border, rgba(127, 127, 127, 0.16));
+  white-space: nowrap;
+}
+
+.grid th {
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
+
+.grid tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.rowDeleted td {
+  opacity: 0.5;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.3));
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.rowActions {
+  display: flex;
+  gap: 6px;
+}
+
+.empty {
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  opacity: 0.65;
+}
+
+.error {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--od-danger-border, rgba(220, 80, 80, 0.4));
+  background: var(--od-danger-surface, rgba(220, 80, 80, 0.08));
+  font-size: 13px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
+  border-radius: 10px;
+}
+
+.formRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.formRow input[type='text'],
+.formRow select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.32));
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+}
+
+.formRow label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.drawerTitle {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.timelineItem {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+
+.timelineOp {
+  font-weight: 600;
+}
+
+.timelineMeta {
+  opacity: 0.6;
+}

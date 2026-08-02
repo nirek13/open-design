@@ -230,6 +230,11 @@ export interface Project {
   // pick a plugin they already selected.
   appliedPluginSnapshotId?: string;
   customInstructions?: string;
+  /** Owning organization. Null for projects created before organizations
+   * existed, or on a single-user install that never made one; those stay
+   * visible to everyone on the machine. Server-assigned — a client cannot
+   * move a project between organizations by sending this field. */
+  orgId?: string | null;
 }
 
 export interface ProjectTemplate {

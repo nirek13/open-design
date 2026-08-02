@@ -3420,7 +3420,11 @@ describe('FileViewer SVG artifacts', () => {
     expect(menuItems.slice(0, 1)).toEqual([
       'Publish online above to enable share ↑',
     ]);
-    expect(menuItems.slice(1, 3)).toEqual([
+    // One-click hosting leads the PUBLISH ONLINE section: it is the only entry
+    // that needs no account and no API token, so it sits above the
+    // bring-your-own-provider deploys rather than below them.
+    expect(menuItems.slice(1, 4)).toEqual([
+      'Publish instantlyNo account or API token needed',
       'Deploy to Vercel',
       'Deploy to Cloudflare Pages',
     ]);

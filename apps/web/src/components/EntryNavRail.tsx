@@ -13,6 +13,7 @@ import { EntryHelpMenu } from './EntryHelpMenu';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
+import { DATABASE_UI_VISIBLE } from '../features/databaseUi';
 
 export type EntryView =
   | 'home'
@@ -23,7 +24,10 @@ export type EntryView =
   | 'design-systems'
   | 'library'
   | 'brands'
-  | 'integrations';
+  | 'integrations'
+  | 'database'
+  | 'apps'
+  | 'organization';
 
 interface Props {
   view: EntryView;
@@ -198,6 +202,26 @@ export function EntryNavRail({
           <Icon name="grid" size={18} />
         </NavButton>
         <NavButton
+          active={view === 'apps'}
+          ariaLabel={t('entry.navApps')}
+          tooltip={t('entry.navApps')}
+          onClick={() => selectView('apps')}
+          testId="entry-nav-apps"
+        >
+          <Icon name="blocks" size={18} />
+        </NavButton>
+        {DATABASE_UI_VISIBLE ? (
+          <NavButton
+            active={view === 'database'}
+            ariaLabel={t('entry.navDatabase')}
+            tooltip={t('entry.navDatabase')}
+            onClick={() => selectView('database')}
+            testId="entry-nav-database"
+          >
+            <Icon name="layout" size={18} />
+          </NavButton>
+        ) : null}
+        <NavButton
           active={view === 'integrations'}
           ariaLabel={t('entry.navIntegrations')}
           tooltip={t('entry.navIntegrations')}
@@ -205,6 +229,15 @@ export function EntryNavRail({
           testId="entry-nav-integrations"
         >
           <Icon name="link" size={18} />
+        </NavButton>
+        <NavButton
+          active={view === 'organization'}
+          ariaLabel={t('entry.navOrganization')}
+          tooltip={t('entry.navOrganization')}
+          onClick={() => selectView('organization')}
+          testId="entry-nav-organization"
+        >
+          <Icon name="orbit" size={18} />
         </NavButton>
       </div>
       <div className="entry-nav-rail__footer">

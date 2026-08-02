@@ -1,0 +1,47 @@
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  max-width: 420px;
+  width: 100%;
+  padding: 28px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
+  border-radius: 16px;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.body {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.muted {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.65;
+}

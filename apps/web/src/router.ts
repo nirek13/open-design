@@ -5,6 +5,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { LIBRARY_UI_VISIBLE } from './features/libraryUi';
+import { DATABASE_UI_VISIBLE } from './features/databaseUi';
 
 // Entry-shell sub-views. The home/project landing renders one of three
 // columns and each sub-view now owns a top-level path so the browser
@@ -19,7 +20,10 @@ export type EntryHomeView =
   | 'design-systems'
   | 'library'
   | 'brands'
-  | 'integrations';
+  | 'integrations'
+  | 'database'
+  | 'apps'
+  | 'organization';
 
 export type Route =
   | {
@@ -50,7 +54,10 @@ export type Route =
       fileName: string | null;
     }
   | { kind: 'marketplace' }
-  | { kind: 'marketplace-detail'; pluginId: string };
+  | { kind: 'marketplace-detail'; pluginId: string }
+  /** Invite landing page. Renders outside the app shell: whoever follows the
+   * link may not be a member of anything yet. */
+  | { kind: 'join'; token: string };
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
@@ -114,6 +121,18 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'integrations') {
     return { kind: 'home', view: 'integrations' };
   }
+  if (DATABASE_UI_VISIBLE && parts[0] === 'database' && !parts[1]) {
+    return { kind: 'home', view: 'database' };
+  }
+  if (parts[0] === 'apps' && !parts[1]) {
+    return { kind: 'home', view: 'apps' };
+  }
+  if (parts[0] === 'organization' && !parts[1]) {
+    return { kind: 'home', view: 'organization' };
+  }
+  if (parts[0] === 'join' && parts[1]) {
+    return { kind: 'join', token: decodeURIComponent(parts[1]) };
+  }
   // Phase 2B / spec §11.6 — marketplace deep UI routes. Two paths:
   //   /marketplace            → catalog grid (MarketplaceView)
   //   /marketplace/<pluginId> → detail page (PluginDetailView)
@@ -140,8 +159,12 @@ export function buildPath(route: Route): string {
       return route.brandId ? `/brands/${encodeURIComponent(route.brandId)}` : '/brands';
     }
     if (route.view === 'integrations') return '/integrations';
+    if (route.view === 'database') return DATABASE_UI_VISIBLE ? '/database' : '/';
+    if (route.view === 'apps') return '/apps';
+    if (route.view === 'organization') return '/organization';
     return '/';
   }
+  if (route.kind === 'join') return `/join/${encodeURIComponent(route.token)}`;
   if (route.kind === 'marketplace') return '/marketplace';
   if (route.kind === 'marketplace-detail') return `/marketplace/${encodeURIComponent(route.pluginId)}`;
   if (route.kind === 'design-system-create') return '/design-systems/create';

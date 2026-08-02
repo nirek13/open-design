@@ -1,0 +1,114 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
+  border-radius: 12px;
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.panelHint {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.row input {
+  min-width: 220px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th,
+.table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--od-border, rgba(127, 127, 127, 0.16));
+  vertical-align: middle;
+}
+
+.table th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.person {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.personName {
+  font-weight: 500;
+}
+
+.personEmail {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.linkBox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--od-accent-border, rgba(91, 108, 255, 0.4));
+  border-radius: 10px;
+  background: var(--od-accent-surface, rgba(91, 108, 255, 0.08));
+}
+
+.link {
+  display: block;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.linkActions {
+  display: flex;
+  gap: 8px;
+}
+
+.linkWarning {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.error {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--od-danger-border, rgba(220, 80, 80, 0.4));
+  background: var(--od-danger-surface, rgba(220, 80, 80, 0.08));
+  font-size: 13px;
+}

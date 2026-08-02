@@ -45,6 +45,8 @@ import {
   IframeKeepAliveProvider,
   useIframeKeepAlivePool,
 } from './components/IframeKeepAlivePool';
+import { OrgProvider } from './org/OrgContext';
+import { JoinOrgView } from './components/org/JoinOrgView';
 import {
   SettingsDialog,
   switchApiProtocolConfig,
@@ -400,7 +402,12 @@ export function App() {
   return (
     <MotionConfig reducedMotion="user">
       <IframeKeepAliveProvider>
-        <AppInner />
+        {/* Organization context wraps all app state: which organization is
+            active decides what projects, apps, tables, and members exist as
+            far as the rest of the tree is concerned. */}
+        <OrgProvider>
+          <AppInner />
+        </OrgProvider>
       </IframeKeepAliveProvider>
     </MotionConfig>
   );
@@ -2450,6 +2457,10 @@ function AppInner() {
         <CenteredLoader label={t('entry.loadingWorkspace')} />
       </div>
     );
+  } else if (route.kind === 'join') {
+    // Renders outside the app shell: whoever followed this link may not be a
+    // member of any organization yet, so there is no workspace to frame it in.
+    appMain = <JoinOrgView token={route.token} />;
   } else if (route.kind === 'marketplace') {
     appMain = <MarketplaceView />;
   } else if (route.kind === 'marketplace-detail') {

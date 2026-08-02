@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Express, Response } from 'express';
 import {
+  ORG_HEADER,
   defaultScenarioPluginIdForProjectMetadata,
   type ChatSessionMode,
   type PluginManifest,
@@ -13,6 +14,8 @@ import {
   type ProjectFileVersionSource,
   type ProjectFileVersionWarning,
 } from '@open-design/contracts';
+import { listOrganizationsForUser } from '../../workspace-data/tenancy.js';
+import type { OrganizationRouteServices } from '../organizations.js';
 import { readMeta as readBrandMeta } from '../../brands/store.js';
 import { createProjectArtifactFile } from '../../artifacts/create.js';
 import { ArtifactPublicationBlockedError } from '../../artifacts/publication-guard.js';
@@ -57,7 +60,19 @@ import { parseOrchestratorWorkspace } from '../../workspace-contract.js';
 import { registerProjectConversationRoutes } from './conversations.js';
 import { cancelRunsOwnedBy } from './cancel-owned-runs.js';
 
-export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'projectStore' | 'projectFiles' | 'conversations' | 'templates' | 'status' | 'events' | 'ids' | 'telemetry' | 'appConfig' | 'agents' | 'validation'> {}
+export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'projectStore' | 'projectFiles' | 'conversations' | 'templates' | 'status' | 'events' | 'ids' | 'telemetry' | 'appConfig' | 'agents' | 'validation'> {
+  /** Optional so the module can be mounted standalone; see
+   * `resolveRequestOrgId` for what is lost without it. */
+  organizations?: Partial<OrganizationRouteServices>;
+}
+
+/** Projects belong to the organization that created them. A project with no
+ * organization predates the feature (or was made on a single-user install)
+ * and stays visible everywhere, so upgrading never hides someone's work. */
+export function projectVisibleForOrg(project: { orgId?: string | null }, orgId: string | null): boolean {
+  if (!project.orgId) return true;
+  return project.orgId === orgId;
+}
 
 function projectDetailResolvedDir(
   projectsRoot: string,
@@ -1225,6 +1240,30 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   const { subscribeFileEvents, activeProjectEventSinks } = ctx.events;
   const { randomId } = ctx.ids;
   const { validateProjectDesignSystemId, validateProjectSkillId } = ctx.validation;
+  /** Which organization this request acts in: the `x-od-org` header when the
+   * client pins one, otherwise the caller's first organization. Returns null
+   * when the caller has none, which makes every org-owned project invisible
+   * rather than leaking one org's work into another's list.
+   *
+   * Organization wiring is optional so this route module can still be mounted
+   * standalone (several tests build a bare Express app around it). Without it,
+   * everything falls back to the pre-organization behavior: no org is assigned
+   * on create, and the list filter passes everything through. */
+  async function resolveRequestOrgId(req: any): Promise<string | null> {
+    const orgManager = ctx.organizations?.manager;
+    const orgIdentity = ctx.organizations?.identity;
+    if (!orgManager || !orgIdentity) return null;
+    try {
+      const header = typeof req?.get === 'function' ? req.get(ORG_HEADER) : null;
+      const viewer = await orgIdentity.resolveViewer(req, orgManager.directoryExecutor);
+      if (!viewer) return null;
+      const memberships = await listOrganizationsForUser(orgManager.directoryExecutor, viewer.userId);
+      if (header && memberships.some((org) => org.id === header)) return header;
+      return memberships[0]?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
   async function loadPluginRegistryView() {
     const [skills, designSystems] = await Promise.all([
       listSkills(SKILLS_DIR),
@@ -1464,8 +1503,9 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     }
   });
 
-  app.get('/api/projects', async (_req, res) => {
+  app.get('/api/projects', async (req, res) => {
     try {
+      const activeOrgId = await resolveRequestOrgId(req);
       const locations = await configuredProjectLocations();
       const latestRunStatuses = listLatestProjectRunStatuses(db);
       const awaitingInputProjects = listProjectsAwaitingInput(db);
@@ -1489,6 +1529,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const body = {
         projects: listProjects(db)
           .filter((project: any) => projectVisibleForLocations(project, locations))
+          .filter((project: any) => projectVisibleForOrg(project, activeOrgId))
           .map((project: any) => ({
             ...project,
             status: brandAwareProjectStatus(
@@ -1715,6 +1756,10 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             typeof customInstructions === 'string'
               ? customInstructions
               : null,
+          // Server-assigned from the caller's active organization. Never read
+          // from the request body, so a client cannot file work into an
+          // organization it does not belong to.
+          orgId: await resolveRequestOrgId(req),
           createdAt: now,
           updatedAt: now,
         });

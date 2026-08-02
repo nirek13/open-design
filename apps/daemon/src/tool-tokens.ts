@@ -13,6 +13,12 @@ export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/media/generate',
   '/api/tools/library/search',
   '/api/tools/library/apply',
+  '/api/tools/data/list-tables',
+  '/api/tools/data/describe-table',
+  '/api/tools/data/create-table',
+  '/api/tools/data/query',
+  '/api/tools/data/insert',
+  '/api/tools/data/update',
 ] as const;
 
 export const CHAT_TOOL_OPERATIONS = [
@@ -26,6 +32,12 @@ export const CHAT_TOOL_OPERATIONS = [
   'media:generate',
   'library:search',
   'library:apply',
+  'data:list-tables',
+  'data:describe-table',
+  'data:create-table',
+  'data:query',
+  'data:insert',
+  'data:update',
 ] as const;
 
 export type ToolEndpoint = (typeof CHAT_TOOL_ENDPOINTS)[number] | (string & {});

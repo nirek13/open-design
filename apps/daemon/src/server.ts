@@ -623,6 +623,7 @@ import { registerXaiRoutes } from './routes/xai.js';
 import { registerLiveArtifactRoutes } from './routes/live-artifact.js';
 import { registerDesignSystemToolRoutes } from './routes/design-system-tool.js';
 import { registerDeployRoutes, registerDeploymentCheckRoutes } from './routes/deploy.js';
+import { registerHostingRoutes } from './routes/hosting.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerProjectRoutes, registerProjectArtifactRoutes, registerProjectFileRoutes, registerProjectUploadRoutes } from './routes/project/index.js';
 import { registerVelaRoutes } from './routes/vela.js';
@@ -648,6 +649,14 @@ import {
 } from './routes/static-resource.js';
 export { rewriteSkillAssetUrls } from './routes/static-resource.js';
 import { registerRoutineRoutes, routineDbRowToContract } from './routes/routine.js';
+import { registerWorkspaceDataRoutes } from './routes/workspace-data.js';
+import { registerOrganizationRoutes } from './routes/organizations.js';
+import { WorkspaceDbManager } from './storage/workspace-db.js';
+import { WorkspaceDataEvents } from './workspace-data/events.js';
+import { ensureDefaultOrganization } from './workspace-data/tenancy.js';
+import { IdentityService, readAuthConfig } from './auth/identity.js';
+import { resolveDaemonDbConfig } from './storage/daemon-db.js';
+import { openPostgres } from './storage/postgres-connection.js';
 import { resolveAmrModelProbe } from './runtimes/amr-model-probe.js';
 import { createPluginInstallationHelpers, normalizeProjectPluginFolderPath, resolveProjectChildDirectory } from './services/plugin-installation.js';
 import { createPluginShareTaskStore } from './services/plugin-share-tasks.js';
@@ -1208,6 +1217,19 @@ export function createAgentRuntimeToolPrompt(
     ? '- `OD_TOOL_TOKEN` is available in your environment for this run. Use it only through project wrapper commands; do not print, persist, or override it.'
     : '- `OD_TOOL_TOKEN` is not available for this run, so `/api/tools/*` wrapper commands may be unavailable.';
 
+  const workspaceDataBlock = toolTokenGrant?.token
+    ? [
+        '',
+        '### Workspace database (`tools data`)',
+        '',
+        '- The workspace has ONE permanent, structured company database. Generated tools are disposable views over it; the data outlives every tool. Prefer storing user data in workspace tables over inventing ad-hoc files.',
+        '- Discover before inventing: `"$OD_NODE_BIN" "$OD_BIN" tools data list-tables`, then `tools data describe-table --table <name>`. Reuse existing tables and fields whenever they fit; never create a parallel table for data that already has a home.',
+        '- Create schemas deliberately: `tools data create-table --input schema.json` with snake_case names, `required`/`unique` where the business rule demands it, `link` fields (config.targetTableId) for relations, and type `money` for amounts — money values are ALWAYS integer minor units (cents); never floats.',
+        '- Read and write through `tools data query|insert|update` (see `tools data --help` for payload shapes). The daemon validates every write against the schema, enforces uniqueness and link integrity, soft-deletes only, and records full row history plus an audit trail attributed to this run — do not try to bypass it or batch-edit data through files.',
+        '- Records never truly delete and schema changes are owner-approved migrations; if a schema change seems needed, say so to the user instead of working around the schema.',
+      ].join('\n')
+    : '';
+
   return [
     '## Runtime tool environment',
     '',
@@ -1217,7 +1239,8 @@ export function createAgentRuntimeToolPrompt(
     '- On PowerShell use `& $env:OD_NODE_BIN $env:OD_BIN tools ...`; on cmd.exe use `"%OD_NODE_BIN%" "%OD_BIN%" tools ...`.',
     tokenLine,
     '- Prefer project wrapper commands through `OD_NODE_BIN` + `OD_BIN` over raw HTTP. The wrappers read these environment values automatically.',
-  ].join('\n');
+    workspaceDataBlock,
+  ].filter(Boolean).join('\n');
 }
 
 export function createOpenDesignToolEnv({
@@ -2332,6 +2355,81 @@ export async function startServer({
     PLUGIN_UPLOAD_MAX_BYTES,
   });
   const mediaTaskStore = createMediaTaskStore(db);
+  // Workspace Database (permanent structured data plane): directory +
+  // per-workspace SQLite files under RUNTIME_DATA_DIR/workspace-data/.
+  // Boot invariant: at least one workspace exists so keyless single-user
+  // mode works with zero setup.
+  // System of record for organizations. Local SQLite by default; a configured
+  // Supabase/Postgres connection takes over, which is what lets an
+  // organization span more than one machine. A connection failure is fatal on
+  // purpose — silently falling back to a local file would look like it worked
+  // while quietly cutting everyone else off from the data.
+  const daemonDbConfig = resolveDaemonDbConfig();
+  let sharedOrgExecutor = null;
+  let closeSharedOrgDb = async () => {};
+  if (daemonDbConfig.kind === 'postgres') {
+    const connection = await openPostgres(daemonDbConfig);
+    sharedOrgExecutor = connection.executor;
+    closeSharedOrgDb = connection.close;
+    console.log(`[od] organizations: postgres at ${daemonDbConfig.postgres?.host}`);
+  }
+  const workspaceDbManager = new WorkspaceDbManager(RUNTIME_DATA_DIR, sharedOrgExecutor);
+  const workspaceDataEvents = new WorkspaceDataEvents();
+  await ensureDefaultOrganization(workspaceDbManager.directoryExecutor);
+  // Identity: keyless local-owner unless OD_CLERK_ISSUER is configured. See
+  // apps/daemon/src/auth/identity.ts for the security posture of each mode.
+  const identityService = new IdentityService(readAuthConfig());
+  const workspaceDataDeps = {
+    manager: workspaceDbManager,
+    events: workspaceDataEvents,
+    identity: identityService,
+  };
+  const organizationsDeps = {
+    manager: workspaceDbManager,
+    identity: identityService,
+    // Serves one file of a shared app to an anonymous link visitor.
+    //
+    // The headers below are the security line for link sharing: the same
+    // locked-down policy the untrusted-artifact preview uses, whose
+    // `connect-src 'none'` means a publicly shared page renders its interface
+    // but can never call back into organization data. Apps that read company
+    // records therefore stay members-only by construction.
+    serveAppFile: async (req: any, res: any, { projectId, filePath }: { projectId: string; filePath: string }) => {
+      void req;
+      const project = getProject(db, projectId);
+      if (!project) {
+        sendApiError(res, 404, 'FILE_NOT_FOUND', 'file not found');
+        return;
+      }
+      let file;
+      try {
+        file = await readProjectFile(PROJECTS_DIR, projectId, filePath, project.metadata);
+      } catch {
+        sendApiError(res, 404, 'FILE_NOT_FOUND', 'file not found');
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader(
+        'Content-Security-Policy',
+        [
+          'sandbox allow-scripts allow-forms',
+          "default-src 'self' data: blob:",
+          "img-src 'self' data: blob:",
+          "media-src 'self' data: blob:",
+          "font-src 'self' data:",
+          "style-src 'self' 'unsafe-inline'",
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+          "connect-src 'none'",
+          "form-action 'none'",
+          "base-uri 'none'",
+          "object-src 'none'",
+        ].join('; '),
+      );
+      res.setHeader('Content-Type', file.mime || 'application/octet-stream');
+      res.send(file.buffer);
+    },
+  };
   const {
     authorizeToolRequest,
     optionalToolGrantFromRequest,
@@ -3079,6 +3177,7 @@ export async function startServer({
     appConfig: appConfigDeps,
     agents: agentDeps,
     validation: validationDeps,
+    organizations: organizationsDeps,
   });
   registerTerminalRoutes(app, {
     db,
@@ -3199,6 +3298,12 @@ export async function startServer({
     liveArtifacts: liveArtifactDeps,
     projectStore: projectStoreDeps,
   });
+  registerWorkspaceDataRoutes(app, {
+    db,
+    auth: authDeps,
+    workspaceData: workspaceDataDeps,
+  });
+  registerOrganizationRoutes(app, { db, organizations: organizationsDeps });
   registerDesignSystemToolRoutes(app, {
     auth: authDeps,
     http: httpDeps,
@@ -3218,6 +3323,10 @@ export async function startServer({
     deploy: deployDeps,
     projectStore: projectStoreDeps,
   });
+  // One-click hosting. Distinct from the deploy routes above: those drive the
+  // user's own Vercel/Cloudflare account, these publish to Open Design's cloud
+  // with no setup. See specs/current/one-click-hosting.md.
+  registerHostingRoutes(app, { db, paths: { PROJECTS_DIR } });
   registerFinalizeRoutes(app, {
     db,
     http: httpDeps,
@@ -9075,6 +9184,7 @@ export async function startServer({
     agents: agentDeps,
     critique: critiqueDeps,
     openDesignPublicMetadata,
+    workspaceData: workspaceDataDeps,
     lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
   });
 
@@ -9121,6 +9231,12 @@ export async function startServer({
       composioConnectorProvider.stopCatalogRefreshLoop();
       orbitService.stop();
       routineService?.stop();
+      // Each startServer() opens its own workspace SQLite handles (one
+      // directory DB plus one per touched workspace). Without this, repeated
+      // starts in one process — as the daemon test suites do — leak file
+      // descriptors and keep WAL files pinned.
+      workspaceDbManager.closeAll();
+      void closeSharedOrgDb();
     };
     const shutdownDaemonRuns = async () => {
       if (daemonShutdownStarted) return;

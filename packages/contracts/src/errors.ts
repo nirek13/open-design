@@ -118,6 +118,51 @@ export const API_ERROR_CODES = [
   'CONNECTOR_RATE_LIMITED',
   'CONNECTOR_OUTPUT_TOO_LARGE',
   'CONNECTOR_EXECUTION_FAILED',
+  // Workspace Database (permanent structured data plane; api/workspace-data.ts).
+  // Tenant registry lookups.
+  'WORKSPACE_NOT_FOUND',
+  'WORKSPACE_TABLE_NOT_FOUND',
+  'WORKSPACE_RECORD_NOT_FOUND',
+  // A table with the requested machine name already exists and is active.
+  'WORKSPACE_TABLE_EXISTS',
+  // Record payload failed schema validation (missing required field, wrong
+  // type, unknown field, out-of-range, unbounded JSON). details carries
+  // ApiValidationErrorDetails naming each offending field.
+  'WORKSPACE_VALIDATION_FAILED',
+  // A unique-constrained field collided with an existing non-deleted record.
+  // Enforced by the engine via partial UNIQUE expression indexes, so this is
+  // raceproof, not a read-then-write check.
+  'WORKSPACE_UNIQUE_VIOLATION',
+  // A link field referenced a missing/soft-deleted record, or soft-deleting a
+  // record was blocked because active records still link to it (onDelete
+  // 'restrict').
+  'WORKSPACE_LINK_VIOLATION',
+  // Write attempted against a soft-deleted record; restore it first.
+  'WORKSPACE_RECORD_DELETED',
+  // Optimistic-concurrency failure: expectedRevision no longer matches the
+  // stored revision. Re-read and retry with fresh data.
+  'WORKSPACE_REVISION_CONFLICT',
+  // Organizations, membership, invites, and app sharing (api/organizations.ts,
+  // api/apps.ts).
+  'ORG_NOT_FOUND',
+  // The caller is authenticated but is not an active member of the target
+  // organization. Distinct from ORG_ROLE_REQUIRED: this is "you are not in
+  // this org at all", not "you lack the rank".
+  'ORG_MEMBERSHIP_REQUIRED',
+  // The caller is a member but their role is below what the action needs.
+  // details carries { required, actual }.
+  'ORG_ROLE_REQUIRED',
+  'ORG_MEMBER_NOT_FOUND',
+  // Refusing to remove or demote the last owner — an organization with no
+  // owner can never be administered again.
+  'ORG_LAST_OWNER',
+  'ORG_INVITE_INVALID',
+  'ORG_INVITE_EXPIRED',
+  // The invite hit its maximum number of uses.
+  'ORG_INVITE_EXHAUSTED',
+  'APP_NOT_FOUND',
+  // The share link is unknown, revoked, or past its expiry.
+  'APP_SHARE_INVALID',
   'INTERNAL_ERROR',
 ] as const;
 

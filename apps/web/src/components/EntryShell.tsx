@@ -100,6 +100,10 @@ import { DesignSystemsTab } from './DesignSystemsTab';
 import { BrandsTab } from './BrandsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
 import { LibrarySection } from './LibrarySection';
+import { DatabaseView } from './database/DatabaseView';
+import { OrgSwitcher } from './org/OrgSwitcher';
+import { OrgAppsView } from './org/OrgAppsView';
+import { OrgMembersView } from './org/OrgMembersView';
 import { UpdaterPopup } from './UpdaterPopup';
 import { WhatsNewPopup } from './WhatsNewPopup';
 import { AmrBalanceDialog } from './AmrBalanceDialog';
@@ -183,6 +187,7 @@ import { closeAmrActivationWindowBestEffort } from './AmrLoginPill';
 import { smoothScrollToTop } from '../utils/smoothScrollToTop';
 import { summarizeProjectNameFromPrompt } from '../utils/projectName';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
+import { DATABASE_UI_VISIBLE } from '../features/databaseUi';
 import {
   providerModelsCacheKey,
   type ProviderModelsCache,
@@ -1018,32 +1023,19 @@ export function EntryShell({
             </button>
             <div className="entry-main__topbar-chips entry-main__topbar-chips--icon-only">
               <GithubStarBadge />
-              <a
-                className="entry-workspace-chip od-tooltip"
-                href={enterpriseUrl(uiLocale)}
-                target="_blank"
-                rel="noreferrer noopener"
-                onClick={() => {
+              {/* Was a marketing link to the enterprise page; now the real
+                  organization switcher, which is the anchor for everything
+                  org-scoped in the app. */}
+              <OrgSwitcher
+                onManage={() => {
                   trackHomeToolbarClick(analytics.track, {
                     page_name: 'home',
                     area: 'toolbar',
                     element: 'workspace_teams',
                   });
+                  changeView('organization');
                 }}
-                data-tooltip={t('entry.workspaceTeamsTitle')}
-                data-tooltip-placement="bottom"
-                aria-label={t('entry.workspaceTeamsAria')}
-                data-testid="entry-workspace-teams"
-              >
-                <Icon
-                  name="sparkles"
-                  size={14}
-                  className="entry-workspace-chip__icon"
-                />
-                <span className="entry-workspace-chip__label">
-                  {t('entry.workspaceTeamsLabel')}
-                </span>
-              </a>
+              />
               <a
                 className="entry-discord-badge od-tooltip"
                 href={DISCORD_URL}
@@ -1246,6 +1238,17 @@ export function EntryShell({
                     navigate({ kind: 'project', projectId, conversationId: null, fileName: fileName ?? null })
                   }
                 />
+              </div>
+            ) : null}
+            <div data-testid="entry-view-apps" data-active={view === 'apps' ? 'true' : 'false'} {...inactiveViewProps(view === 'apps')}>
+              <OrgAppsView active={view === 'apps'} />
+            </div>
+            <div data-testid="entry-view-organization" data-active={view === 'organization' ? 'true' : 'false'} {...inactiveViewProps(view === 'organization')}>
+              <OrgMembersView active={view === 'organization'} />
+            </div>
+            {DATABASE_UI_VISIBLE ? (
+              <div data-testid="entry-view-database" data-active={view === 'database' ? 'true' : 'false'} {...inactiveViewProps(view === 'database')}>
+                <DatabaseView active={view === 'database'} />
               </div>
             ) : null}
             <div data-testid="entry-view-brands" data-active={view === 'brands' ? 'true' : 'false'} {...inactiveViewProps(view === 'brands')}>

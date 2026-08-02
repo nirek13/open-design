@@ -1,0 +1,141 @@
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 5px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.28));
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.trigger:hover {
+  background: var(--od-surface-2, rgba(127, 127, 127, 0.12));
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--od-accent, #5b6cff);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.caret {
+  font-size: 10px;
+  opacity: 0.55;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.28));
+  border-radius: 12px;
+  background: var(--od-surface-1, #14141a);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  animation: menu-in 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (prefers-color-scheme: light) {
+  .menu {
+    background: var(--od-surface-1, #fff);
+  }
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.menuLabel {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.item:hover {
+  background: var(--od-surface-2, rgba(127, 127, 127, 0.14));
+}
+
+.itemActive {
+  background: var(--od-surface-2, rgba(127, 127, 127, 0.18));
+}
+
+.itemName {
+  font-weight: 500;
+}
+
+.itemMeta {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--od-border, rgba(127, 127, 127, 0.2));
+}
+
+.createRow {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+}
+
+.createRow input {
+  flex: 1;
+  min-width: 0;
+}

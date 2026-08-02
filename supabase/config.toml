@@ -1,0 +1,60 @@
+# Supabase project configuration for Open Design one-click hosting.
+#
+# This project is the authority for published sites: schema, blobs, and the
+# functions that serve them. It is deliberately separate from anything the
+# daemon stores locally — see specs/current/one-click-hosting.md.
+
+project_id = "open-design-hosting"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[storage]
+enabled = true
+# Backstop for MAX_ASSET_BYTES in packages/hosting/src/limits.ts.
+file_size_limit = "25MiB"
+
+[auth]
+enabled = true
+# Identity is Clerk's, not Supabase's. Supabase accepts Clerk session JWTs
+# through third-party auth, and every RLS policy reads the Clerk claims
+# (`sub`, `o.id`) rather than a Supabase user row. Do not enable a second
+# Supabase-native sign-in path here: two identity sources would mean two
+# answers to "who is this", and the RLS policies only understand one.
+site_url = "http://127.0.0.1:3000"
+
+[auth.third_party.clerk]
+enabled = true
+# Set to the Clerk instance's Frontend API domain, e.g.
+# "https://clerk.example.com". Read from the environment so a local, staging,
+# and production project never share an issuer by accident.
+domain = "env(CLERK_DOMAIN)"
+
+# --- Edge functions ---------------------------------------------------------
+#
+# `serve` is public by design: it is the anonymous visitor's entry point, and
+# it performs its own visibility check per request. The publish and management
+# functions verify a Clerk bearer token themselves, so the platform-level JWT
+# gate is disabled for them too — leaving it on would reject Clerk tokens,
+# which are not Supabase-issued.
+
+[functions.serve]
+verify_jwt = false
+
+[functions.publish-begin]
+verify_jwt = false
+
+[functions.publish-commit]
+verify_jwt = false
+
+[functions.sites-manage]
+verify_jwt = false

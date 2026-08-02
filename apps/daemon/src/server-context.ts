@@ -2,6 +2,8 @@ import type { Express } from 'express';
 import type { SkillInfo } from './skills.js';
 import type { DesignSystemSummary } from './design-systems/index.js';
 import type { RoutineRoutesService } from './routes/routine.js';
+import type { WorkspaceDataRouteServices } from './routes/workspace-data.js';
+import type { OrganizationRouteServices } from './routes/organizations.js';
 import type { OpenDesignPublicMetadataService } from './services/open-design-public-metadata.js';
 
 export interface HttpDeps {
@@ -139,6 +141,8 @@ export interface ServerContext {
   agents: any;
   critique: any;
   openDesignPublicMetadata: OpenDesignPublicMetadataService;
+  workspaceData: WorkspaceDataRouteServices;
+  organizations: OrganizationRouteServices;
   lifecycle: {
     isDaemonShuttingDown: () => boolean;
   };

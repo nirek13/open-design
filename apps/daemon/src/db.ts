@@ -269,6 +269,13 @@ function migrate(db: SqliteDb): void {
   if (!cols.some((c: DbRow) => c.name === 'custom_instructions')) {
     db.exec(`ALTER TABLE projects ADD COLUMN custom_instructions TEXT`);
   }
+  // Owning organization. Nullable: projects created before organizations
+  // existed belong to no org and stay visible to everyone on the machine,
+  // which keeps a single-user install working untouched after an upgrade.
+  if (!cols.some((c: DbRow) => c.name === 'org_id')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN org_id TEXT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_org ON projects(org_id, updated_at DESC)`);
+  }
   const conversationCols = db.prepare(`PRAGMA table_info(conversations)`).all() as DbRow[];
   if (!conversationCols.some((c: DbRow) => c.name === 'session_mode')) {
     db.exec(`ALTER TABLE conversations ADD COLUMN session_mode TEXT NOT NULL DEFAULT 'design'`);
@@ -615,6 +622,7 @@ const PROJECT_COLS = `id, name, skill_id AS skillId,
   metadata_json AS metadataJson,
   applied_plugin_snapshot_id AS appliedPluginSnapshotId,
   custom_instructions AS customInstructions,
+  org_id AS orgId,
   created_at AS createdAt,
   updated_at AS updatedAt`;
 
@@ -834,8 +842,8 @@ export function insertProject(db: SqliteDb, p: DbRow) {
   db.prepare(
     `INSERT INTO projects
        (id, name, skill_id, design_system_id, pending_prompt,
-        metadata_json, custom_instructions, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        metadata_json, custom_instructions, org_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     p.id,
     p.name,
@@ -844,6 +852,7 @@ export function insertProject(db: SqliteDb, p: DbRow) {
     p.pendingPrompt ?? null,
     p.metadata ? JSON.stringify(p.metadata) : null,
     p.customInstructions ?? null,
+    p.orgId ?? null,
     p.createdAt,
     p.updatedAt,
   );
@@ -866,6 +875,7 @@ export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
             pending_prompt = ?,
             metadata_json = ?,
             custom_instructions = ?,
+            org_id = ?,
             updated_at = ?
       WHERE id = ?`,
   ).run(
@@ -875,6 +885,7 @@ export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
     merged.pendingPrompt ?? null,
     merged.metadata ? JSON.stringify(merged.metadata) : null,
     merged.customInstructions ?? null,
+    merged.orgId ?? null,
     merged.updatedAt,
     id,
   );
@@ -903,6 +914,7 @@ function normalizeProject(row: DbRow) {
     metadata,
     appliedPluginSnapshotId: row.appliedPluginSnapshotId ?? undefined,
     customInstructions: row.customInstructions ?? undefined,
+    orgId: row.orgId ?? null,
     createdAt: Number(row.createdAt),
     updatedAt: Number(row.updatedAt),
   };

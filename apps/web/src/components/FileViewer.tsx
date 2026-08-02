@@ -19,6 +19,7 @@ import {
 import { useAnalytics } from '../analytics/provider';
 import { exportErrorCode } from '../analytics/export-error-code';
 import { deployErrorCode } from '../analytics/deploy-error-code';
+import { PublishPanel } from './hosting/PublishPanel';
 import { trackIframeLoad } from '../observability/iframe-error';
 import {
   trackArtifactExportResult,
@@ -6320,6 +6321,10 @@ function HtmlViewer({
   const zoomMenuRef = useRef<HTMLDivElement | null>(null);
   const [presentMenuOpen, setPresentMenuOpen] = useState(false);
   const [deployMenuOpen, setDeployMenuOpen] = useState(false);
+  // One-click hosting panel. Separate from the deploy flow above it in the
+  // menu: that one needs the user's own Vercel/Cloudflare token, this one
+  // needs nothing. See specs/current/one-click-hosting.md.
+  const [publishPanelOpen, setPublishPanelOpen] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   // False when closed; otherwise records which entry opened the modal so the
   // surface_view impression can carry entry_from.
@@ -13113,6 +13118,26 @@ function HtmlViewer({
                       <div className="share-menu-section-label" role="presentation">
                         {t('fileViewer.shareMenuPublishOnline')}
                       </div>
+                      {/* Listed first, and above the provider entries, because
+                          it is the only option here that needs no account and
+                          no API token. The provider deploys below it remain the
+                          answer for anyone who wants the site on their own
+                          infrastructure and their own bill. */}
+                      <button
+                        type="button"
+                        className="share-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          setDeployMenuOpen(false);
+                          setPublishPanelOpen(true);
+                        }}
+                      >
+                        <span className="share-menu-icon"><RemixIcon name="global-line" size={15} /></span>
+                        <span className="share-menu-text">
+                          <span>{t('publish.menuItem')}</span>
+                          <small>{t('publish.menuItemDetail')}</small>
+                        </span>
+                      </button>
                       {DEPLOY_PROVIDER_OPTIONS.map((option) => (
                         <button
                           key={option.id}
@@ -13810,6 +13835,25 @@ function HtmlViewer({
           onClose={() => setVersionModalOpen(false)}
           onRestored={handleVersionRestored}
         />
+      ) : null}
+      {publishPanelOpen && typeof document !== 'undefined' ? createPortal(
+        <div
+          className="modal-backdrop viewer-modal-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setPublishPanelOpen(false);
+          }}
+        >
+          <div className="modal deploy-modal" role="dialog" aria-modal="true" aria-label={t('publish.title')}>
+            <PublishPanel
+              projectId={projectId}
+              projectName={file.name.replace(/\.[^.]+$/, '')}
+              fileName={file.name}
+              onClose={() => setPublishPanelOpen(false)}
+            />
+          </div>
+        </div>,
+        document.body,
       ) : null}
       {pptxExportModalOpen && typeof document !== 'undefined' ? createPortal(
         <div className="modal-backdrop viewer-modal-backdrop image-export-backdrop" role="presentation">

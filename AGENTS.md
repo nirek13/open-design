@@ -185,7 +185,80 @@ Every user-facing capability must be reachable through both the web UI **and** t
 - The CLI form must support `--json` for machine-readable output and accept long-form prompts via `--prompt-file <path|->`, so jobs that pipe through `xargs`, `jq`, and `<heredoc` stay clean.
 - Adding a new capability is a three-step closure: HTTP endpoint in `apps/daemon/src/*-routes.ts` (with a contract type in `packages/contracts/src/api/`), UI surface in `apps/web/src/`, and `od <capability>` subcommand in `apps/daemon/src/cli.ts` registered through `SUBCOMMAND_MAP`. Land all three in the same PR; do not stage them across PRs.
 - The PR template's Surface area checklist must reflect *both* surfaces. If you ticked UI, tick CLI too — and vice-versa — or explain in the PR body why the missing surface is genuinely not applicable (e.g. an internal-only daemon health probe). "I'll do the CLI later" is not a valid reason.
-- Existing reference points: `od automation …` mirrors the Automations tab against `/api/routines`; `od plugin …`, `od ui …`, `od project …`, `od media …`, `od mcp …`, `od research …` follow the same shape. Copy that pattern for new capabilities.
+- Existing reference points: `od automation …` mirrors the Automations tab against `/api/routines`; `od plugin …`, `od ui …`, `od project …`, `od media …`, `od mcp …`, `od research …`, `od org …`, `od app …`, `od data …`, `od publish …` follow the same shape. Copy that pattern for new capabilities.
+
+## One-click hosting (`od publish`)
+
+Publishing a project file to a public web address, with no provider account and
+no API token. Design and rationale live in
+[`specs/current/one-click-hosting.md`](specs/current/one-click-hosting.md); read
+it before changing any of the surfaces below.
+
+- **Not the same thing as deploy.** `apps/daemon/src/deploy.ts` and `od deploy`
+  target the user's own Vercel or Cloudflare account and need their token.
+  Hosting targets Open Design's Supabase project and needs nothing. Keep the two
+  vocabularies apart: "deploy" means your provider, "publish" means ours. Do not
+  merge them behind one verb or one `--provider` flag.
+- **The cloud is the only source of truth.** Sites, versions, slugs, and blobs
+  live in Supabase (Postgres + Storage), and identity/membership live in Clerk.
+  The daemon stores nothing about a published site — no cache of what is live,
+  no slug table — because a second source of truth on a laptop is exactly what
+  makes a link stop working when the laptop closes.
+- **The daemon is a publish client only.** It reads project files, hashes them,
+  and uploads to per-object signed URLs. It must never hold a Supabase
+  service-role key, a storage secret, or a database URL; every privileged
+  operation belongs in an edge function that authorizes the caller itself.
+- **Membership is never mirrored.** Org-restricted sites are gated on the Clerk
+  organization claim in the caller's token. Do not add a members table, an
+  allowlist snapshot, or any sync job — revocation must take effect on the next
+  request, not on the next sync.
+- **Shared logic lives in `packages/hosting`.** Slug rules, the manifest format,
+  and request-path resolution are imported by both the daemon (bundled `dist/`)
+  and the Deno edge functions (`src/*.ts` directly, which is why that source
+  uses explicit `.ts` import extensions). Never fork this logic per runtime; a
+  resolver that disagrees between preview and production only reproduces in
+  production.
+- **Anonymous requests for an org site return 404, never 403.** A 403 confirms
+  that an internal tool with that name exists.
+- Env vars, all read only by the daemon: `OD_HOSTING_FUNCTIONS_URL`,
+  `OD_HOSTING_SUPABASE_URL`, `OD_HOSTING_ANON_KEY`, `OD_SITES_DOMAIN`.
+  Edge-function env (`SUPABASE_SERVICE_ROLE_KEY`, `CLERK_ISSUER`,
+  `OD_FRAME_ANCESTORS`) stays server-side and must not leak into daemon or web
+  configuration.
+
+## Organizations, apps, and the organization database
+
+An **organization** is the tenant every person, project, app, and table
+belongs to. It is the same row the storage layer calls a "workspace"
+(`od_workspaces` and friends in the directory DB) — Organization is the name at
+every boundary a caller touches: contracts (`packages/contracts/src/api/organizations.ts`),
+API (`/api/orgs/*`), CLI (`od org`), and UI. Do not confuse it with
+`contracts/src/api/workspaces.ts` (agent scratch dirs) or `WorkspaceTabsBar`
+(browser-style tabs).
+
+- **Identity** is resolved in exactly one place: `apps/daemon/src/auth/identity.ts`.
+  Two modes — `local-owner` (default; no auth configured, every interactive
+  request is the machine owner) and `clerk` (set `OD_CLERK_ISSUER`, optionally
+  `OD_CLERK_PUBLISHABLE_KEY`). Session JWTs are verified against the issuer's
+  JWKS by `auth/jwt-verify.ts`, which pins RS256 and is deny-by-default; do not
+  loosen it or add a second verification path.
+- **Local-owner mode is not a security boundary.** Anyone who can reach the
+  daemon port is the owner — the correct posture for a loopback single-user
+  tool. A multi-user deployment MUST configure clerk mode.
+- **Membership and roles** (`owner` > `admin` > `member`) are checked through
+  `assertMemberRole` in `workspace-data/tenancy.ts`. The last owner can never be
+  demoted or removed.
+- **Invite links and app share links** store only a SHA-256 hash; the token is
+  returned exactly once, at creation. Public link URLs are built from
+  `OD_PUBLIC_BASE_URL` when set, falling back to the request host.
+- **Link-shared apps are served without database access.** `GET /s/:token` uses
+  the locked-down preview CSP (`connect-src 'none'`), so an anonymous visitor
+  gets the interface and never a channel into organization data. Data-connected
+  apps stay members-only by construction — do not relax that CSP.
+- **Projects carry `org_id`** (nullable; null means "predates organizations" and
+  stays visible everywhere). It is server-assigned from the caller's active
+  organization, never read from the request body.
+- The active organization travels on the `x-od-org` header (`ORG_HEADER`).
 
 ## Git commit policy
 

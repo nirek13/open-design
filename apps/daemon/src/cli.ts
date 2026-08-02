@@ -12,6 +12,7 @@ import { DESIGN_SYSTEMS_USAGE, isDesignSystemsHelpArg } from './cli-help/index.j
 import { BRAND_USAGE, isBrandHelpArg } from './cli-help/index.js';
 import { parseDesignSystemRenameArgs } from './design-systems/rename-args.js';
 import { runLiveArtifactsToolCli } from './tools-live-artifacts-cli.js';
+import { runDataToolCli } from './tools-data-cli.js';
 import { runByokToolCli } from './tools-byok-cli.js';
 import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
@@ -236,6 +237,19 @@ const DEPLOY_STRING_FLAGS = new Set([
   'cf-zone-id', 'cf-zone-name', 'cf-domain-prefix',
 ]);
 const DEPLOY_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+// `od publish …` drives one-click hosting against /api/projects/:id/publish and
+// /api/sites/*. Kept separate from `od deploy` on purpose: deploy targets the
+// user's own Vercel/Cloudflare account, publish targets Open Design's cloud
+// with no setup, and one verb for both would make `--provider` ambiguous.
+// Hoisted next to the other dispatch-touched flag sets because `runPublish` is
+// reachable through the top-of-file SUBCOMMAND_MAP dispatch, which runs during
+// module evaluation — a const declared further down would still be in TDZ.
+const PUBLISH_STRING_FLAGS = new Set([
+  'daemon-url', 'file', 'slug', 'visibility', 'version', 'token',
+]);
+const PUBLISH_BOOLEAN_FLAGS = new Set([
+  'help', 'h', 'json', 'public', 'org', 'no-wait',
+]);
 // `od automation …` mirrors the Automations tab. Same surface, same
 // /api/routines store. The CLI form is the embeddability contract:
 // external agents (hermes-agent, openclaw, etc.) can drive Open Design
@@ -321,6 +335,30 @@ const RECOVERABLE_EXIT_CODES = {
   'desktop-auth-pending':     74,
   'desktop-import-token-rejected': 75,
 };
+// `od data …` mirrors the Database tab against /api/data/*. Hoisted next to
+// the other dispatch-touched flag sets because runData is reachable through
+// the top-of-file SUBCOMMAND_MAP dispatch, which runs during module
+// evaluation — a `const` declared further down would still be in TDZ.
+// `od org …` / `od app …` mirror the Organization and Apps surfaces in the
+// web UI. Hoisted next to the other dispatch-touched flag sets because both
+// handlers are reachable through the top-of-file SUBCOMMAND_MAP dispatch,
+// which runs during module evaluation — a `const` declared further down would
+// still be in TDZ.
+const ORG_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'name', 'role', 'expires-in', 'max-uses',
+]);
+const ORG_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const APP_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'name', 'description', 'project', 'file', 'visibility', 'expires-in',
+]);
+const APP_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'include-archived']);
+const DATA_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'workspace', 'name', 'table', 'data', 'data-file',
+  'expected-revision', 'limit', 'cursor', 'sort', 'direction', 'subject',
+]);
+const DATA_BOOLEAN_FLAGS = new Set([
+  'help', 'h', 'json', 'include-deleted', 'include-archived',
+]);
 const PLUGIN_LIST_FILTER_FLAGS = new Set([
   ...PLUGIN_STRING_FLAGS,
   'task-kind', 'mode', 'tag', 'trust',
@@ -354,6 +392,8 @@ const SUBCOMMAND_MAP = {
   conversation: runConversation,
   chat: runChat,
   deploy: runDeploy,
+  publish: runPublish,
+  sites: runPublish,
   daemon: runDaemon,
   atoms: runAtoms,
   skills: runSkills,
@@ -368,6 +408,11 @@ const SUBCOMMAND_MAP = {
   config: runConfig,
   library: runLibrary,
   figma: runFigma,
+  data: runData,
+  org: runOrg,
+  orgs: runOrg,
+  app: runApp,
+  apps: runApp,
 };
 
 const EXPORT_STRING_FLAGS = new Set([
@@ -549,6 +594,16 @@ if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
   runDirectionsToolCli(argv.slice(2));
 } else if (argv[0] === 'tools' && argv[1] === 'design-systems') {
   runDesignSystemsToolCli(argv.slice(2))
+    .then(({ exitCode }) => {
+      process.exitCode = exitCode;
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${JSON.stringify({ ok: false, error: { message } })}\n`);
+      process.exitCode = 1;
+    });
+} else if (argv[0] === 'tools' && argv[1] === 'data') {
+  runDataToolCli(argv.slice(2))
     .then(({ exitCode }) => {
       process.exitCode = exitCode;
     })
@@ -10402,4 +10457,930 @@ Options:
   if (flags.json) return process.stdout.write(JSON.stringify(data) + '\n');
   const url = data?.url ?? data?.deploymentUrl ?? '';
   console.log(`[deploy] ${data?.id ?? 'done'}${url ? ` → ${url}` : ''}`);
+}
+
+// ---------------------------------------------------------------------------
+// od publish — one-click hosting.
+//
+// Deliberately NOT folded into `od deploy`. That command drives the user's own
+// Vercel or Cloudflare account and needs their token; this one publishes to
+// Open Design's cloud with no setup. Sharing a verb would make both harder to
+// explain and would make `--provider` mean two unrelated things.
+//
+// Publishing requires a real identity, so this command needs a Clerk session
+// token: `--token`, or OD_CLERK_SESSION_TOKEN in the environment.
+
+function printPublishHelp() {
+  console.log(`Usage: od publish <projectId> --file <fileName> [options]
+
+Publish a project file to a public web address. No provider account or API
+token required — this is Open Design's own hosting.
+
+Subcommands:
+  <projectId> --file <name>   Publish (or re-publish) a project file
+  list                        List your published sites
+  status <siteId>             Show one site
+  versions <siteId>           List a site's version history
+  rollback <siteId> --version <versionId>
+                              Point the live link at an earlier version
+  unpublish <siteId>          Take a site offline (the name stays yours)
+  slug-check <slug>           Check whether a name is available
+
+Options:
+  --file <fileName>           Entry HTML file inside the project (required to publish).
+  --slug <name>               Web address label. Omit to accept a suggestion.
+  --public                    Anyone on the web can open it (default).
+  --org                       Restrict to members of your organization.
+  --no-wait                   Return as soon as the publish starts.
+  --version <versionId>       Target version for rollback.
+  --token <jwt>               Clerk session token (or set OD_CLERK_SESSION_TOKEN).
+  --json                      Emit raw JSON.
+  --daemon-url <url>          Open Design daemon HTTP base.`);
+}
+
+async function runPublish(args) {
+  let flags;
+  try {
+    flags = parseFlags(args, { string: PUBLISH_STRING_FLAGS, boolean: PUBLISH_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  if (flags.help || flags.h) return printPublishHelp();
+
+  if (flags.public && flags.org) {
+    console.error('--public and --org are mutually exclusive');
+    process.exit(2);
+  }
+
+  const positionals = positionalArgs(args, PUBLISH_STRING_FLAGS);
+  const base = await cliDaemonBaseUrl(flags);
+  const token = typeof flags.token === 'string' && flags.token
+    ? flags.token
+    : (process.env.OD_CLERK_SESSION_TOKEN ?? '');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        headers: {
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    return resp;
+  }
+
+  async function readOrFail(resp) {
+    if (!resp.ok) return structuredHttpFailure(resp);
+    return resp.json();
+  }
+
+  const emit = (payload, render) => {
+    if (flags.json) return process.stdout.write(JSON.stringify(payload) + '\n');
+    render();
+  };
+
+  const command = positionals[0] ?? '';
+
+  // ---- list ---------------------------------------------------------------
+  if (command === 'list') {
+    const data = await readOrFail(await request('GET', '/api/sites'));
+    return emit(data, () => {
+      const sites = data?.sites ?? [];
+      if (sites.length === 0) return console.log('No published sites yet.');
+      for (const site of sites) {
+        console.log(`${site.slug}\t${site.visibility}\t${site.status}\t${site.url ?? ''}`);
+      }
+    });
+  }
+
+  // ---- slug-check ---------------------------------------------------------
+  if (command === 'slug-check') {
+    const slug = positionals[1] ?? '';
+    if (!slug) {
+      console.error('slug is required: od publish slug-check <slug>');
+      process.exit(2);
+    }
+    const data = await readOrFail(
+      await request('GET', `/api/sites/slug-available?slug=${encodeURIComponent(slug)}`),
+    );
+    return emit(data, () => {
+      console.log(data.available
+        ? `${data.slug} is available`
+        : `${data.slug} is not available: ${data.reason}${data.suggestion ? ` (try ${data.suggestion})` : ''}`);
+    });
+  }
+
+  // ---- status / versions / rollback / unpublish ---------------------------
+  if (command === 'status' || command === 'versions' || command === 'rollback' || command === 'unpublish') {
+    const siteId = positionals[1] ?? '';
+    if (!siteId) {
+      console.error(`siteId is required: od publish ${command} <siteId>`);
+      process.exit(2);
+    }
+    const encoded = encodeURIComponent(siteId);
+
+    if (command === 'status') {
+      const data = await readOrFail(await request('GET', `/api/sites/${encoded}`));
+      return emit(data, () => {
+        const site = data.site;
+        console.log(`${site.slug}\t${site.visibility}\t${site.status}\t${site.url ?? ''}`);
+      });
+    }
+
+    if (command === 'versions') {
+      const data = await readOrFail(await request('GET', `/api/sites/${encoded}/versions`));
+      return emit(data, () => {
+        for (const version of data?.versions ?? []) {
+          console.log(`${version.isLive ? '*' : ' '} v${version.versionNumber ?? version.version_number}\t${version.id}\t${version.fileCount ?? version.file_count} files`);
+        }
+      });
+    }
+
+    if (command === 'rollback') {
+      const versionId = typeof flags.version === 'string' ? flags.version.trim() : '';
+      if (!versionId) {
+        console.error('--version <versionId> is required');
+        process.exit(2);
+      }
+      const data = await readOrFail(
+        await request('POST', `/api/sites/${encoded}/rollback`, { versionId }),
+      );
+      return emit(data, () => console.log(`[publish] rolled back → ${data?.site?.url ?? ''}`));
+    }
+
+    const data = await readOrFail(await request('POST', `/api/sites/${encoded}/unpublish`));
+    return emit(data, () => console.log(`[publish] unpublished ${data?.site?.slug ?? siteId}`));
+  }
+
+  // ---- publish ------------------------------------------------------------
+  const projectId = command;
+  if (!projectId) {
+    console.error('projectId is required: od publish <projectId> --file <fileName>');
+    process.exit(2);
+  }
+  const fileName = typeof flags.file === 'string' ? flags.file.trim() : '';
+  if (!fileName) {
+    console.error('--file <fileName> is required');
+    process.exit(2);
+  }
+
+  const visibility = flags.org
+    ? 'org'
+    : (typeof flags.visibility === 'string' && flags.visibility.trim() ? flags.visibility.trim() : 'public');
+  if (visibility !== 'public' && visibility !== 'org') {
+    console.error(`invalid visibility: "${visibility}" (must be "public" or "org")`);
+    process.exit(2);
+  }
+
+  const body = { fileName, visibility };
+  if (typeof flags.slug === 'string' && flags.slug.trim()) body.slug = flags.slug.trim();
+
+  const started = await readOrFail(
+    await request('POST', `/api/projects/${encodeURIComponent(projectId)}/publish`, body),
+  );
+  const publishId = started?.publishId;
+
+  if (flags['no-wait'] || !publishId) {
+    return emit(started, () => console.log(`[publish] started ${publishId ?? ''}`));
+  }
+
+  // Poll rather than consume SSE: a CLI that exits on completion does not need
+  // a streaming transport, and polling keeps this readable without an
+  // event-source dependency.
+  let last = '';
+  for (;;) {
+    const state = await readOrFail(await request('GET', `/api/publish/${encodeURIComponent(publishId)}`));
+    const progress = state?.progress ?? {};
+
+    if (!flags.json) {
+      const line = progress.message ?? progress.phase ?? '';
+      if (line && line !== last) {
+        console.log(`[publish] ${line}`);
+        last = line;
+      }
+    }
+
+    if (state?.error) {
+      if (flags.json) process.stdout.write(JSON.stringify(state) + '\n');
+      else console.error(`[publish] failed: ${state.error.message}`);
+      process.exit(1);
+    }
+
+    if (progress.phase === 'live') {
+      return emit(state, () => console.log(`[publish] live → ${state.url ?? ''}`));
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// od data — Workspace Database (permanent structured data plane).
+// Mirrors the Database tab against /api/data/*. The CLI form is the
+// embeddability contract: external agents and scripts drive the company
+// database headlessly without rendering the web UI.
+
+function printDataHelp() {
+  console.log(`Usage: od data <subcommand> [options]
+
+Subcommands:
+  tables list                          List tables (--include-archived)
+  tables show <table>                  Show one table (name or id)
+  tables create --data-file <path|->   Create a table from a schema JSON
+  query <table>                        Query records (--data/--data-file for
+                                       filters/sort, --limit, --cursor,
+                                       --include-deleted)
+  insert <table> --data <json>         Insert a record (or --data-file <path|->)
+  update <record-id> --data <json>     Patch a record (--expected-revision <n>;
+                                       null field values clear the field)
+  delete <record-id>                   Soft-delete a record (nothing truly
+                                       deletes; restore brings it back)
+  restore <record-id>                  Restore a soft-deleted record
+  revisions <record-id>                Full row history
+  audit                                Audit trail (--table, --subject,
+                                       --limit, --cursor)
+
+Options:
+  --org <id>         Organization to operate in (default: your first)
+  --data <json>      Inline JSON payload
+  --data-file <path|->  JSON payload from a file, or - for stdin
+  --json             Machine-readable output
+  --daemon-url <url> Daemon base URL
+
+Examples:
+  od data tables create --data-file - <<'JSON'
+  {"name":"employees","fields":[
+    {"name":"full_name","type":"text","required":true},
+    {"name":"email","type":"text","required":true,"unique":true},
+    {"name":"salary","type":"money"}]}
+  JSON
+  od data insert employees --data '{"full_name":"Ada","email":"ada@co.com"}'
+  od data query employees --data '{"filters":[{"field":"email","op":"contains","value":"@co.com"}]}' --json
+`);
+}
+
+async function runData(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printDataHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: DATA_STRING_FLAGS, boolean: DATA_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, DATA_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.json();
+  }
+
+  async function readDataPayload(required) {
+    if (flags.data !== undefined) {
+      try {
+        return JSON.parse(flags.data);
+      } catch {
+        console.error('--data must be valid JSON');
+        process.exit(2);
+      }
+    }
+    const file = flags['data-file'];
+    if (file) {
+      let text;
+      if (file === '-') {
+        const chunks = [];
+        for await (const chunk of process.stdin) chunks.push(chunk);
+        text = Buffer.concat(chunks).toString('utf8');
+      } else {
+        const { readFile } = await import('node:fs/promises');
+        text = await readFile(file, 'utf8');
+      }
+      try {
+        return JSON.parse(text);
+      } catch {
+        console.error('--data-file must contain valid JSON');
+        process.exit(2);
+      }
+    }
+    if (required) {
+      console.error('provide --data <json> or --data-file <path|->');
+      process.exit(2);
+    }
+    return undefined;
+  }
+
+  async function resolveOrgId() {
+    if (flags.org) return flags.org;
+    if (flags.workspace) return flags.workspace;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  const printRecord = (record) => {
+    const summary = Object.entries(record.data ?? {})
+      .slice(0, 4)
+      .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+      .join(' ');
+    console.log(`${record.id}\trev ${record.revision}${record.deletedAt ? '\t[deleted]' : ''}\t${summary}`);
+  };
+
+  // Organizations and members moved to `od org` when the organization layer
+  // landed; point anyone with the old command at the new one rather than
+  // silently doing nothing.
+  if (sub === 'workspaces' || sub === 'orgs' || sub === 'members') {
+    console.error(`\`od data ${sub}\` moved to \`od org ${sub === 'members' ? 'members' : 'list'}\``);
+    process.exit(2);
+  }
+
+  if (sub === 'tables') {
+    const action = positionals[1] ?? 'list';
+    const orgId = await resolveOrgId();
+    if (action === 'list') {
+      const suffix = flags['include-archived'] ? '?includeArchived=1' : '';
+      const data = await request('GET', `/api/data/orgs/${orgId}/tables${suffix}`);
+      if (flags.json) return writeJsonOut(data);
+      for (const table of data.tables) {
+        console.log(`${table.id}\t${table.name}\t${table.fields.length} fields\tv${table.schemaVersion}\t${table.status}`);
+      }
+      return;
+    }
+    if (action === 'show') {
+      const ref = positionals[2];
+      if (!ref) {
+        console.error('tables show requires a table name or id');
+        process.exit(2);
+      }
+      const data = await request('GET', `/api/data/orgs/${orgId}/tables/${encodeURIComponent(ref)}`);
+      if (flags.json) return writeJsonOut(data);
+      const table = data.table;
+      console.log(`${table.id}\t${table.name}\tv${table.schemaVersion}\t${table.status}`);
+      for (const field of table.fields) {
+        const marks = [field.required ? 'required' : '', field.unique ? 'unique' : ''].filter(Boolean).join(',');
+        console.log(`  ${field.name}\t${field.type}${marks ? `\t${marks}` : ''}`);
+      }
+      return;
+    }
+    if (action === 'create') {
+      const schema = await readDataPayload(true);
+      const data = await request('POST', `/api/data/orgs/${orgId}/tables`, schema);
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[data] created table ${data.table.id} (${data.table.name}) with ${data.table.fields.length} fields`);
+      return;
+    }
+    console.error(`unknown tables action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'query') {
+    const ref = positionals[1] ?? flags.table;
+    if (!ref) {
+      console.error('query requires a table name or id');
+      process.exit(2);
+    }
+    const orgId = await resolveOrgId();
+    const body = (await readDataPayload(false)) ?? {};
+    if (flags.limit) body.limit = Number(flags.limit);
+    if (flags.cursor) body.cursor = flags.cursor;
+    if (flags.sort) body.sort = { field: flags.sort, direction: flags.direction === 'desc' ? 'desc' : 'asc' };
+    if (flags['include-deleted']) body.includeDeleted = true;
+    const data = await request('POST', `/api/data/orgs/${orgId}/tables/${encodeURIComponent(ref)}/records/query`, body);
+    if (flags.json) return writeJsonOut(data);
+    for (const record of data.records) printRecord(record);
+    if (data.nextCursor) console.log(`[data] more results: --cursor ${data.nextCursor}`);
+    return;
+  }
+
+  if (sub === 'insert') {
+    const ref = positionals[1] ?? flags.table;
+    if (!ref) {
+      console.error('insert requires a table name or id');
+      process.exit(2);
+    }
+    const orgId = await resolveOrgId();
+    const payload = await readDataPayload(true);
+    const data = await request('POST', `/api/data/orgs/${orgId}/tables/${encodeURIComponent(ref)}/records`, { data: payload });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[data] inserted ${data.record.id}`);
+    return;
+  }
+
+  if (sub === 'update') {
+    const recordId = positionals[1];
+    if (!recordId) {
+      console.error('update requires a record id');
+      process.exit(2);
+    }
+    const orgId = await resolveOrgId();
+    const payload = await readDataPayload(true);
+    const body = { data: payload };
+    if (flags['expected-revision']) body.expectedRevision = Number(flags['expected-revision']);
+    const data = await request('PATCH', `/api/data/orgs/${orgId}/records/${encodeURIComponent(recordId)}`, body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[data] updated ${data.record.id} to revision ${data.record.revision}`);
+    return;
+  }
+
+  if (sub === 'delete' || sub === 'restore') {
+    const recordId = positionals[1];
+    if (!recordId) {
+      console.error(`${sub} requires a record id`);
+      process.exit(2);
+    }
+    const orgId = await resolveOrgId();
+    const action = sub === 'delete' ? 'soft-delete' : 'restore';
+    const data = await request('POST', `/api/data/orgs/${orgId}/records/${encodeURIComponent(recordId)}/${action}`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[data] ${sub === 'delete' ? 'soft-deleted' : 'restored'} ${data.record.id}`);
+    return;
+  }
+
+  if (sub === 'revisions') {
+    const recordId = positionals[1];
+    if (!recordId) {
+      console.error('revisions requires a record id');
+      process.exit(2);
+    }
+    const orgId = await resolveOrgId();
+    const data = await request('GET', `/api/data/orgs/${orgId}/records/${encodeURIComponent(recordId)}/revisions`);
+    if (flags.json) return writeJsonOut(data);
+    for (const revision of data.revisions) {
+      console.log(`rev ${revision.revision}\t${revision.op}\t${new Date(revision.createdAt).toISOString()}`);
+    }
+    return;
+  }
+
+  if (sub === 'audit') {
+    const orgId = await resolveOrgId();
+    const query = new URLSearchParams();
+    if (flags.table) {
+      const tableData = await request('GET', `/api/data/orgs/${orgId}/tables/${encodeURIComponent(flags.table)}`);
+      query.set('tableId', tableData.table.id);
+    }
+    if (flags.subject) query.set('subjectId', flags.subject);
+    if (flags.limit) query.set('limit', flags.limit);
+    if (flags.cursor) query.set('cursor', flags.cursor);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    const data = await request('GET', `/api/data/orgs/${orgId}/audit${suffix}`);
+    if (flags.json) return writeJsonOut(data);
+    for (const event of data.events) {
+      const actor = event.actorKind === 'user' ? (event.actorMemberId ?? 'user') : event.actorKind;
+      console.log(`${new Date(event.createdAt).toISOString()}\t${event.op}\t${event.subjectId}\t${actor}`);
+    }
+    if (data.nextCursor) console.log(`[data] more results: --cursor ${data.nextCursor}`);
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printDataHelp();
+  process.exit(2);
+}
+
+// ---------------------------------------------------------------------------
+// od org — organizations, members, and invite links.
+// Mirrors the Organization surfaces in the web UI against /api/orgs/*. The CLI
+// form is the embeddability contract: an external agent or a setup script can
+// stand up an organization and invite the team without a browser.
+
+function printOrgHelp() {
+  console.log(`Usage: od org <subcommand> [options]
+
+Subcommands:
+  list                         Organizations you belong to
+  create --name <name>         Create an organization (you become its owner)
+  show                         Show the active organization
+  rename --name <name>         Rename the active organization
+  members                      List members and their roles
+  role <member-id> --role <r>  Set a member's role (owner|admin|member)
+  remove <member-id>           Remove a member from the organization
+  invites                      List invite links
+  invite [--role <r>] [--expires-in <hours>] [--max-uses <n>]
+                               Create an invite link (printed once)
+  revoke-invite <invite-id>    Stop an invite link from working
+  join <token-or-url>          Accept an invite and join
+  whoami                       Show how you are signed in
+
+Options:
+  --org <id>         Organization to act in (default: your first)
+  --json             Machine-readable output
+  --daemon-url <url> Daemon base URL
+
+Examples:
+  od org create --name "Acme" --json
+  od org invite --role member --expires-in 168 --max-uses 25
+  od org role wsm-1234 --role admin
+`);
+}
+
+async function runOrg(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printOrgHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: ORG_STRING_FLAGS, boolean: ORG_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, ORG_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        headers: {
+          ...(flags.org ? { 'x-od-org': flags.org } : {}),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.json();
+  }
+
+  async function activeOrgId() {
+    if (flags.org) return flags.org;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  if (sub === 'whoami') {
+    const data = await request('GET', '/api/auth/context');
+    if (flags.json) return writeJsonOut(data);
+    if (!data.viewer) {
+      console.log(`[org] not signed in (auth mode: ${data.mode})`);
+      return;
+    }
+    console.log(`${data.viewer.displayName}${data.viewer.email ? ` <${data.viewer.email}>` : ''}\tauth: ${data.mode}`);
+    for (const org of data.organizations) console.log(`  ${org.id}\t${org.name}\t${org.role}`);
+    return;
+  }
+
+  if (sub === 'list') {
+    const data = await request('GET', '/api/orgs');
+    if (flags.json) return writeJsonOut(data);
+    for (const org of data.organizations) {
+      console.log(`${org.id}\t${org.name}\t${org.role}\t${org.memberCount} member(s)`);
+    }
+    return;
+  }
+
+  if (sub === 'create') {
+    if (!flags.name) {
+      console.error('create requires --name');
+      process.exit(2);
+    }
+    const data = await request('POST', '/api/orgs', { name: flags.name });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[org] created ${data.organization.id} (${data.organization.name})`);
+    return;
+  }
+
+  if (sub === 'show') {
+    const data = await request('GET', `/api/orgs/${encodeURIComponent(await activeOrgId())}`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`${data.organization.id}\t${data.organization.name}`);
+    return;
+  }
+
+  if (sub === 'rename') {
+    if (!flags.name) {
+      console.error('rename requires --name');
+      process.exit(2);
+    }
+    const data = await request('PATCH', `/api/orgs/${encodeURIComponent(await activeOrgId())}`, { name: flags.name });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[org] renamed to ${data.organization.name}`);
+    return;
+  }
+
+  if (sub === 'members') {
+    const data = await request('GET', `/api/orgs/${encodeURIComponent(await activeOrgId())}/members`);
+    if (flags.json) return writeJsonOut(data);
+    for (const member of data.members) {
+      console.log(`${member.id}\t${member.displayName}\t${member.email ?? '-'}\t${member.role}\t${member.status}`);
+    }
+    return;
+  }
+
+  if (sub === 'role') {
+    const memberId = positionals[1];
+    if (!memberId || !flags.role) {
+      console.error('role requires a member id and --role <owner|admin|member>');
+      process.exit(2);
+    }
+    const data = await request(
+      'PATCH',
+      `/api/orgs/${encodeURIComponent(await activeOrgId())}/members/${encodeURIComponent(memberId)}`,
+      { role: flags.role },
+    );
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[org] ${data.member.displayName} is now ${data.member.role}`);
+    return;
+  }
+
+  if (sub === 'remove') {
+    const memberId = positionals[1];
+    if (!memberId) {
+      console.error('remove requires a member id');
+      process.exit(2);
+    }
+    const data = await request(
+      'DELETE',
+      `/api/orgs/${encodeURIComponent(await activeOrgId())}/members/${encodeURIComponent(memberId)}`,
+    );
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[org] removed ${data.member.displayName}`);
+    return;
+  }
+
+  if (sub === 'invites') {
+    const data = await request('GET', `/api/orgs/${encodeURIComponent(await activeOrgId())}/invites`);
+    if (flags.json) return writeJsonOut(data);
+    for (const invite of data.invites) {
+      const state = invite.revokedAt ? 'revoked' : 'active';
+      const uses = invite.maxUses ? `${invite.useCount}/${invite.maxUses}` : `${invite.useCount}`;
+      console.log(`${invite.id}\t${invite.role}\t${state}\tuses ${uses}`);
+    }
+    return;
+  }
+
+  if (sub === 'invite') {
+    const body = {};
+    if (flags.role) body.role = flags.role;
+    if (flags['expires-in']) body.expiresInHours = Number(flags['expires-in']);
+    if (flags['max-uses']) body.maxUses = Number(flags['max-uses']);
+    const data = await request('POST', `/api/orgs/${encodeURIComponent(await activeOrgId())}/invites`, body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(data.url);
+    console.log('[org] this link is shown once — copy it now');
+    return;
+  }
+
+  if (sub === 'revoke-invite') {
+    const inviteId = positionals[1];
+    if (!inviteId) {
+      console.error('revoke-invite requires an invite id');
+      process.exit(2);
+    }
+    const data = await request(
+      'POST',
+      `/api/orgs/${encodeURIComponent(await activeOrgId())}/invites/${encodeURIComponent(inviteId)}/revoke`,
+    );
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[org] revoked ${data.invite.id}`);
+    return;
+  }
+
+  if (sub === 'join') {
+    const raw = positionals[1];
+    if (!raw) {
+      console.error('join requires an invite token or URL');
+      process.exit(2);
+    }
+    // Accept either the bare token or the whole link someone pasted.
+    const token = raw.includes('/join/') ? raw.split('/join/').pop().split(/[?#]/)[0] : raw;
+    const data = await request('POST', `/api/invites/${encodeURIComponent(token)}/accept`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[org] joined ${data.organization.name} as ${data.member.role}`);
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printOrgHelp();
+  process.exit(2);
+}
+
+// ---------------------------------------------------------------------------
+// od app — publish a generated tool to your organization and share it.
+
+function printAppHelp() {
+  console.log(`Usage: od app <subcommand> [options]
+
+Subcommands:
+  list                          Apps in the active organization
+  publish --project <id> --file <path> --name <name> [--visibility <v>]
+                                Publish a project file as an app
+  show <app-id>                 Show one app
+  update <app-id> [--name <n>] [--description <d>] [--visibility <v>] [--file <path>]
+                                Change an app
+  archive <app-id>              Hide an app from the gallery (nothing is deleted)
+  share <app-id> [--expires-in <hours>]
+                                Create a public share link (printed once)
+  shares <app-id>               List an app's share links
+  revoke-share <app-id> <share-id>
+                                Stop a share link from working
+
+Visibility:
+  private  only you see it in the gallery
+  org      every member can open it (default)
+  link     additionally reachable by anyone holding a share link
+
+Options:
+  --org <id>         Organization to act in (default: your first)
+  --json             Machine-readable output
+  --daemon-url <url> Daemon base URL
+
+Examples:
+  od app publish --project proj-1 --file expenses.html --name "Expense form"
+  od app share app-1234 --expires-in 72
+`);
+}
+
+async function runApp(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printAppHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: APP_STRING_FLAGS, boolean: APP_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, APP_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        headers: {
+          ...(flags.org ? { 'x-od-org': flags.org } : {}),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.json();
+  }
+
+  async function activeOrgId() {
+    if (flags.org) return flags.org;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  const orgPath = async (suffix) => `/api/orgs/${encodeURIComponent(await activeOrgId())}/apps${suffix}`;
+
+  if (sub === 'list') {
+    const data = await request('GET', await orgPath(''));
+    if (flags.json) return writeJsonOut(data);
+    for (const item of data.apps) {
+      console.log(`${item.id}\t${item.name}\t${item.visibility}\t${item.openCount} open(s)\tby ${item.createdByName ?? item.createdBy}`);
+    }
+    return;
+  }
+
+  if (sub === 'publish') {
+    if (!flags.project || !flags.file || !flags.name) {
+      console.error('publish requires --project, --file, and --name');
+      process.exit(2);
+    }
+    const data = await request('POST', await orgPath(''), {
+      name: flags.name,
+      projectId: flags.project,
+      filePath: flags.file,
+      ...(flags.description ? { description: flags.description } : {}),
+      ...(flags.visibility ? { visibility: flags.visibility } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[app] published ${data.app.id} (${data.app.name}) — ${data.app.visibility}`);
+    return;
+  }
+
+  const appId = positionals[1];
+
+  if (sub === 'show') {
+    if (!appId) {
+      console.error('show requires an app id');
+      process.exit(2);
+    }
+    const data = await request('GET', await orgPath(`/${encodeURIComponent(appId)}`));
+    if (flags.json) return writeJsonOut(data);
+    console.log(`${data.app.id}\t${data.app.name}\t${data.app.visibility}\t${data.app.projectId}/${data.app.filePath}`);
+    return;
+  }
+
+  if (sub === 'update' || sub === 'archive') {
+    if (!appId) {
+      console.error(`${sub} requires an app id`);
+      process.exit(2);
+    }
+    const body = sub === 'archive' ? { status: 'archived' } : {};
+    if (sub === 'update') {
+      if (flags.name) body.name = flags.name;
+      if (flags.description) body.description = flags.description;
+      if (flags.visibility) body.visibility = flags.visibility;
+      if (flags.file) body.filePath = flags.file;
+    }
+    const data = await request('PATCH', await orgPath(`/${encodeURIComponent(appId)}`), body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[app] ${sub === 'archive' ? 'archived' : 'updated'} ${data.app.id}`);
+    return;
+  }
+
+  if (sub === 'share') {
+    if (!appId) {
+      console.error('share requires an app id');
+      process.exit(2);
+    }
+    const body = flags['expires-in'] ? { expiresInHours: Number(flags['expires-in']) } : {};
+    const data = await request('POST', await orgPath(`/${encodeURIComponent(appId)}/shares`), body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(data.url);
+    console.log('[app] this link is shown once — copy it now');
+    return;
+  }
+
+  if (sub === 'shares') {
+    if (!appId) {
+      console.error('shares requires an app id');
+      process.exit(2);
+    }
+    const data = await request('GET', await orgPath(`/${encodeURIComponent(appId)}/shares`));
+    if (flags.json) return writeJsonOut(data);
+    for (const share of data.shares) {
+      const state = share.revokedAt ? 'revoked' : 'active';
+      console.log(`${share.id}\t${state}\t${share.viewCount} view(s)`);
+    }
+    return;
+  }
+
+  if (sub === 'revoke-share') {
+    const shareId = positionals[2];
+    if (!appId || !shareId) {
+      console.error('revoke-share requires an app id and a share id');
+      process.exit(2);
+    }
+    const data = await request(
+      'POST',
+      await orgPath(`/${encodeURIComponent(appId)}/shares/${encodeURIComponent(shareId)}/revoke`),
+    );
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[app] revoked ${data.share.id}`);
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printAppHelp();
+  process.exit(2);
 }
