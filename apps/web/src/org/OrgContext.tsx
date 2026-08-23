@@ -69,18 +69,28 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   const [auth, setAuth] = useState<AuthContextResponse | null>(null);
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(() => readStoredOrgId());
 
-  const organizations = auth?.organizations ?? [];
+  // Memoized because this is the identity the context value is built from:
+  // a fresh array on every render would republish the context to every
+  // consumer in the app on every render.
+  const organizations = useMemo(
+    () => (Array.isArray(auth?.organizations) ? auth.organizations : []),
+    [auth],
+  );
 
   const load = useCallback(async () => {
     try {
       const context = await fetchAuthContext();
-      setAuth(context);
+      // This provider wraps the entire app, so a malformed or partial
+      // response must never throw — that would blank the whole product over
+      // one bad payload. Normalize to a usable shape instead.
+      const organizations = Array.isArray(context?.organizations) ? context.organizations : [];
+      setAuth({ ...context, organizations });
       setActiveOrgIdState((current) => {
         // Keep the stored choice only while it is still one of ours —
         // otherwise a removed member would stay pinned to an org they can no
         // longer read, and every request would 403.
-        const stillAMember = current && context.organizations.some((org) => org.id === current);
-        const next = stillAMember ? current : (context.organizations[0]?.id ?? null);
+        const stillAMember = current && organizations.some((org) => org?.id === current);
+        const next = stillAMember ? current : (organizations[0]?.id ?? null);
         currentOrgId = next;
         storeOrgId(next);
         return next;
@@ -117,10 +127,11 @@ export function OrgProvider({ children }: { children: ReactNode }) {
       // Re-read rather than synthesizing the membership view, so the row we
       // hand back is the same one the server will keep returning.
       const context = await fetchAuthContext();
-      setAuth(context);
-      return context.organizations.find((org) => org.id === created.id) ?? null;
+      const next = Array.isArray(context?.organizations) ? context.organizations : [];
+      setAuth({ ...context, organizations: next });
+      return next.find((org) => org.id === created.id) ?? null;
     },
-    [load],
+    [],
   );
 
   const value = useMemo<OrgContextValue>(() => {
@@ -144,10 +155,31 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   return <OrgContext.Provider value={value}>{children}</OrgContext.Provider>;
 }
 
-export function useOrg(): OrgContextValue {
-  const value = useContext(OrgContext);
-  if (!value) {
-    throw new Error('useOrg must be used inside an OrgProvider');
-  }
-  return value;
+/** Returns null when rendered outside a provider.
+ *
+ * Deliberately not a throwing hook: the entry shell mounts the org switcher
+ * and every org-scoped view unconditionally, so a hard failure here would
+ * blank the entire shell instead of degrading one panel. Chrome renders
+ * nothing when this is null; views pair it with {@link NO_ORG_CONTEXT}. */
+export function useOptionalOrg(): OrgContextValue | null {
+  return useContext(OrgContext);
 }
+
+/** The "no organization yet" reading of the context.
+ *
+ * Views the entry shell mounts unconditionally pair this with
+ * {@link useOptionalOrg} so rendering outside a provider produces the empty
+ * state they already handle, rather than an exception that blanks the shell.
+ * Every field is inert: nothing to show, nothing permitted, nothing to do. */
+export const NO_ORG_CONTEXT: OrgContextValue = {
+  loading: false,
+  auth: null,
+  organizations: [],
+  activeOrg: null,
+  activeOrgId: null,
+  role: null,
+  can: () => false,
+  setActiveOrg: () => {},
+  createOrganization: async () => null,
+  refresh: async () => {},
+};

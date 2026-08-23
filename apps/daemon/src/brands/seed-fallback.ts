@@ -20,6 +20,8 @@ import type { BrandColor, BrandColorRole, BrandFontSpec } from '@open-design/con
 
 import { extractColors, extractFonts, normalizeColor, type ColorCandidate } from './prefetch.js';
 import { fetchExternalBrandAsset } from './safe-fetch.js';
+import { findCssImportUrls, findStylesheetRefs } from './css-links.js';
+import { extractThemeColors } from './html-scan.js';
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -28,7 +30,7 @@ const HTML_TIMEOUT_MS = 7_000;
 const CSS_TIMEOUT_MS = 7_000;
 const HTML_CAP = 1_500_000;
 const CSS_CAP = 400_000;
-const MAX_CSS_FILES = 4;
+const MAX_CSS_FILES = 8;
 
 /** The mutable seed shape the harvester fills in (a subset of `Brand`). */
 export interface SeedSlot {
@@ -42,24 +44,6 @@ export interface SeedSlot {
 
 /** Signature of {@link ensureBrandSeed}; injectable so tests avoid network. */
 export type SeedFallbackFn = (siteUrl: string, seed: SeedSlot) => Promise<{ changed: boolean }>;
-
-const decodeEntities = (s: string): string =>
-  s
-    .replace(/&amp;/g, '&')
-    .replace(/&#x2F;/gi, '/')
-    .replace(/&#47;/g, '/')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-
-function metaContent(html: string, nameOrProp: string): string {
-  const re = new RegExp(
-    `<meta[^>]+(?:name|property)=["']${nameOrProp.replace(/[:.]/g, '\\$&')}["'][^>]*>`,
-    'i',
-  );
-  const tag = re.exec(html)?.[0];
-  if (!tag) return '';
-  return decodeEntities(/content=["']([^"']*)["']/i.exec(tag)?.[1] ?? '');
-}
 
 async function fetchText(url: string, cap: number, timeoutMs: number): Promise<string | null> {
   try {
@@ -306,21 +290,22 @@ async function gatherCss(
 
   const googleFontsUrls: string[] = [];
   const cssLinks: string[] = [];
-  for (const m of html.matchAll(/<link[^>]+>/gi)) {
-    if (!/rel=["']stylesheet["']/i.test(m[0])) continue;
-    const href = /href=["']([^"']+)["']/i.exec(m[0])?.[1];
-    if (!href) continue;
-    try {
-      const abs = new URL(decodeEntities(href), baseUrl).href;
-      if (/fonts\.googleapis\.com/i.test(abs)) googleFontsUrls.push(abs);
-      else cssLinks.push(abs);
-    } catch {
-      // Unresolvable href — skip.
+  for (const ref of findStylesheetRefs(html, baseUrl)) {
+    if (ref.googleFonts) googleFontsUrls.push(ref.url);
+    else cssLinks.push(ref.url);
+  }
+  for (const chunk of chunks) {
+    for (const imp of findCssImportUrls(chunk, baseUrl)) {
+      if (/fonts\.googleapis\.com/i.test(imp)) {
+        if (!googleFontsUrls.includes(imp)) googleFontsUrls.push(imp);
+      } else if (!cssLinks.includes(imp)) {
+        cssLinks.push(imp);
+      }
     }
   }
 
   const fetched = await Promise.all(
-    [...cssLinks.slice(0, MAX_CSS_FILES), ...googleFontsUrls.slice(0, 2)].map((u) =>
+    [...cssLinks.slice(0, MAX_CSS_FILES), ...googleFontsUrls.slice(0, 3)].map((u) =>
       fetchText(u, CSS_CAP, CSS_TIMEOUT_MS),
     ),
   );
@@ -353,7 +338,9 @@ export async function ensureBrandSeed(siteUrl: string, seed: SeedSlot): Promise<
   let changed = false;
 
   if (!hasColors) {
-    const palette = deriveSeedPalette(extractColors(css), metaContent(html, 'theme-color'));
+    const themeHits = extractThemeColors(html);
+    const theme = themeHits.find((h) => !h.media) ?? themeHits[0];
+    const palette = deriveSeedPalette(extractColors(css), theme?.value);
     if (palette.length > 0) {
       seed.colors = palette;
       changed = true;

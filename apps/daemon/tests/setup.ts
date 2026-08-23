@@ -44,6 +44,9 @@ if (!globalState[TEST_DATA_DIR_SYMBOL]) {
 // process to use one isolated data directory before any test imports server.ts,
 // so tests can never read or overwrite the developer's real repo `.od` data.
 process.env.OD_DATA_DIR = globalState[TEST_DATA_DIR_SYMBOL];
+// Route tests still speak as a machine owner. Production and `tools-dev`
+// require Clerk unless this is set; identity.test.ts covers that default.
+process.env.OD_AUTH_MODE ??= 'local-owner';
 // Keep unit tests from reading a developer's stored Vela profile and routing
 // Langfuse-shaped telemetry through the authenticated Vela sink by accident.
 process.env.OPEN_DESIGN_VELA_TELEMETRY ??= 'off';

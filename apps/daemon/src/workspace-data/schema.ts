@@ -27,6 +27,7 @@ import {
 } from '@open-design/contracts';
 import { WorkspaceDataError, workspaceValidationError } from './errors.js';
 import { appendAuditEvent } from './audit.js';
+import { parseFormula } from './formula.js';
 import type { WorkspaceActor } from './types.js';
 
 type SqliteDb = Database.Database;
@@ -153,6 +154,41 @@ function checkBoundedJson(
 }
 
 function validateFieldConfig(
+  input: WorkspaceFieldInput,
+  path: string,
+  issues: ApiValidationIssue[],
+  db: SqliteDb,
+): WorkspaceFieldConfig | null {
+  const validated = validateTypeConfig(input, path, issues, db);
+  const carried: Record<string, unknown> = {};
+
+  // `role` is type-independent and must survive validation: automatic
+  // accounting finds the total, the customer, and the status by role, so
+  // dropping it here would silently disconnect the books from the documents.
+  const role = input.config?.role;
+  if (typeof role === 'string' && role) carried.role = role;
+
+  // `formula` likewise. It is checked here rather than trusted: a formula is
+  // user input, and one that cannot parse should be refused when the field is
+  // created, not silently stored and blanked on every read.
+  const formula = (input.config as { formula?: unknown } | undefined)?.formula;
+  if (typeof formula === 'string' && formula.trim()) {
+    try {
+      parseFormula(formula);
+      carried.formula = formula;
+    } catch (err) {
+      issues.push({
+        path: `${path}.config.formula`,
+        message: err instanceof Error ? err.message : 'formula could not be read',
+      });
+      return null;
+    }
+  }
+
+  return Object.keys(carried).length > 0 ? { ...(validated ?? {}), ...carried } : validated;
+}
+
+function validateTypeConfig(
   input: WorkspaceFieldInput,
   path: string,
   issues: ApiValidationIssue[],
@@ -365,6 +401,14 @@ export function listTables(db: SqliteDb, options: { includeArchived?: boolean } 
 /** Resolve a table by id or machine name — the CLI and agent tools accept
  * either, so humans can say `employees` and tools can pin `tbl-<uuid>`. */
 export function resolveTable(db: SqliteDb, ref: string): WorkspaceTable {
+  // Callers include agent-authored payloads, so a missing or non-string ref is
+  // an expected input — answer it as a validation failure rather than letting
+  // a TypeError surface as an internal error.
+  if (typeof ref !== 'string' || ref.trim() === '') {
+    throw workspaceValidationError([
+      { path: 'tableRef', message: 'a table name or id is required' },
+    ]);
+  }
   if (ref.startsWith('tbl-')) return loadTable(db, ref);
   return loadTableByName(db, ref);
 }

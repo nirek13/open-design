@@ -135,8 +135,8 @@ test('[P0] @critical entry chrome exposes the primary home creation surface and 
   });
 
   await gotoEntryHome(page);
-  await expect(page.getByTestId('entry-star-badge')).toBeVisible();
-  await expect(page.getByTestId('entry-use-everywhere-button')).toBeVisible();
+  await expect(page.getByTestId('workspace-tabs-trailing')).toBeVisible();
+  await expect(page.getByTestId('entry-settings-menu-trigger')).toBeVisible();
   await expect(page.getByTestId('recent-projects-strip')).toHaveCount(0);
   // The nav rail is collapsed by default — only the topbar toggle shows.
   // Expand it to assert the rail and its logo are reachable.
@@ -898,7 +898,7 @@ test('[P1] Settings BYOK connection failures emit a classified analytics error c
   expect(captured).toContain('unknown');
 });
 
-test('[P2] entry help menu exposes community links and topbar routes Use everywhere', async ({ page }) => {
+test('[P2] entry help menu exposes community links and Integrations hosts Use everywhere', async ({ page }) => {
   await gotoEntryHome(page);
 
   // The help launcher lives in the (collapsed-by-default) rail footer.
@@ -915,8 +915,9 @@ test('[P2] entry help menu exposes community links and topbar routes Use everywh
     'https://discord.gg/mHAjSMV6gz',
   );
 
-  await page.getByTestId('entry-use-everywhere-button').click();
+  await page.getByTestId('entry-nav-integrations').click();
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
+  await page.getByTestId('integrations-tab-use-everywhere').click();
   await expect(page.getByTestId('integrations-tab-use-everywhere')).toHaveAttribute(
     'aria-selected',
     'true',
@@ -963,7 +964,10 @@ test('[P1] Use everywhere guide uses daemon MCP install info and copies an agent
   });
 
   await gotoEntryHome(page);
-  await page.getByTestId('entry-use-everywhere-button').click();
+  await ensureRailOpen(page);
+  await page.getByTestId('entry-nav-integrations').click();
+  await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
+  await page.getByTestId('integrations-tab-use-everywhere').click();
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
   await expect(page.getByTestId('integrations-tab-use-everywhere')).toHaveAttribute(
     'aria-selected',

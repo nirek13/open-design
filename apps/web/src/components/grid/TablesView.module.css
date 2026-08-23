@@ -1,0 +1,182 @@
+/* Tables down the side, views across the top, grid in the middle. */
+
+.layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sidebarTitle {
+  margin: 0;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+}
+
+.tableList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tableButton {
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tableButton:hover {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+}
+
+.tableActive {
+  background: var(--surface-3, rgba(127, 127, 127, 0.14));
+  font-weight: 600;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.viewBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.viewTabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.viewTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.viewTab:hover {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+}
+
+.viewTabActive {
+  background: var(--surface-3, rgba(127, 127, 127, 0.14));
+  font-weight: 600;
+}
+
+.viewAdd {
+  border: none;
+  background: transparent;
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+  font: inherit;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.viewAdd:hover {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+}
+
+.groupControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+
+.groupLabel {
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+}
+
+.groupSelect {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  background: transparent;
+  color: inherit;
+}
+
+/* Board columns scroll as a group; the page never scrolls sideways. */
+.board {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  align-items: flex-start;
+}
+
+.boardColumn {
+  flex: 0 0 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+}
+
+.boardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.error {
+  margin: 0 0 12px;
+  color: var(--danger, #c0392b);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tableButton {
+    transition: none;
+  }
+}

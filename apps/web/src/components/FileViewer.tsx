@@ -20,6 +20,9 @@ import { useAnalytics } from '../analytics/provider';
 import { exportErrorCode } from '../analytics/export-error-code';
 import { deployErrorCode } from '../analytics/deploy-error-code';
 import { PublishPanel } from './hosting/PublishPanel';
+import { CreateAppFlow } from './apps/CreateAppFlow';
+import { useOptionalRunningApp } from './apps/RunningAppContext';
+import { activeOrgIdForRequests } from '../org/OrgContext';
 import { trackIframeLoad } from '../observability/iframe-error';
 import {
   trackArtifactExportResult,
@@ -6325,6 +6328,8 @@ function HtmlViewer({
   // menu: that one needs the user's own Vercel/Cloudflare token, this one
   // needs nothing. See specs/current/one-click-hosting.md.
   const [publishPanelOpen, setPublishPanelOpen] = useState(false);
+  const [createAppOpen, setCreateAppOpen] = useState(false);
+  const runningApp = useOptionalRunningApp();
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   // False when closed; otherwise records which entry opened the modal so the
   // surface_view impression can carry entry_from.
@@ -13116,6 +13121,26 @@ function HtmlViewer({
                       )}
                       <div className="share-menu-divider" />
                       <div className="share-menu-section-label" role="presentation">
+                        {t('apps.create.menuSection')}
+                      </div>
+                      <button
+                        type="button"
+                        className="share-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          setDeployMenuOpen(false);
+                          setCreateAppOpen(true);
+                        }}
+                        data-testid="file-create-app"
+                      >
+                        <span className="share-menu-icon"><RemixIcon name="apps-2-line" size={15} /></span>
+                        <span className="share-menu-text">
+                          <span>{t('apps.create.menuItem')}</span>
+                          <small>{t('apps.create.menuItemDetail')}</small>
+                        </span>
+                      </button>
+                      <div className="share-menu-divider" />
+                      <div className="share-menu-section-label" role="presentation">
                         {t('fileViewer.shareMenuPublishOnline')}
                       </div>
                       {/* Listed first, and above the provider entries, because
@@ -13850,6 +13875,33 @@ function HtmlViewer({
               projectName={file.name.replace(/\.[^.]+$/, '')}
               fileName={file.name}
               onClose={() => setPublishPanelOpen(false)}
+            />
+          </div>
+        </div>,
+        document.body,
+      ) : null}
+      {createAppOpen && typeof document !== 'undefined' && activeOrgIdForRequests() ? createPortal(
+        <div
+          className="modal-backdrop viewer-modal-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setCreateAppOpen(false);
+          }}
+        >
+          <div className="modal deploy-modal" role="dialog" aria-modal="true" aria-label={t('apps.create.title')}>
+            <CreateAppFlow
+              orgId={activeOrgIdForRequests()!}
+              projectId={projectId}
+              projectName={file.name.replace(/\.[^.]+$/, '')}
+              filePath={file.name}
+              onClose={() => setCreateAppOpen(false)}
+              onCreated={(app) => {
+                setCreateAppOpen(false);
+                const orgId = activeOrgIdForRequests();
+                if (orgId && runningApp) {
+                  void runningApp.openApp(orgId, app).catch(() => {});
+                }
+              }}
             />
           </div>
         </div>,

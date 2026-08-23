@@ -237,14 +237,15 @@ API (`/api/orgs/*`), CLI (`od org`), and UI. Do not confuse it with
 (browser-style tabs).
 
 - **Identity** is resolved in exactly one place: `apps/daemon/src/auth/identity.ts`.
-  Two modes — `local-owner` (default; no auth configured, every interactive
-  request is the machine owner) and `clerk` (set `OD_CLERK_ISSUER`, optionally
-  `OD_CLERK_PUBLISHABLE_KEY`). Session JWTs are verified against the issuer's
-  JWKS by `auth/jwt-verify.ts`, which pins RS256 and is deny-by-default; do not
-  loosen it or add a second verification path.
+  Two modes — `clerk` (default; everyone signs in; set `OD_CLERK_ISSUER` and
+  `OD_CLERK_PUBLISHABLE_KEY`) and `local-owner` (opt-in with `OD_AUTH_MODE=local-owner`
+  when no issuer is set; every interactive request is the machine owner).
+  Session JWTs are verified against the issuer's JWKS by `auth/jwt-verify.ts`,
+  which pins RS256 and is deny-by-default; do not loosen it or add a second
+  verification path.
 - **Local-owner mode is not a security boundary.** Anyone who can reach the
-  daemon port is the owner — the correct posture for a loopback single-user
-  tool. A multi-user deployment MUST configure clerk mode.
+  daemon port is the owner — a loopback test/dev escape hatch only. The
+  running app requires clerk sign-in.
 - **Membership and roles** (`owner` > `admin` > `member`) are checked through
   `assertMemberRole` in `workspace-data/tenancy.ts`. The last owner can never be
   demoted or removed.

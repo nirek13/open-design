@@ -1,0 +1,153 @@
+/* The editable grid.
+ *
+ * Cells are buttons rather than divs so the whole grid is keyboard reachable
+ * without a roving-tabindex implementation. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+  border-radius: 10px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.th,
+.thAdd {
+  text-align: start;
+  font-weight: 600;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+  white-space: nowrap;
+  background: var(--surface-2, rgba(127, 127, 127, 0.05));
+  position: sticky;
+  top: 0;
+}
+
+.thLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.computedMark {
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.tr:hover {
+  background: var(--surface-2, rgba(127, 127, 127, 0.04));
+}
+
+.td,
+.tdAction {
+  padding: 0;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.12));
+  vertical-align: middle;
+}
+
+.tdComputed {
+  background: var(--surface-2, rgba(127, 127, 127, 0.04));
+}
+
+.cellButton {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: text;
+}
+
+.cellButton:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.cellButton:focus-visible {
+  outline: 2px solid var(--accent, #4c7cf3);
+  outline-offset: -2px;
+}
+
+.cellInput {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 2px solid var(--accent, #4c7cf3);
+  border-radius: 4px;
+  background: var(--surface-1, transparent);
+  color: inherit;
+  font: inherit;
+}
+
+.blank {
+  opacity: 0.4;
+}
+
+.code {
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
+.addColumn,
+.openRow,
+.addRow {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.addColumn:hover,
+.openRow:hover,
+.addRow:hover {
+  background: var(--surface-3, rgba(127, 127, 127, 0.12));
+}
+
+.addRowCell {
+  padding: 0;
+}
+
+.addRow {
+  width: 100%;
+  text-align: start;
+  padding: 8px 10px;
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+}
+
+.openRow {
+  opacity: 0;
+}
+
+.tr:hover .openRow,
+.openRow:focus-visible {
+  opacity: 1;
+}
+
+.empty {
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+  color: var(--text-3, rgba(127, 127, 127, 0.7));
+}
+
+.error {
+  margin: 0;
+  color: var(--danger, #c0392b);
+  font-size: 0.85rem;
+}

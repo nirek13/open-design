@@ -82,6 +82,7 @@ import { homeHeroChipLabel } from './home-hero/chip-labels';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import { consumePendingHomeChip, HOME_CHIP_INTENT_EVENT } from '../runtime/home-intent';
 import { navigate } from '../router';
+import { composePagesWikiPrompt } from './pages/wiki-prompt';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
 import { workspaceContextLinkedDirs } from './workspace-context';
 import {
@@ -430,6 +431,7 @@ export function HomeView({
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [mcpLoading, setMcpLoading] = useState(true);
   const [prompt, setPrompt] = useState(() => restoredDraft.prompt);
+  const [projectVisibility, setProjectVisibility] = useState<'private' | 'public' | null>(null);
   // Treat a restored non-empty prompt as user-edited so the plugin/skill
   // replacement guard still asks before clobbering it.
   const [promptEditedByUser, setPromptEditedByUser] = useState(
@@ -1781,6 +1783,35 @@ export function HomeView({
         onOpenNewProject('template');
         return;
       }
+      case 'open-pages': {
+        const request = prompt.trim();
+        if (request) {
+          void (async () => {
+            try {
+              const created = await createProject({
+                name: request.slice(0, 60),
+                pendingPrompt: composePagesWikiPrompt({ request }),
+                skillId: null,
+                designSystemId: null,
+              });
+              if (created?.project) {
+                setPrompt('');
+                navigate({
+                  kind: 'project',
+                  projectId: created.project.id,
+                  conversationId: created.conversationId ?? null,
+                  fileName: null,
+                });
+              }
+            } catch (err) {
+              setError(err instanceof Error ? err.message : String(err));
+            }
+          })();
+          return;
+        }
+        navigate({ kind: 'home', view: 'pages' });
+        return;
+      }
     }
   }
 
@@ -1871,6 +1902,10 @@ export function HomeView({
     // The send button disables itself while sending, but the Enter-to-send
     // path lands here directly — swallow re-entry during the in-flight window.
     if (sending) return;
+    if (projectVisibility == null) {
+      setError(t('newproj.visibilityRequired'));
+      return;
+    }
     const trimmed = prompt.trim();
     if (!trimmed && stagedFiles.length === 0) return;
     // P0 ui_click area=chat_composer element=send_button. Fires before the
@@ -2029,6 +2064,7 @@ export function HomeView({
         contextPlugins,
         contextMcpServers,
         contextConnectors,
+        visibility: projectVisibility ?? 'private',
         ...(contextWorkspaceItems.length > 0
           ? { initialRunContext: { workspaceItems: contextWorkspaceItems } }
           : {}),
@@ -2078,6 +2114,8 @@ export function HomeView({
         onPromptChange={handlePromptChange}
         onSubmit={submit}
         onSubmitScenario={submitScenario}
+        projectVisibility={projectVisibility}
+        onProjectVisibilityChange={setProjectVisibility}
         sessionMode={sessionMode}
         onSessionModeChange={setSessionMode}
         submitting={sending}

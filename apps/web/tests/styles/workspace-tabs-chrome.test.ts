@@ -37,6 +37,7 @@ describe('workspace tabs chrome styles', () => {
     const projectStrip = cssDeclarations(routinesCss, '.workspace-shell .workspace-tabs-strip');
 
     expect(ruleValue(chrome, 'padding')).toBe('0 8px 0 6px');
+    expect(ruleValue(chrome, 'overflow')).toBe('visible');
     expect(ruleValue(traffic, 'margin-right')).toBe('var(--app-chrome-traffic-margin)');
     expect(ruleValue(projectChrome, 'padding')).toBe('0 8px 0 0');
     expect(ruleValue(projectStrip, 'align-items')).toBe('center');

@@ -158,6 +158,404 @@ const MIGRATIONS: readonly PostgresMigration[] = [
         FOR EACH ROW EXECUTE FUNCTION od_audit_events_append_only();
     `,
   },
+  {
+    id: '0004-app-shares-workspace',
+    sql: `
+      -- Share rows carry their owning organization for the same reason app
+      -- rows do: on a shared database it is the only thing separating
+      -- tenants. Added as its own migration because 0002 had already been
+      -- applied — a shipped migration is never edited.
+      ALTER TABLE od_app_shares ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT '';
+      CREATE INDEX IF NOT EXISTS odx_app_shares_workspace
+        ON od_app_shares(workspace_id, app_id, created_at DESC);
+    `,
+  },
+  {
+    id: '0005-ledger-proposals-questions',
+    sql: `
+      -- The business layer on Postgres. Mirrors the per-workspace SQLite
+      -- schema in storage/workspace-db.ts; the two must stay in step, because
+      -- workspace-data/ledger.ts runs the same code against either engine.
+      --
+      -- Money is BIGINT minor units. Never NUMERIC and never a float: the
+      -- whole ledger depends on exact integer arithmetic.
+      CREATE TABLE IF NOT EXISTS od_ledger_accounts (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        archived_at BIGINT,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_ledger_accounts_code
+        ON od_ledger_accounts(workspace_id, code) WHERE archived_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS od_ledger_periods (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        closed_at BIGINT,
+        closed_by TEXT,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_ledger_periods_range
+        ON od_ledger_periods(workspace_id, start_date, end_date);
+
+      CREATE TABLE IF NOT EXISTS od_journal_entries (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        number BIGINT,
+        date TEXT NOT NULL,
+        memo TEXT,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        status TEXT NOT NULL DEFAULT 'draft',
+        source_json TEXT NOT NULL,
+        reversed_by_entry_id TEXT,
+        reverses_entry_id TEXT,
+        posted_at BIGINT,
+        posted_by TEXT,
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_journal_entries_ws
+        ON od_journal_entries(workspace_id, status, date DESC);
+      CREATE INDEX IF NOT EXISTS odx_journal_entries_source
+        ON od_journal_entries(workspace_id, source_json);
+
+      CREATE TABLE IF NOT EXISTS od_journal_lines (
+        id TEXT PRIMARY KEY,
+        entry_id TEXT NOT NULL REFERENCES od_journal_entries(id),
+        account_id TEXT NOT NULL REFERENCES od_ledger_accounts(id),
+        direction TEXT NOT NULL,
+        amount BIGINT NOT NULL,
+        memo TEXT,
+        position INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_journal_lines_entry ON od_journal_lines(entry_id, position);
+      CREATE INDEX IF NOT EXISTS odx_journal_lines_account ON od_journal_lines(account_id);
+
+      -- Immutability of the books, enforced below the application layer so it
+      -- holds even against a direct SQL client. A posted entry may only move
+      -- to 'reversed' and gain the link to what reversed it; corrections are
+      -- new entries, always.
+      CREATE OR REPLACE FUNCTION od_journal_posted_no_edit() RETURNS TRIGGER AS $od$
+      BEGIN
+        IF OLD.status = 'posted' AND (
+          NEW.date IS DISTINCT FROM OLD.date OR
+          NEW.currency IS DISTINCT FROM OLD.currency OR
+          NEW.number IS DISTINCT FROM OLD.number OR
+          NEW.source_json IS DISTINCT FROM OLD.source_json OR
+          NEW.posted_at IS DISTINCT FROM OLD.posted_at OR
+          NEW.status NOT IN ('posted', 'reversed')
+        ) THEN
+          RAISE EXCEPTION 'posted journal entries are immutable; post a reversing entry instead';
+        END IF;
+        RETURN NEW;
+      END;
+      $od$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS odt_journal_posted_no_edit ON od_journal_entries;
+      CREATE TRIGGER odt_journal_posted_no_edit BEFORE UPDATE ON od_journal_entries
+        FOR EACH ROW EXECUTE FUNCTION od_journal_posted_no_edit();
+
+      CREATE OR REPLACE FUNCTION od_journal_posted_no_delete() RETURNS TRIGGER AS $od$
+      BEGIN
+        IF OLD.status IN ('posted', 'reversed') THEN
+          RAISE EXCEPTION 'posted journal entries cannot be deleted';
+        END IF;
+        RETURN OLD;
+      END;
+      $od$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS odt_journal_posted_no_delete ON od_journal_entries;
+      CREATE TRIGGER odt_journal_posted_no_delete BEFORE DELETE ON od_journal_entries
+        FOR EACH ROW EXECUTE FUNCTION od_journal_posted_no_delete();
+
+      CREATE OR REPLACE FUNCTION od_journal_lines_frozen() RETURNS TRIGGER AS $od$
+      DECLARE
+        entry_status TEXT;
+      BEGIN
+        SELECT status INTO entry_status FROM od_journal_entries
+          WHERE id = COALESCE(OLD.entry_id, NEW.entry_id);
+        IF entry_status IN ('posted', 'reversed') THEN
+          RAISE EXCEPTION 'lines of a posted entry are immutable';
+        END IF;
+        RETURN COALESCE(NEW, OLD);
+      END;
+      $od$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS odt_journal_lines_frozen ON od_journal_lines;
+      CREATE TRIGGER odt_journal_lines_frozen BEFORE UPDATE OR DELETE ON od_journal_lines
+        FOR EACH ROW EXECUTE FUNCTION od_journal_lines_frozen();
+
+      -- Proposals: worked-out changes awaiting a human yes.
+      CREATE TABLE IF NOT EXISTS od_proposals (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        intent TEXT NOT NULL,
+        origin TEXT NOT NULL DEFAULT 'agent',
+        run_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        operations_json TEXT NOT NULL,
+        preview_json TEXT NOT NULL,
+        effects_json TEXT,
+        error TEXT,
+        created_by TEXT NOT NULL,
+        decided_by TEXT,
+        decided_at BIGINT,
+        applied_at BIGINT,
+        undone_at BIGINT,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_proposals_ws
+        ON od_proposals(workspace_id, status, created_at DESC);
+
+      -- Saved questions, pinnable to the home screen.
+      CREATE TABLE IF NOT EXISTS od_saved_questions (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        question TEXT NOT NULL,
+        table_ref TEXT NOT NULL,
+        filters_json TEXT NOT NULL DEFAULT '[]',
+        aggregate_json TEXT,
+        kind TEXT NOT NULL DEFAULT 'metric',
+        pinned_position INTEGER,
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_saved_questions_ws
+        ON od_saved_questions(workspace_id, pinned_position);
+    `,
+  },
+  {
+    id: '0006-team-chat',
+    sql: `
+      -- Team chat. Mirrors WORKSPACE_MIGRATIONS v5 in storage/workspace-db.ts;
+      -- see there for why chat has its own tables instead of using od_records.
+      CREATE TABLE IF NOT EXISTS od_chat_channels (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        topic TEXT,
+        visibility TEXT NOT NULL DEFAULT 'public',
+        archived_at BIGINT,
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_chat_channel_slug
+        ON od_chat_channels(workspace_id, slug) WHERE archived_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS od_chat_channel_members (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        member_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        joined_at BIGINT NOT NULL,
+        last_read_at BIGINT NOT NULL DEFAULT 0
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_chat_member_unique
+        ON od_chat_channel_members(channel_id, member_id);
+
+      CREATE TABLE IF NOT EXISTS od_chat_messages (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        author_member_id TEXT,
+        body TEXT NOT NULL,
+        system INTEGER NOT NULL DEFAULT 0,
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        mentions_json TEXT NOT NULL DEFAULT '[]',
+        parent_message_id TEXT REFERENCES od_chat_messages(id),
+        edited_at BIGINT,
+        deleted_at BIGINT,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_chat_messages_channel
+        ON od_chat_messages(channel_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS odx_chat_messages_thread
+        ON od_chat_messages(parent_message_id, created_at ASC);
+    `,
+  },
+  {
+    id: '0007-views',
+    sql: `
+      -- Saved views. Mirrors WORKSPACE_MIGRATIONS v6 in storage/workspace-db.ts.
+      CREATE TABLE IF NOT EXISTS od_views (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        table_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'table',
+        filters_json TEXT NOT NULL DEFAULT '[]',
+        sorts_json TEXT NOT NULL DEFAULT '[]',
+        group_by TEXT,
+        date_field TEXT,
+        visible_fields_json TEXT,
+        position INTEGER NOT NULL DEFAULT 0,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_views_table ON od_views(table_id, position);
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_views_default
+        ON od_views(table_id) WHERE is_default = 1;
+    `,
+  },
+  {
+    id: '0008-template-packs',
+    sql: `
+      -- Packs an organization wrote itself. Mirrors WORKSPACE_MIGRATIONS v7.
+      CREATE TABLE IF NOT EXISTS od_template_packs (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        spec_json TEXT NOT NULL,
+        origin TEXT NOT NULL DEFAULT 'user',
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_template_packs_slug
+        ON od_template_packs(workspace_id, slug);
+    `,
+  },
+  {
+    id: '0009-app-data-scopes',
+    sql: `
+      -- What an app declared it needs. Mirrors WORKSPACE_MIGRATIONS v8.
+      ALTER TABLE od_apps ADD COLUMN IF NOT EXISTS data_scopes_json TEXT NOT NULL DEFAULT '[]';
+    `,
+  },
+  {
+    id: '0010-pages',
+    sql: `
+      -- Notion-shaped pages + blocks. Mirrors WORKSPACE_MIGRATIONS v9.
+      CREATE TABLE IF NOT EXISTS od_pages (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        parent_page_id TEXT REFERENCES od_pages(id),
+        title TEXT NOT NULL,
+        icon TEXT,
+        cover TEXT,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL,
+        archived_at BIGINT
+      );
+      CREATE INDEX IF NOT EXISTS odx_pages_workspace
+        ON od_pages(workspace_id, parent_page_id, position);
+      CREATE INDEX IF NOT EXISTS odx_pages_active
+        ON od_pages(workspace_id, archived_at);
+
+      CREATE TABLE IF NOT EXISTS od_blocks (
+        id TEXT PRIMARY KEY,
+        page_id TEXT NOT NULL REFERENCES od_pages(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        parent_block_id TEXT REFERENCES od_blocks(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        content_json TEXT NOT NULL DEFAULT '""',
+        props_json TEXT NOT NULL DEFAULT '{}',
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_blocks_page
+        ON od_blocks(page_id, parent_block_id, position);
+    `,
+  },
+  {
+    id: '0011-page-record-link',
+    sql: `
+      ALTER TABLE od_pages ADD COLUMN IF NOT EXISTS linked_record_id TEXT;
+      ALTER TABLE od_pages ADD COLUMN IF NOT EXISTS linked_table_id TEXT;
+      CREATE INDEX IF NOT EXISTS odx_pages_linked_record
+        ON od_pages(workspace_id, linked_record_id);
+    `,
+  },
+  {
+    id: '0012-app-access-pin',
+    sql: `
+      ALTER TABLE od_apps ADD COLUMN IF NOT EXISTS access_mode TEXT NOT NULL DEFAULT 'org';
+      ALTER TABLE od_apps ADD COLUMN IF NOT EXISTS pinned INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE od_apps ADD COLUMN IF NOT EXISTS pinned_at BIGINT;
+      CREATE TABLE IF NOT EXISTS od_app_grants (
+        app_id TEXT NOT NULL REFERENCES od_apps(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (app_id, member_id)
+      );
+      CREATE INDEX IF NOT EXISTS odx_app_grants_member
+        ON od_app_grants(workspace_id, member_id);
+      CREATE INDEX IF NOT EXISTS odx_apps_pinned
+        ON od_apps(workspace_id, pinned, pinned_at DESC);
+    `,
+  },
+  {
+    id: '0013-calendar-events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS od_calendar_events (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        location TEXT,
+        starts_at TEXT NOT NULL,
+        ends_at TEXT NOT NULL,
+        all_day INTEGER NOT NULL DEFAULT 0,
+        google_event_id TEXT,
+        source TEXT NOT NULL DEFAULT 'local',
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_calendar_events_range
+        ON od_calendar_events(workspace_id, starts_at, ends_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_calendar_events_google
+        ON od_calendar_events(workspace_id, google_event_id)
+        WHERE google_event_id IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS od_calendar_meta (
+        workspace_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, key)
+      );
+    `,
+  },
+  {
+    id: '0014-org-invite-targets',
+    sql: `
+      ALTER TABLE od_users ADD COLUMN IF NOT EXISTS username TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_users_username
+        ON od_users (LOWER(username))
+        WHERE username IS NOT NULL AND username != '';
+
+      ALTER TABLE od_workspace_invites ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'link';
+      ALTER TABLE od_workspace_invites ADD COLUMN IF NOT EXISTS target_email TEXT;
+      ALTER TABLE od_workspace_invites ADD COLUMN IF NOT EXISTS target_username TEXT;
+      ALTER TABLE od_workspace_invites ADD COLUMN IF NOT EXISTS target_user_id TEXT;
+      CREATE INDEX IF NOT EXISTS odx_invites_target_email
+        ON od_workspace_invites (target_email)
+        WHERE target_email IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS odx_invites_target_user
+        ON od_workspace_invites (target_user_id)
+        WHERE target_user_id IS NOT NULL;
+    `,
+  },
 ];
 
 /** Bring a Postgres database up to the current schema. Safe to call on every

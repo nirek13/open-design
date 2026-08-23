@@ -1142,6 +1142,10 @@
   white-space: nowrap;
   font-weight: 650;
 }
+.composer-page-context {
+  margin: 0 12px 6px;
+  max-width: calc(100% - 24px);
+}
 /* -------- Lexical contenteditable input ---------------------------- */
 .composer-input-wrap {
   position: relative;

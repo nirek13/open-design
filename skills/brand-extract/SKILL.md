@@ -68,17 +68,23 @@ your run context — treat "this page" / "the site" as that tab):
 1. `agent-browser get url` / `get title` to confirm the target.
 2. `agent-browser snapshot` before extracting anything.
 3. Harvest the real design language from the DOM/CSS, not the screenshot alone:
-   - **Colors** — frequency-rank color literals and resolve the seven semantic
-     roles: `background`, `surface`, `foreground`, `muted`, `border`, `accent`,
-     `accent-secondary`. The most frequent near-white/cream is usually the
-     background; the most frequent chromatic mid-saturation color is usually the
-     accent.
+   - **Colors** — frequency-rank color literals (`#hex`, `rgb()`, `hsl()`, and
+     `oklch()`) and the `<meta name="theme-color">` (including a dark-scheme
+     variant). Resolve the seven semantic roles: `background`, `surface`,
+     `foreground`, `muted`, `border`, `accent`, `accent-secondary`. The most
+     frequent near-white/cream is usually the background; `theme-color` or the
+     most frequent chromatic mid-saturation color is usually the accent.
    - **Typography** — the `@font-face` names and `font-family` declarations for
-     display, body, and (if present) mono. Note weights actually used.
+     display, body, and (if present) mono. Note weights actually used. Follow
+     Google Fonts `<link>` / `@import` stylesheets — they often hide behind
+     `rel="preload" as="style"`.
    - **Logo (save MULTIPLE candidates)** — extract every logo asset you find and
-     save each as a file under `logos/`: the inline header/nav `<svg>` (write the
-     literal `<svg>…</svg>` markup verbatim to `logos/header.svg` — do not just
-     reference it), any `<img>` logo, `apple-touch-icon`, favicon, and
+     save each as a file under `logos/`: the inline header/nav `<svg>` with
+     `class`/`aria-label` containing logo/wordmark (skip 24px menu glyphs; write
+     the literal `<svg>…</svg>` markup verbatim to `logos/header.svg` — do not
+     just reference it), header `<img>` including `srcset` / `data-src` lazy
+     marks, JSON-LD `Organization.logo`, `<link rel="manifest">` icons,
+     `apple-touch-icon`, `mask-icon`, favicon (quoted or unquoted `<link>`), and
      `og:image`. Fetch the asset URLs directly — **never leave `logo.primary`
      empty when the site has any mark**. Set `logo.primary` to the best vector /
      transparent lockup (SVG wordmark > apple-touch-icon > favicon > og:image)

@@ -1,0 +1,82 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 15px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+  text-align: start;
+  font: inherit;
+  color: inherit;
+}
+
+.label {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.35;
+  /* Two lines maximum: a metric label that runs on is a question, not a label. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.value {
+  margin-top: 2px;
+  color: var(--text-strong);
+  font-size: 25px;
+  font-weight: 640;
+  letter-spacing: -0.018em;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail {
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.positive .value {
+  color: var(--green);
+}
+
+.warning .value {
+  color: var(--amber);
+}
+
+.danger .value {
+  color: var(--red);
+}
+
+.clickable {
+  cursor: pointer;
+  transition:
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+
+.clickable:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.clickable:active {
+  transform: translateY(0);
+}
+
+.clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clickable:hover {
+    transform: none;
+  }
+}

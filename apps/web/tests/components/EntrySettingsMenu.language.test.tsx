@@ -97,4 +97,18 @@ describe('EntrySettingsMenu language picker a11y', () => {
     expect(langTrigger.getAttribute('aria-expanded')).toBe('true');
     expect(list.hasAttribute('inert')).toBe(false);
   });
+
+  it('does not list social follow or share channels', () => {
+    renderMenu();
+    fireEvent.click(screen.getByTestId('entry-settings-menu-trigger'));
+
+    expect(screen.queryByRole('menuitem', { name: /Join Discord/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Follow @OpenDesignHQ on X/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Threads/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /YouTube/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Instagram/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /LinkedIn/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Xiaohongshu|RED/i })).toBeNull();
+    expect(screen.queryByText('Share Substrate')).toBeNull();
+  });
 });

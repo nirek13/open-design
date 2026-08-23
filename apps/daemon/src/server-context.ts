@@ -4,6 +4,7 @@ import type { DesignSystemSummary } from './design-systems/index.js';
 import type { RoutineRoutesService } from './routes/routine.js';
 import type { WorkspaceDataRouteServices } from './routes/workspace-data.js';
 import type { OrganizationRouteServices } from './routes/organizations.js';
+import type { ErpRouteServices } from './routes/erp.js';
 import type { OpenDesignPublicMetadataService } from './services/open-design-public-metadata.js';
 
 export interface HttpDeps {
@@ -143,6 +144,7 @@ export interface ServerContext {
   openDesignPublicMetadata: OpenDesignPublicMetadataService;
   workspaceData: WorkspaceDataRouteServices;
   organizations: OrganizationRouteServices;
+  erp: ErpRouteServices;
   lifecycle: {
     isDaemonShuttingDown: () => boolean;
   };

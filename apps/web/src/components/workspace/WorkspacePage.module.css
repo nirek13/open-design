@@ -1,0 +1,195 @@
+.root {
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg-app);
+}
+
+/* One measure for every workspace surface. Wide enough for a five-column
+   table, narrow enough that a line of prose stays readable. */
+.column {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 40px 32px 96px;
+}
+
+.head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 22px;
+}
+
+.headText {
+  min-width: 0;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 30px;
+  font-weight: 680;
+  letter-spacing: -0.021em;
+  line-height: 1.15;
+}
+
+.lead {
+  margin: 7px 0 0;
+  max-width: 62ch;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding-bottom: 2px;
+}
+
+.banner {
+  margin-bottom: 22px;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 26px;
+  padding-bottom: 0;
+  border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px 11px;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 200ms var(--ease-out);
+}
+
+.tab::after {
+  content: '';
+  position: absolute;
+  inset-inline: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  opacity: 0;
+  transform: scaleX(0.6);
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tabActive {
+  color: var(--text-strong);
+}
+
+.tabActive::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.tabCount {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-fill-secondary);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tabActive .tabCount {
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 22px;
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 11.5px;
+  font-weight: 640;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sectionAction {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 720px) {
+  .column {
+    padding: 26px 18px 72px;
+  }
+
+  .head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .title {
+    font-size: 25px;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+}

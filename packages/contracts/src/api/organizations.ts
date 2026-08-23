@@ -85,12 +85,24 @@ export interface UpdateOrgMemberRequest {
   status?: OrgMemberStatus;
 }
 
-/** An invite is a shareable link. The token is shown exactly once, at
- * creation; only its hash is stored. */
+/** How an invite chooses its recipient. `link` is anyone who has the URL;
+ * `email` and `username` are bound to one person and default to a single use. */
+export type OrgInviteKind = 'link' | 'email' | 'username';
+
+/** An invite is a shareable credential. The token is shown exactly once, at
+ * creation; only its hash is stored. Email and username invites are also
+ * redeemable by the matching signed-in person without the raw token. */
 export interface OrgInvite {
   id: string;
   orgId: string;
   role: OrgRole;
+  kind: OrgInviteKind;
+  /** Lowercased email when `kind` is `email`. */
+  targetEmail: string | null;
+  /** Username or display name as entered when `kind` is `username`. */
+  targetUsername: string | null;
+  /** Directory user the invite was bound to, when one already existed. */
+  targetUserId: string | null;
   createdBy: string;
   expiresAt: number | null;
   maxUses: number | null;
@@ -101,10 +113,19 @@ export interface OrgInvite {
 
 export interface CreateOrgInviteRequest {
   role?: OrgRole;
-  /** Hours until the link stops working. Omit for a link that never expires. */
+  /** Hours until the invite stops working. Omit for a link that never expires,
+   * or for a 14-day default on email/username invites. */
   expiresInHours?: number;
-  /** How many people may join with this link. Omit for unlimited. */
+  /** How many people may join. Omit for unlimited links, or a single use on
+   * email/username invites. */
   maxUses?: number;
+  /** Invite this address. Mutually exclusive with `username`. */
+  email?: string;
+  /** Invite this username or display name. Mutually exclusive with `email`. */
+  username?: string;
+  /** When inviting by email, send the join link through the connected Gmail
+   * account. Defaults to true. Creation still succeeds if sending fails. */
+  sendEmail?: boolean;
 }
 
 export interface OrgInviteCreatedResponse {
@@ -112,6 +133,10 @@ export interface OrgInviteCreatedResponse {
   /** The full join URL, including the token. Shown once — never retrievable again. */
   url: string;
   token: string;
+  /** True when the invite was actually emailed via the connected Gmail account. */
+  emailed?: boolean;
+  /** Present when we tried to email and Gmail refused. The invite still exists. */
+  emailError?: string;
 }
 
 /** What an invite link shows before the visitor commits to joining. Safe to
@@ -120,8 +145,26 @@ export interface OrgInvitePreview {
   orgName: string;
   role: OrgRole;
   valid: boolean;
+  /** True when only the named recipient may redeem this invite. Does not
+   * reveal the email or username. */
+  restricted?: boolean;
   /** Present when valid is false: 'expired' | 'revoked' | 'exhausted' | 'not-found'. */
   reason?: string;
+}
+
+/** A targeted invite waiting on the signed-in caller. No token — they join
+ * because their email or username matches, not because they have the link. */
+export interface OrgPendingInvite {
+  id: string;
+  orgId: string;
+  orgName: string;
+  role: OrgRole;
+  kind: Exclude<OrgInviteKind, 'link'>;
+  createdAt: number;
+}
+
+export interface OrgPendingInvitesResponse {
+  invites: OrgPendingInvite[];
 }
 
 export interface OrganizationResponse {

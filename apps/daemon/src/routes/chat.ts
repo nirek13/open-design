@@ -37,6 +37,10 @@ import { resolveModelForServiceTier } from '../runtimes/models.js';
 import { googleStreamGenerateContentUrl } from '../integrations/google-models.js';
 import { createRoleMarkerGuard } from '../role-marker-guard.js';
 import { authorizeReasoningEgress, sendReasoningEgressDenial } from '../reasoning-egress.js';
+import {
+  isOfficialOpenAiBaseUrl,
+  readEnvOpenAiApiKey,
+} from '../byok/env-openai.js';
 
 // Allowlist for the `/feedback` route. Mirrors the
 // ChatMessageFeedbackReasonCode union in packages/contracts/src/api/chat.ts.
@@ -56,12 +60,13 @@ const FEEDBACK_REASON_ALLOWLIST: ReadonlySet<string> = new Set([
   'other',
 ]);
 
-export interface RegisterChatRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'chat' | 'agents' | 'critique' | 'validation' | 'lifecycle' | 'paths' | 'telemetry' | 'appConfig'> {}
+export interface RegisterChatRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'chat' | 'agents' | 'critique' | 'validation' | 'lifecycle' | 'paths' | 'telemetry' | 'appConfig' | 'byokCredentials'> {}
 
 export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
   const { db, design } = ctx;
   const { sendApiError, createSseResponse } = ctx.http;
   const { readAppConfig } = ctx.appConfig;
+  const { byokCredentials } = ctx;
   const { testProviderConnection, testAgentConnection, getAgentDef, isKnownModel, isKnownServiceTier, sanitizeCustomModel, listProviderModels } = ctx.agents;
   const {
     handleCritiqueArtifact,
@@ -455,6 +460,23 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
         ...(init.retryable === undefined ? {} : { retryable: init.retryable }),
       },
     });
+  };
+
+  const resolveOpenAiProxyApiKey = async (proxyBody: Record<string, unknown>): Promise<string> => {
+    const fromBody = typeof proxyBody.apiKey === 'string' ? proxyBody.apiKey.trim() : '';
+    if (fromBody) return fromBody;
+    const profileId = typeof proxyBody.byokProfileId === 'string'
+      ? proxyBody.byokProfileId.trim()
+      : '';
+    if (profileId) {
+      const resolved = await byokCredentials.resolve(profileId);
+      if (resolved?.apiKey?.trim()) return resolved.apiKey.trim();
+    }
+    const baseUrl = typeof proxyBody.baseUrl === 'string' ? proxyBody.baseUrl : '';
+    if (isOfficialOpenAiBaseUrl(baseUrl)) {
+      return readEnvOpenAiApiKey();
+    }
+    return '';
   };
 
   const appendVersionedApiPath = (baseUrl: string, path: string) => {
@@ -986,8 +1008,9 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     /** @type {Partial<ProxyStreamRequest>} */
     const proxyBody = req.body || {};
     if (rejectProxyPluginContext(proxyBody, res)) return;
-    const { baseUrl, apiKey, model, systemPrompt, messages, maxTokens } =
+    const { baseUrl, model, systemPrompt, messages, maxTokens } =
       proxyBody;
+    const apiKey = await resolveOpenAiProxyApiKey(proxyBody as Record<string, unknown>);
     if (!baseUrl || !apiKey || !model) {
       return sendApiError(
         res,

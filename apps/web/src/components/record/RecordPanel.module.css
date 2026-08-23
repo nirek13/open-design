@@ -1,0 +1,328 @@
+/* The record page. A right-hand drawer rather than a full page so the list
+ * behind stays visible — moving between records should not feel like
+ * navigating away and back. */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.28);
+  z-index: 40;
+  animation: fade 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(880px, 100vw);
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px 24px;
+  overflow-y: auto;
+  background: var(--surface-0, #fff);
+  border-left: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.12);
+  animation: slide 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  .panel {
+    background: var(--surface-0, #16181c);
+  }
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+}
+
+@keyframes slide {
+  from { transform: translateX(24px); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .panel {
+    animation: none;
+  }
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  padding-bottom: 8px;
+  background: inherit;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.15));
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+}
+
+.title {
+  margin: 2px 0 0;
+  font-size: 1.15rem;
+}
+
+.close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.close:hover {
+  background: var(--surface-3, rgba(127, 127, 127, 0.12));
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 520px) {
+  .fieldRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
+
+.fieldLabel {
+  font-size: 0.82rem;
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.required {
+  color: var(--danger, #c0392b);
+}
+
+.computed {
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.18));
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rollups {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.linkList,
+.relatedList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.linkList li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.linkLabel {
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+  min-width: 90px;
+}
+
+.linkValue,
+.relatedRow {
+  border: none;
+  background: transparent;
+  color: var(--accent, #4c7cf3);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: start;
+  cursor: pointer;
+  padding: 3px 4px;
+  border-radius: 6px;
+}
+
+.relatedRow {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: inherit;
+}
+
+.linkValue:hover,
+.relatedRow:hover {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+}
+
+.linkValue:disabled,
+.relatedRow:disabled {
+  cursor: default;
+  color: inherit;
+}
+
+.relatedMeta {
+  color: var(--text-3, rgba(127, 127, 127, 0.7));
+  white-space: nowrap;
+}
+
+.truncated {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-3, rgba(127, 127, 127, 0.7));
+}
+
+.error {
+  margin: 0;
+  color: var(--danger, #c0392b);
+  font-size: 0.85rem;
+}
+
+.notice {
+  margin: 0;
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+  font-size: 0.85rem;
+}
+
+/* History. Newest at the top, each entry showing what moved. */
+.loadHistory,
+.restore {
+  border: none;
+  background: transparent;
+  color: var(--accent, #4c7cf3);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  text-align: start;
+}
+
+.loadHistory:hover,
+.restore:hover {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+}
+
+.history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.historyEntry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border, rgba(127, 127, 127, 0.25));
+}
+
+.historyHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.historyWhen {
+  font-size: 0.78rem;
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+}
+
+.changes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.changeField {
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+  margin-right: 6px;
+}
+
+.changeFrom {
+  opacity: 0.7;
+  text-decoration: line-through;
+}
+
+.changeTo {
+  font-weight: 600;
+}

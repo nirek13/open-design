@@ -58,6 +58,7 @@ import type {
 } from '@open-design/contracts';
 import { buildVisualAnnotationAttachment, commentTargetDisplayName } from '../comments';
 import { Icon, type IconName } from "./Icon";
+import { PageContextChip } from './pages/PageContextChip';
 import { ComposerPlusMenu, PLUS_SUBMENU_RESOURCE_KIND } from './ComposerPlusMenu';
 import { LibraryPicker } from './LibraryPicker';
 import { FigmaImportModal } from './FigmaImportModal';
@@ -449,6 +450,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       projectMetadata?.importedFrom === 'folder' && activeProjectFileName
         ? activeProjectFileName
         : null;
+    const pageContext = projectMetadata?.pageContext;
     const activeFileDisplayName = activeFileContext ? lastPathSegment(activeFileContext) : null;
     const [draft, setDraft] = useState(() => initialDraft ?? loadComposerDraft(draftStorageKey) ?? "");
     const [placeholderScenario, setPlaceholderScenario] = useState<PlaceholderScenario | null>(null);
@@ -2609,6 +2611,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           'composer',
           dragActive ? 'drag-active' : '',
           activeFileContext ? 'composer-active-file-mode' : '',
+          pageContext?.pageId ? 'composer-page-context-mode' : '',
         ].filter(Boolean).join(' ')}
         data-testid="chat-composer"
         ref={composerRootRef}
@@ -2704,6 +2707,20 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               }}
               t={t}
             />
+          ) : null}
+          {pageContext?.pageId ? (
+            <div className="composer-page-context">
+              <PageContextChip
+                title={pageContext.title}
+                icon={pageContext.icon}
+                testId="composer-page-context"
+                onOpen={() => navigate({
+                  kind: 'home',
+                  view: 'pages',
+                  pageId: pageContext.pageId,
+                })}
+              />
+            </div>
           ) : null}
           {activeFileContext ? (
             <div

@@ -30,6 +30,8 @@ import {
   reportChatRunFeedback,
   streamViaDaemon,
 } from '../providers/daemon';
+import { streamMessage } from '../providers/anthropic';
+import { publishProjectNow } from '../providers/auto-publish';
 import { normalizeCustomReason } from '@open-design/contracts/analytics';
 import {
   deletePreviewComment,
@@ -55,6 +57,7 @@ import {
   type ByokMediaDefaults,
   type ByokChatProtocol,
   type ResearchOptions,
+  composeSystemPrompt,
 } from '@open-design/contracts';
 import {
   anonymizeArtifactId,
@@ -72,7 +75,6 @@ import type {
 } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
 import {
-  trackArtifactHeaderClick,
   trackByokPreflightBlocked,
   trackComposerBarClick,
   trackDesignSystemApplyResult,
@@ -88,6 +90,7 @@ import {
   peekOnboardingSessionId,
 } from '../analytics/onboarding-session';
 import { navigate } from '../router';
+import { consumeAppEditWorkspaceFocus } from './apps/RunningAppContext';
 import { agentDisplayName, agentModelDisplayName } from '../utils/agentLabels';
 import { isMacPlatform } from '../utils/platform';
 import {
@@ -215,10 +218,9 @@ import {
 import { historyWithApiAttachmentContext } from '../api-attachment-context';
 import { filterImplicitProducedFiles } from '../produced-files';
 import { AvatarMenu } from './AvatarMenu';
-import { EntrySettingsMenu } from './EntrySettingsMenu';
-import { MessageCenter } from './MessageCenter';
 import { HandoffButton } from './HandoffButton';
 import { Icon } from './Icon';
+import { PageContextChip } from './pages/PageContextChip';
 import { localizePluginTitle } from './plugins-home/localization';
 import { DesignSystemPicker } from './DesignSystemPicker';
 import { PluginDetailsModal } from './PluginDetailsModal';
@@ -1313,7 +1315,6 @@ export function ProjectView({
   onAgentModelChange,
   onApiModelChange,
   onRefreshAgents,
-  onThemeChange,
   onOpenSettings,
   onOpenAmrSettings,
   onOpenMcpSettings,
@@ -1368,7 +1369,6 @@ export function ProjectView({
   // mount-local guard would let the funnel events re-fire on a later
   // conversation/run of the same project.
   const iframeKeepAlivePool = useIframeKeepAlivePool();
-  const handleThemeChange = onThemeChange ?? (() => {});
   const projectDetail = useProjectDetail(project.id);
   const detailedProject = projectDetail.project?.id === project.id ? projectDetail.project : null;
   const currentProject =
@@ -1521,7 +1521,7 @@ export function ProjectView({
   const projectFilesRef = useRef<ProjectFile[]>([]);
   const [liveArtifacts, setLiveArtifacts] = useState<LiveArtifactSummary[]>([]);
   const [liveArtifactEvents, setLiveArtifactEvents] = useState<LiveArtifactEventItem[]>([]);
-  const [workspaceFocused, setWorkspaceFocused] = useState(false);
+  const [workspaceFocused, setWorkspaceFocused] = useState(() => consumeAppEditWorkspaceFocus());
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);
   const commentInspectorPortalId = useId();
   const leftInspectorActive = commentInspectorActive;
@@ -2274,6 +2274,52 @@ export function ProjectView({
     setProjectFiles(next);
     return next;
   }, [project.id]);
+
+  // Public projects stay live on the web: republish when HTML files change
+  // after the initial create-time publish (placeholder → real design).
+  const lastAutoPublishKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (project.metadata?.visibility !== 'public' && project.metadata?.autoPublish !== true) {
+      return;
+    }
+    const htmlFiles = projectFiles.filter(
+      (file) => /\.html?$/i.test(file.name) || (typeof file.path === 'string' && /\.html?$/i.test(file.path)),
+    );
+    if (htmlFiles.length === 0) return;
+    const key = htmlFiles
+      .map((file) => `${file.path || file.name}:${file.mtime ?? 0}`)
+      .sort()
+      .join('|');
+    if (lastAutoPublishKeyRef.current === key) return;
+    if (lastAutoPublishKeyRef.current == null) {
+      lastAutoPublishKeyRef.current = key;
+      return;
+    }
+    lastAutoPublishKeyRef.current = key;
+    const entry =
+      htmlFiles.find((file) => /(?:^|\/)index\.html?$/i.test(file.path || file.name)) ??
+      htmlFiles[0];
+    if (!entry) return;
+    void publishProjectNow({
+      projectId: project.id,
+      projectName: project.name,
+      visibility: 'public',
+      fileName: entry.path || entry.name,
+    }).then((outcome) => {
+      if (!outcome.ok) return;
+      try {
+        window.sessionStorage.setItem(`od:public-url:${project.id}`, outcome.url);
+      } catch {
+        /* ignore */
+      }
+    });
+  }, [
+    project.id,
+    project.name,
+    project.metadata?.autoPublish,
+    project.metadata?.visibility,
+    projectFiles,
+  ]);
 
   useEffect(() => {
     projectFilesRef.current = projectFiles;
@@ -5965,21 +6011,6 @@ export function ProjectView({
           handlers.onError(new Error(BEDROCK_BYOK_UNSUPPORTED_MESSAGE));
           return true;
         }
-        if (!agentsById.get('byok-opencode')?.available) {
-          handlers.onError(new Error(BYOK_OPENCODE_UNAVAILABLE_MESSAGE));
-          return true;
-        }
-        // Mirror the daemon chat-route memory hook for BYOK chats. The
-        // CLI path runs `extractFromMessage` BEFORE composing the prompt
-        // (so an explicit "remember: X" / "我是 X" marker in this turn's
-        // user message lands in memory in time for this turn's system
-        // prompt), then queues `extractWithLLM` on child close (so the
-        // small-model pass picks up implicit facts from the full
-        // user+assistant exchange). BYOK chats never hit that route, so
-        // we replicate both phases here against `/api/memory/extract`.
-        // Without this, the Memory tab / model picker is a no-op for
-        // BYOK users even though the UI saves model + index + entries
-        // for that mode.
         const userText = (userMsg.content ?? '').trim();
         // Pass only the non-secret profile reference so "Same as chat"
         // memory extraction resolves the same daemon-owned credential as the
@@ -6002,6 +6033,35 @@ export function ProjectView({
             // on the next event.
           }
         }
+        if (!agentsById.get('byok-opencode')?.available) {
+          pushEvent({ kind: 'status', label: 'requesting', detail: config.model });
+          const system = composeSystemPrompt({
+            streamFormat: 'plain',
+            sessionMode: runSessionMode,
+            metadata: project.metadata,
+            locale,
+          });
+          void streamMessage(
+            config,
+            system,
+            nextHistory,
+            controller.signal,
+            handlers,
+            { projectId: project.id },
+          );
+          return true;
+        }
+        // Mirror the daemon chat-route memory hook for BYOK chats. The
+        // CLI path runs `extractFromMessage` BEFORE composing the prompt
+        // (so an explicit "remember: X" / "我是 X" marker in this turn's
+        // user message lands in memory in time for this turn's system
+        // prompt), then queues `extractWithLLM` on child close (so the
+        // small-model pass picks up implicit facts from the full
+        // user+assistant exchange). BYOK chats never hit that route, so
+        // we replicate both phases here against `/api/memory/extract`.
+        // Without this, the Memory tab / model picker is a no-op for
+        // BYOK users even though the UI saves model + index + entries
+        // for that mode.
         pushEvent({ kind: 'status', label: 'requesting', detail: config.model });
         const byokOpenCodeHistory = await historyWithApiAttachmentContext(
           historyWithCommentAttachmentContext(
@@ -8694,6 +8754,19 @@ export function ProjectView({
                   {projectTypeLabel ? (
                     <span className="meta" data-testid="project-meta">{projectTypeLabel}</span>
                   ) : null}
+                  {currentProject.metadata?.pageContext?.pageId ? (
+                    <PageContextChip
+                      compact
+                      title={currentProject.metadata.pageContext.title}
+                      icon={currentProject.metadata.pageContext.icon}
+                      testId="project-page-context"
+                      onOpen={() => {
+                        const pageId = currentProject.metadata?.pageContext?.pageId;
+                        if (!pageId) return;
+                        navigate({ kind: 'home', view: 'pages', pageId });
+                      }}
+                    />
+                  ) : null}
                 </span>
               )}
               designSystemPicker={(
@@ -8815,38 +8888,16 @@ export function ProjectView({
           onLaunchTerminalAuth={handleLaunchAntigravityOauth}
           conversationId={activeConversationId}
           headerActions={(
-            <>
-              <HandoffButton
-                projectId={project.id}
-                projectName={project.name}
-                projectDir={projectDetail.resolvedDir}
-                agents={agents}
-                artifactId={headerArtifact.artifact_id}
-                artifactKind={headerArtifact.artifact_kind}
-                metricsConsent={config.telemetry?.metrics === true}
-                installationId={config.installationId}
-              />
-              <MessageCenter
-                onOpenNotificationSettings={() => onOpenSettings('notifications')}
-              />
-              <EntrySettingsMenu
-                config={config}
-                onThemeChange={handleThemeChange}
-                onOpenSettings={onOpenSettings}
-                trackingPageName="artifact"
-                onTrackTriggerClick={() => {
-                  // Spec row 52: the settings gear in the artifact header.
-                  // Carry the active artifact so settings slices line up with
-                  // the rest of the artifact_header funnel.
-                  trackArtifactHeaderClick(analytics.track, {
-                    page_name: 'artifact',
-                    area: 'artifact_header',
-                    element: 'settings',
-                    ...headerArtifact,
-                  });
-                }}
-              />
-            </>
+            <HandoffButton
+              projectId={project.id}
+              projectName={project.name}
+              projectDir={projectDetail.resolvedDir}
+              agents={agents}
+              artifactId={headerArtifact.artifact_id}
+              artifactKind={headerArtifact.artifact_kind}
+              metricsConsent={config.telemetry?.metrics === true}
+              installationId={config.installationId}
+            />
           )}
         />
       </div>

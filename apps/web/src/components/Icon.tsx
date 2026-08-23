@@ -42,12 +42,15 @@ export type IconName =
   | 'import'
   | 'info'
   | 'kanban'
+  | 'handshake'
+  | 'message-circle'
   | 'layers-filled'
   | 'languages'
   | 'layout'
   | 'lightbulb'
   | 'link'
   | 'lock'
+  | 'mail'
   | 'log-out'
   | 'integrations-filled'
   | 'maximize'
@@ -91,6 +94,7 @@ export type IconName =
   | 'redo'
   | 'upload'
   | 'trash'
+  | 'truck'
   | 'volume'
   | 'zoom-in'
   | 'zoom-out';
@@ -466,6 +470,31 @@ export function Icon({ name, size = 14, strokeWidth = 1.6, ...rest }: Props) {
           <rect x="17" y="4" width="4" height="13" rx="1" />
         </svg>
       );
+    case 'handshake':
+      // CRM: two sides meeting. Reads as a deal rather than as a person,
+      // which is the distinction between contacts and the pipeline.
+      return (
+        <svg {...common}>
+          <path d="M11 17 9.5 15.5" />
+          <path d="m3 11 4-4 4 3 3-3 3 3 4-3" />
+          <path d="M3 11v4l5 5 2-2 2 2 2-2 2 2 5-5v-4" />
+        </svg>
+      );
+    case 'message-circle':
+      return (
+        <svg {...common}>
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+        </svg>
+      );
+    case 'truck':
+      return (
+        <svg {...common}>
+          <rect x="1" y="3" width="15" height="13" rx="1" />
+          <path d="M16 8h4l3 3v5h-7V8z" />
+          <circle cx="5.5" cy="18.5" r="2.5" />
+          <circle cx="18.5" cy="18.5" r="2.5" />
+        </svg>
+      );
     case 'layers-filled':
       return (
         <svg {...common} fill="currentColor" stroke="none">
@@ -504,6 +533,13 @@ export function Icon({ name, size = 14, strokeWidth = 1.6, ...rest }: Props) {
         <svg {...common}>
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+      );
+    case 'mail':
+      return (
+        <svg {...common}>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="m3 7 9 6 9-6" />
         </svg>
       );
     case 'integrations-filled':

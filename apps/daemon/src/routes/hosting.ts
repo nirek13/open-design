@@ -165,7 +165,7 @@ export function registerHostingRoutes(app: Express, ctx: RegisterHostingRoutesDe
           configured: true,
           canPublish: signedIn,
           // Org visibility needs a Clerk organization claim to check against.
-          canPublishToOrg: signedIn && auth.mode === 'clerk',
+          canPublishToOrg: signedIn && auth.mode === 'clerk' && Boolean(auth.issuer),
           sitesDomain: configResult.config.sitesDomain,
           reason: signedIn ? null : 'sign-in-required',
         }

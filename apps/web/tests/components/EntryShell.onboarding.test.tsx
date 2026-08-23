@@ -308,57 +308,20 @@ beforeEach(() => {
   analyticsMocks.track.mockReset();
 });
 
-describe('EntryShell settings menu', () => {
-  it('opens quick actions before opening the full settings dialog', async () => {
-    globalThis.fetch = vi.fn(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
-      if (url.endsWith('/api/community/discord')) {
-        return jsonResponse({
-          inviteCode: 'mHAjSMV6gz',
-          inviteUrl: 'https://discord.gg/mHAjSMV6gz',
-          onlineCount: 1234,
-          memberCount: 4321,
-          fetchedAt: Date.now(),
-          stale: false,
-        });
-      }
-      if (url.endsWith('/api/github/open-design')) {
-        return jsonResponse({
-          repo: 'nexu-io/open-design',
-          stargazers_count: 56100,
-          fetchedAt: Date.now(),
-          stale: false,
-        });
-      }
-      return jsonResponse({});
-    }) as typeof fetch;
-    const props = renderHome();
+describe('EntryShell chrome', () => {
+  it('does not mount marketing chips or settings in the entry topbar', async () => {
+    renderHome();
 
     await waitFor(() => {
-      expect(screen.getByText('1.2k online')).toBeTruthy();
+      expect(screen.getByTestId('entry-rail-toggle')).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByTestId('entry-settings-menu-trigger'));
-
-    expect(props.onOpenSettings).not.toHaveBeenCalled();
-    expect(screen.getByTestId('entry-settings-menu')).toBeTruthy();
-    expect(screen.getByText('Language')).toBeTruthy();
-    expect(screen.getByText('Appearance')).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: /Join Discord/i })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: /1.2k online/i })).toBeTruthy();
-    expect(
-      screen.getByRole('menuitem', { name: /Follow @OpenDesignHQ on X/i }).getAttribute('href'),
-    ).toBe('https://x.com/OpenDesignHQ');
-    expect(
-      screen.getByRole('menuitem', { name: /Follow Open Design on Threads/i }).getAttribute('href'),
-    ).toBe('https://www.threads.com/@opendesign.ai');
-    expect(
-      screen.getByRole('menuitem', { name: /Open Design on YouTube/i }).getAttribute('href'),
-    ).toBe('https://www.youtube.com/@Open-Design-ai');
-
-    fireEvent.click(screen.getByTestId('entry-settings-open-details'));
-
-    expect(props.onOpenSettings).toHaveBeenCalledWith();
+    expect(screen.queryByTestId('entry-star-badge')).toBeNull();
+    expect(screen.queryByTestId('entry-discord-badge')).toBeNull();
+    expect(screen.queryByTestId('entry-use-everywhere-button')).toBeNull();
+    expect(screen.queryByTestId('org-switcher-trigger')).toBeNull();
+    expect(screen.queryByTestId('message-center-trigger')).toBeNull();
+    expect(screen.queryByTestId('entry-settings-menu-trigger')).toBeNull();
   });
 });
 

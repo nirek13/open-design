@@ -19,6 +19,21 @@ export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/data/query',
   '/api/tools/data/insert',
   '/api/tools/data/update',
+  '/api/tools/erp/propose',
+  '/api/tools/erp/preview',
+  '/api/tools/erp/ask',
+  '/api/tools/erp/import-url',
+  '/api/tools/erp/pack',
+  '/api/tools/erp/pack-install',
+  '/api/tools/pages/list',
+  '/api/tools/pages/get',
+  '/api/tools/pages/upsert',
+  '/api/tools/pages/search',
+  '/api/tools/pages/append',
+  '/api/tools/pages/archive',
+  '/api/tools/pages/duplicate',
+  '/api/tools/pages/scaffold',
+  '/api/tools/pages/embed',
 ] as const;
 
 export const CHAT_TOOL_OPERATIONS = [
@@ -38,6 +53,21 @@ export const CHAT_TOOL_OPERATIONS = [
   'data:query',
   'data:insert',
   'data:update',
+  'erp:propose',
+  'erp:preview',
+  'erp:ask',
+  'erp:import-url',
+  'erp:pack',
+  'erp:pack-install',
+  'pages:list',
+  'pages:get',
+  'pages:upsert',
+  'pages:search',
+  'pages:append',
+  'pages:archive',
+  'pages:duplicate',
+  'pages:scaffold',
+  'pages:embed',
 ] as const;
 
 export type ToolEndpoint = (typeof CHAT_TOOL_ENDPOINTS)[number] | (string & {});

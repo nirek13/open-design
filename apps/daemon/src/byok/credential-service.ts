@@ -8,14 +8,18 @@ import type {
   UpsertByokCredentialProfileRequest,
 } from '@open-design/contracts';
 import {
-  isNodePtyUnavailableError,
-  loadNodePty,
-} from '../services/node-pty.js';
+  ENV_OPENAI_BYOK_LABEL,
+  ENV_OPENAI_BYOK_PROFILE_ID,
+  ENV_OPENAI_DEFAULT_BASE_URL,
+  ENV_OPENAI_DEFAULT_MODEL,
+  readEnvOpenAiApiKey,
+} from './env-openai.js';
+
+export { ENV_OPENAI_BYOK_PROFILE_ID } from './env-openai.js';
 
 const PROFILE_ID_PATTERN = /^byok-[a-z0-9][a-z0-9._-]{2,95}$/u;
 const KEYCHAIN_SERVICE = 'dev.opendesign.byok';
 const MAX_SECRET_OUTPUT_BYTES = 64 * 1024;
-const INTERACTIVE_SECRET_TIMEOUT_MS = 10_000;
 
 type StoredProfile = Omit<ByokCredentialProfile, 'configured' | 'keyTail'>;
 type StoredDocument = {
@@ -44,6 +48,7 @@ export interface ByokCredentialServiceOptions {
     metadataPath: string,
     document: { version: 1; profiles: readonly unknown[] },
   ) => Promise<void>;
+  readEnvOpenAiApiKey?: () => string;
 }
 
 export class ByokCredentialService {
@@ -53,6 +58,7 @@ export class ByokCredentialService {
   private readonly persistMetadata: NonNullable<
     ByokCredentialServiceOptions['persistMetadata']
   >;
+  private readonly readEnvOpenAiApiKey: () => string;
 
   constructor(options: ByokCredentialServiceOptions) {
     this.backend = options.backend ?? createPlatformByokSecretBackend(
@@ -61,22 +67,41 @@ export class ByokCredentialService {
     );
     this.metadataPath = path.join(options.dataDir, 'byok', 'profiles.json');
     this.persistMetadata = options.persistMetadata ?? writeMetadataDocument;
+    this.readEnvOpenAiApiKey = options.readEnvOpenAiApiKey ?? (() => readEnvOpenAiApiKey());
   }
 
   async status(): Promise<{ available: boolean; backend: string }> {
+    const backendAvailable = await this.backend.available();
+    const envConfigured = Boolean(this.envOpenAiSecret());
     return {
-      available: await this.backend.available(),
-      backend: this.backend.kind,
+      available: backendAvailable,
+      backend: backendAvailable
+        ? this.backend.kind
+        : envConfigured
+          ? 'env-openai'
+          : this.backend.kind,
     };
   }
 
   async list(): Promise<ByokCredentialProfile[]> {
     const document = await this.readDocument();
-    return Promise.all(document.profiles.map((profile) => this.toPublicProfile(profile)));
+    const stored = await Promise.all(
+      document.profiles.map((profile) => this.toPublicProfile(profile)),
+    );
+    const envProfile = await this.envOpenAiPublicProfile();
+    if (!envProfile) return stored;
+    if (stored.some((profile) => profile.id === ENV_OPENAI_BYOK_PROFILE_ID)) {
+      return stored;
+    }
+    return [envProfile, ...stored];
   }
 
   async get(profileId: string): Promise<ByokCredentialProfile | null> {
     assertProfileId(profileId);
+    if (profileId === ENV_OPENAI_BYOK_PROFILE_ID) {
+      const envProfile = await this.envOpenAiPublicProfile();
+      if (envProfile) return envProfile;
+    }
     const stored = (await this.readDocument()).profiles.find((profile) => profile.id === profileId);
     return stored ? this.toPublicProfile(stored) : null;
   }
@@ -88,6 +113,9 @@ export class ByokCredentialService {
    */
   async has(profileId: string): Promise<boolean> {
     assertProfileId(profileId);
+    if (profileId === ENV_OPENAI_BYOK_PROFILE_ID && this.envOpenAiSecret()) {
+      return true;
+    }
     return (await this.readDocument()).profiles.some((profile) => profile.id === profileId);
   }
 
@@ -98,6 +126,11 @@ export class ByokCredentialService {
   private async upsertUnlocked(
     input: UpsertByokCredentialProfileRequest,
   ): Promise<ByokCredentialProfile> {
+    if (input.id === ENV_OPENAI_BYOK_PROFILE_ID) {
+      throw new Error(
+        'The environment OpenAI profile is provided by OPENAI_API_KEY and cannot be overwritten.',
+      );
+    }
     const available = await this.backend.available();
     if (!available) {
       throw new Error('Secure credential storage is unavailable on this system.');
@@ -146,6 +179,10 @@ export class ByokCredentialService {
 
   async resolve(profileId: string): Promise<ResolvedByokCredentialProfile | null> {
     assertProfileId(profileId);
+    if (profileId === ENV_OPENAI_BYOK_PROFILE_ID) {
+      const envResolved = this.envOpenAiResolved();
+      if (envResolved) return envResolved;
+    }
     const stored = (await this.readDocument()).profiles.find((profile) => profile.id === profileId);
     if (!stored) return null;
     const apiKey = stored.requiresApiKey ? (await this.backend.get(profileId))?.trim() ?? '' : '';
@@ -171,6 +208,9 @@ export class ByokCredentialService {
 
   private async deleteUnlocked(profileId: string): Promise<boolean> {
     assertProfileId(profileId);
+    if (profileId === ENV_OPENAI_BYOK_PROFILE_ID && this.envOpenAiSecret()) {
+      return false;
+    }
     const document = await this.readDocument();
     const next = document.profiles.filter((profile) => profile.id !== profileId);
     const existed = next.length !== document.profiles.length;
@@ -201,6 +241,52 @@ export class ByokCredentialService {
       () => undefined,
     );
     return result;
+  }
+
+  private envOpenAiSecret(): string {
+    return this.readEnvOpenAiApiKey().trim();
+  }
+
+  private envOpenAiStoredProfile(): StoredProfile | null {
+    if (!this.envOpenAiSecret()) return null;
+    return {
+      id: ENV_OPENAI_BYOK_PROFILE_ID,
+      label: ENV_OPENAI_BYOK_LABEL,
+      protocol: 'openai',
+      baseUrl: ENV_OPENAI_DEFAULT_BASE_URL,
+      model: ENV_OPENAI_DEFAULT_MODEL,
+      requiresApiKey: true,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  }
+
+  private async envOpenAiPublicProfile(): Promise<ByokCredentialProfile | null> {
+    const stored = this.envOpenAiStoredProfile();
+    const secret = this.envOpenAiSecret();
+    if (!stored || !secret) return null;
+    return this.toPublicProfile(stored, secret);
+  }
+
+  private envOpenAiResolved(): ResolvedByokCredentialProfile | null {
+    const stored = this.envOpenAiStoredProfile();
+    const apiKey = this.envOpenAiSecret();
+    if (!stored || !apiKey) return null;
+    return {
+      profile: {
+        ...stored,
+        configured: true,
+        keyTail: apiKey.slice(-4),
+      },
+      apiKey,
+      provider: {
+        protocol: 'openai',
+        apiKey,
+        baseUrl: stored.baseUrl,
+        model: stored.model,
+        requiresApiKey: true,
+      },
+    };
   }
 
   private async toPublicProfile(
@@ -363,20 +449,17 @@ class MacOsKeychainBackend implements ByokSecretBackend {
 
   async set(profileId: string, secret: string) {
     try {
-      await runInteractiveMacOsSecretCommand(
+      // Prefer hex (`-X`) over interactive `-w` prompts. The PTY prompt path
+      // truncates long OpenAI project keys (~164 chars) at 128 bytes on macOS.
+      // Hex keeps the full secret without a terminal line-discipline cutoff.
+      const hex = Buffer.from(secret, 'utf8').toString('hex');
+      await runSecretCommand(
         '/usr/bin/security',
-        ['add-generic-password', '-a', profileId, '-s', KEYCHAIN_SERVICE, '-U', '-w'],
-        secret,
+        ['add-generic-password', '-a', profileId, '-s', KEYCHAIN_SERVICE, '-U', '-X', hex],
       );
       this.writable = true;
-    } catch (error) {
+    } catch {
       this.writable = false;
-      if (isNodePtyUnavailableError(error)) {
-        throw new Error(
-          'Secure credential storage is unavailable because its native PTY helper could not be loaded.',
-          { cause: error },
-        );
-      }
       throw new Error('Secure credential backend command failed.');
     }
   }
@@ -513,84 +596,5 @@ async function runSecretCommand(
     });
     if (secretInput !== undefined) child.stdin.end(`${secretInput}\n`);
     else child.stdin.end();
-  });
-}
-
-/**
- * `security add-generic-password -w` intentionally prompts twice when the
- * password argument is omitted. A regular stdin pipe is not accepted by the
- * macOS tool, while putting the key after `-w` exposes it in the process list.
- * Drive only those bounded prompts through a pseudo-terminal and keep all
- * output private.
- */
-async function runInteractiveMacOsSecretCommand(
-  command: string,
-  args: string[],
-  secret: string,
-): Promise<void> {
-  const { spawn: spawnPty } = await loadNodePty();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let promptResponses = 0;
-    let promptScan = '';
-    let dataDisposable: { dispose(): void } | null = null;
-    let exitDisposable: { dispose(): void } | null = null;
-    // `security` does not reliably disable terminal echo before its password
-    // prompts. Use a fixed shell program (no interpolation) to disable echo,
-    // then exec the command and its validated argv verbatim.
-    const child = spawnPty('/bin/sh', [
-      '-c',
-      'stty -echo; exec "$@"',
-      'open-design-keychain',
-      command,
-      ...args,
-    ], {
-      name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
-      cwd: process.cwd(),
-      env: { ...process.env },
-    });
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      dataDisposable?.dispose();
-      exitDisposable?.dispose();
-      if (error) reject(error);
-      else resolve();
-    };
-    const timer = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {
-        // Best-effort termination; the generic failure below stays secret-free.
-      }
-      finish(new Error('Secure credential backend command failed.'));
-    }, INTERACTIVE_SECRET_TIMEOUT_MS);
-    timer.unref?.();
-    dataDisposable = child.onData((chunk) => {
-      // Security prompts should disable terminal echo. Redact defensively
-      // before retaining the bounded prompt tail anyway.
-      const safeChunk = secret
-        ? chunk.split(secret).join('[redacted]')
-        : chunk;
-      promptScan = `${promptScan}${safeChunk}`.slice(-512);
-      const promptCount = (
-        promptScan.match(/(?:retype[^\r\n:]*|password[^\r\n:]*)\s*:/giu)
-        ?? []
-      ).length;
-      while (promptResponses < Math.min(promptCount, 2)) {
-        child.write(`${secret}\r`);
-        promptResponses += 1;
-      }
-    });
-    exitDisposable = child.onExit(({ exitCode }) => {
-      finish(
-        exitCode === 0
-          ? undefined
-          : new Error('Secure credential backend command failed.'),
-      );
-    });
   });
 }

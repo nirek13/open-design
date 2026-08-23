@@ -214,6 +214,11 @@ type ProjectMetadata = {
     status?: string | null;
     accountLabel?: string | null;
   }> | null;
+  pageContext?: {
+    pageId?: string | null;
+    title?: string | null;
+    icon?: string | null;
+  } | null;
 };
 type ProjectTemplate = { name: string; description?: string | null; files: Array<{ name: string; content: string }> };
 type AudioVoiceOption = {
@@ -1620,6 +1625,13 @@ function renderMetadataBlock(
   );
   lines.push('');
   lines.push(`- **kind**: ${metadata.kind}`);
+  if (metadata.pageContext?.pageId) {
+    const title = metadata.pageContext.title?.trim() || 'Untitled';
+    const icon = metadata.pageContext.icon?.trim();
+    lines.push(
+      `- **pageContext**: organization wiki page ${metadata.pageContext.pageId} (${icon ? `${icon} ` : ''}“${title}”). The user launched this chat from that page. Prefer editing it and nesting children under it via \`tools pages\`. Do not invent markdown or HTML files for this wiki.`,
+    );
+  }
   if (metadata.platform) {
     lines.push(`- **platform**: ${metadata.platform}`);
   } else if (metadata.kind === 'prototype' || metadata.kind === 'template' || metadata.kind === 'other') {

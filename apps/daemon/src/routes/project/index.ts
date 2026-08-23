@@ -74,6 +74,23 @@ export function projectVisibleForOrg(project: { orgId?: string | null }, orgId: 
   return project.orgId === orgId;
 }
 
+/** Visibility across every organization the caller belongs to.
+ *
+ * This is what "see my work across accounts" means: one list spanning the
+ * organizations you are a member of, rather than whichever one happens to be
+ * active. Membership is the boundary — an org you are not in never appears,
+ * so widening the view never widens access.
+ *
+ * Projects with no organization predate organizations entirely and stay
+ * visible, matching the documented contract in AGENTS.md. */
+export function projectVisibleForOrgs(
+  project: { orgId?: string | null },
+  orgIds: ReadonlySet<string>,
+): boolean {
+  if (!project.orgId) return true;
+  return orgIds.has(project.orgId);
+}
+
 function projectDetailResolvedDir(
   projectsRoot: string,
   project: any,
@@ -1249,6 +1266,24 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
    * standalone (several tests build a bare Express app around it). Without it,
    * everything falls back to the pre-organization behavior: no org is assigned
    * on create, and the list filter passes everything through. */
+  /** Every organization the caller belongs to, for cross-organization views.
+   *
+   * Returns null when the org layer is not mounted (standalone route tests),
+   * which callers read as "no org filtering to apply". */
+  async function resolveMemberOrgIds(req: any): Promise<Set<string> | null> {
+    const orgManager = ctx.organizations?.manager;
+    const orgIdentity = ctx.organizations?.identity;
+    if (!orgManager || !orgIdentity) return null;
+    try {
+      const viewer = await orgIdentity.resolveViewer(req, orgManager.directoryExecutor);
+      if (!viewer) return null;
+      const memberships = await listOrganizationsForUser(orgManager.directoryExecutor, viewer.userId);
+      return new Set(memberships.map((org) => org.id));
+    } catch {
+      return null;
+    }
+  }
+
   async function resolveRequestOrgId(req: any): Promise<string | null> {
     const orgManager = ctx.organizations?.manager;
     const orgIdentity = ctx.organizations?.identity;
@@ -1505,7 +1540,12 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
 
   app.get('/api/projects', async (req, res) => {
     try {
+      // `scope=all` is the cross-organization view: one list spanning every
+      // organization the caller belongs to. Membership still bounds it, so a
+      // wider view never means wider access.
+      const allOrgs = String(req.query?.scope ?? '') === 'all';
       const activeOrgId = await resolveRequestOrgId(req);
+      const memberOrgIds = allOrgs ? await resolveMemberOrgIds(req) : null;
       const locations = await configuredProjectLocations();
       const latestRunStatuses = listLatestProjectRunStatuses(db);
       const awaitingInputProjects = listProjectsAwaitingInput(db);
@@ -1529,7 +1569,11 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const body = {
         projects: listProjects(db)
           .filter((project: any) => projectVisibleForLocations(project, locations))
-          .filter((project: any) => projectVisibleForOrg(project, activeOrgId))
+          .filter((project: any) =>
+            memberOrgIds
+              ? projectVisibleForOrgs(project, memberOrgIds)
+              : projectVisibleForOrg(project, activeOrgId),
+          )
           .map((project: any) => ({
             ...project,
             status: brandAwareProjectStatus(

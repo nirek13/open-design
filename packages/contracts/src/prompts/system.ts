@@ -588,6 +588,13 @@ function renderMetadataBlock(
   );
   lines.push('');
   lines.push(`- **kind**: ${metadata.kind}`);
+  if (metadata.pageContext?.pageId) {
+    const title = metadata.pageContext.title?.trim() || 'Untitled';
+    const icon = metadata.pageContext.icon?.trim();
+    lines.push(
+      `- **pageContext**: organization wiki page ${metadata.pageContext.pageId} (${icon ? `${icon} ` : ''}“${title}”). The user launched this chat from that page. Prefer editing it and nesting children under it via \`tools pages\`. Do not invent markdown or HTML files for this wiki.`,
+    );
+  }
   lines.push(...platformLines(metadata));
   lines.push(...screenRuleLines(metadata));
   lines.push(...landingAndWidgetLines(metadata));

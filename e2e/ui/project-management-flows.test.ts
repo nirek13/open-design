@@ -480,14 +480,14 @@ test('[P1] stale daemon default design system is not posted when creating a proj
   expect(body.metadata?.inspirationDesignSystemIds).toBeUndefined();
 });
 
-test('[P2] project detail header keeps the title and execution controls aligned on one row', async ({ page }) => {
+test('[P2] project detail header keeps the title and handoff control aligned on one row', async ({ page }) => {
   await page.goto('/');
   await createProject(page, 'Header controls stay pinned');
   await expectWorkspaceReady(page);
   await page.setViewportSize({ width: 1365, height: 900 });
 
   const title = page.getByTestId('project-title');
-  const settingsButton = page.getByTestId('entry-settings-menu-trigger');
+  const settingsButton = page.getByTestId('workspace-tabs-trailing').getByTestId('entry-settings-menu-trigger');
   const handoffButton = page.getByRole('button', { name: /Choose hand-off target/i });
 
   await expect(title).toBeVisible();
@@ -495,17 +495,15 @@ test('[P2] project detail header keeps the title and execution controls aligned 
   await expect(handoffButton).toBeVisible();
   await expect(page.getByTestId('chat-composer').getByTestId('project-ds-picker-trigger')).toBeVisible();
 
-  const [titleBox, settingsBox, handoffBox] = await Promise.all([
+  const [titleBox, handoffBox] = await Promise.all([
     title.boundingBox(),
-    settingsButton.boundingBox(),
     handoffButton.boundingBox(),
   ]);
 
   expect(titleBox).toBeTruthy();
-  expect(settingsBox).toBeTruthy();
   expect(handoffBox).toBeTruthy();
 
-  const yValues = [titleBox!.y, settingsBox!.y, handoffBox!.y];
+  const yValues = [titleBox!.y, handoffBox!.y];
   expect(Math.max(...yValues) - Math.min(...yValues)).toBeLessThan(24);
 });
 

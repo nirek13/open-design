@@ -40,7 +40,8 @@ export async function streamProxyEndpoint(
   handlers: StreamHandlers,
   context?: ProxyContext,
 ): Promise<void> {
-  if (!cfg.apiKey) {
+  const byokProfileId = cfg.byokProfileId?.trim() ?? '';
+  if (!cfg.apiKey && !byokProfileId) {
     handlers.onError(new Error('Missing API key — open Settings and paste one in.'));
     return;
   }
@@ -54,7 +55,8 @@ export async function streamProxyEndpoint(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         baseUrl: cfg.baseUrl,
-        apiKey: cfg.apiKey,
+        ...(cfg.apiKey ? { apiKey: cfg.apiKey } : {}),
+        ...(byokProfileId ? { byokProfileId } : {}),
         model: cfg.model,
         systemPrompt: system,
         messages,

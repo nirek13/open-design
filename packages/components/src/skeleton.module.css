@@ -1,0 +1,45 @@
+.skeleton {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    var(--bg-subtle) 0%,
+    var(--bg-muted) 40%,
+    var(--bg-subtle) 80%
+  );
+  background-size: 300% 100%;
+  animation: shimmer 1.4s var(--ease-out, ease) infinite;
+}
+
+.line {
+  height: 12px;
+  border-radius: var(--radius-xs);
+}
+
+.block {
+  height: 64px;
+  border-radius: var(--radius-md);
+}
+
+.circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+/* A pulsing placeholder is exactly the kind of ambient motion that triggers
+   vestibular discomfort, and it carries no information. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    background: var(--bg-subtle);
+  }
+}

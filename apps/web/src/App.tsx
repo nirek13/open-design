@@ -33,10 +33,15 @@ import { PetOverlay, type PetTaskCenter } from './components/pet/PetOverlay';
 import { buildPetTaskCenter } from './components/pet/taskCenter';
 import { migrateCustomPetAtlas } from './components/pet/pets';
 import { ProjectView } from './components/ProjectView';
+import { RunningAppProvider, useOptionalRunningApp } from './components/apps/RunningAppContext';
 import { AmrArtifactUpgradeGate } from './components/AmrArtifactUpgradeGate';
 import { AmrArtifactUpgradeHomeCard } from './components/AmrArtifactUpgradeHomeCard';
 import { TooltipLayer } from './components/TooltipLayer';
 import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
+import { AccountMenu } from './components/account/AccountMenu';
+import { OrgSwitcher } from './components/org/OrgSwitcher';
+import { MessageCenter } from './components/MessageCenter';
+import { EntrySettingsMenu } from './components/EntrySettingsMenu';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -46,6 +51,7 @@ import {
   useIframeKeepAlivePool,
 } from './components/IframeKeepAlivePool';
 import { OrgProvider } from './org/OrgContext';
+import { AuthGate } from './auth/AuthGate';
 import { JoinOrgView } from './components/org/JoinOrgView';
 import {
   SettingsDialog,
@@ -124,6 +130,7 @@ import type {
   PluginShareProjectOutcome,
 } from './state/projects';
 import type { OpenDesignHostProjectImportSuccess } from '@open-design/host';
+import { publishProjectNow } from './providers/auto-publish';
 import { useI18n } from './i18n';
 import { liveArtifactTabId } from './types';
 import type {
@@ -402,12 +409,16 @@ export function App() {
   return (
     <MotionConfig reducedMotion="user">
       <IframeKeepAliveProvider>
-        {/* Organization context wraps all app state: which organization is
-            active decides what projects, apps, tables, and members exist as
-            far as the rest of the tree is concerned. */}
-        <OrgProvider>
-          <AppInner />
-        </OrgProvider>
+        {/* Identity first, then organization. "Which organization am I in"
+            has no meaning before "who am I", and in clerk mode nothing below
+            this gate renders until a session exists. */}
+        <AuthGate>
+          <OrgProvider>
+            <RunningAppProvider>
+              <AppInner />
+            </RunningAppProvider>
+          </OrgProvider>
+        </AuthGate>
       </IframeKeepAliveProvider>
     </MotionConfig>
   );
@@ -417,6 +428,26 @@ function AppInner() {
   const { t } = useI18n();
   const iframeKeepAlivePool = useIframeKeepAlivePool();
   const clientType = useMemo(() => detectClientType(), []);
+  const route = useRoute();
+  const runningApp = useOptionalRunningApp();
+  // Leaving the built-app overlay when the user switches a workspace tab
+  // (or otherwise navigates) so the destination view is actually visible.
+  const routeKey = useMemo(() => {
+    if (route.kind === 'home') return `home:${route.view}:${route.pageId ?? ''}:${route.brandId ?? ''}`;
+    if (route.kind === 'project') {
+      return `project:${route.projectId}:${route.conversationId ?? ''}:${route.fileName ?? ''}`;
+    }
+    if (route.kind === 'marketplace-detail') return `marketplace:${route.pluginId}`;
+    if (route.kind === 'design-system-detail') return `ds:${route.designSystemId}`;
+    if (route.kind === 'join') return `join:${route.token}`;
+    return route.kind;
+  }, [route]);
+  const previousRouteKeyRef = useRef(routeKey);
+  useEffect(() => {
+    if (previousRouteKeyRef.current === routeKey) return;
+    previousRouteKeyRef.current = routeKey;
+    if (runningApp?.running) runningApp.closeApp();
+  }, [routeKey, runningApp]);
   useModalWindowDragGuard();
   useEffect(() => {
     const onFirstPartyExternalLink = (event: MouseEvent) => openFirstPartyExternalLinkFromClick(
@@ -461,6 +492,7 @@ function AppInner() {
   // effect while the project actually stayed in the managed root.
   const [workingDirError, setWorkingDirError] = useState<string | null>(null);
   const [projectOpenError, setProjectOpenError] = useState<string | null>(null);
+  const [publishNotice, setPublishNotice] = useState<string | null>(null);
   const [legacyByokMigrationError, setLegacyByokMigrationError] =
     useState<Error | null>(null);
   const [settingsWelcome, setSettingsWelcome] = useState(false);
@@ -545,7 +577,6 @@ function AppInner() {
   // mistake for "no key saved" — and to disable Save/Clear so a misclick
   // can't overwrite the saved state with `''` before hydration lands.
   const [composioConfigLoading, setComposioConfigLoading] = useState(true);
-  const route = useRoute();
   const analytics = useAnalytics();
 
   const beginAgentStreamRequest = useCallback(() => {
@@ -1037,9 +1068,7 @@ function AppInner() {
         fetchDaemonConfig(),
         fetchComposioConfigFromDaemon(),
         fetchMediaProvidersFromDaemon(),
-        migrationBaseConfig.byokProfileId
-          ? fetchByokCredentialProfilesFromDaemon()
-          : Promise.resolve(null),
+        fetchByokCredentialProfilesFromDaemon(),
       ]).then(([
         daemonConfig,
         daemonComposioConfig,
@@ -1588,7 +1617,12 @@ function AppInner() {
       input.pendingPrompt ??
       (input.metadata?.promptTemplate?.prompt?.trim() || undefined);
 
-      const metadata = mergeLinkedDirsIntoMetadata(input.metadata, input.linkedDirs);
+      const metadata = mergeLinkedDirsIntoMetadata(
+        input.metadata?.visibility === 'public'
+          ? { ...input.metadata, autoPublish: true }
+          : input.metadata,
+        input.linkedDirs,
+      );
       const kind = metadata?.kind ?? null;
       const fidelity = fidelityToTracking(metadata?.fidelity ?? null);
       const creationSource: 'blank' | 'template' | 'zip' | 'folder' =
@@ -1812,6 +1846,24 @@ function AppInner() {
       } as const;
       openWorkspaceTab(projectRoute);
       navigate(projectRoute);
+      if (metadata?.visibility === 'public') {
+        void publishProjectNow({
+          projectId: project.id,
+          projectName: project.name,
+          visibility: 'public',
+        }).then((outcome) => {
+          if (outcome.ok) {
+            try {
+              window.sessionStorage.setItem(`od:public-url:${project.id}`, outcome.url);
+            } catch {
+              /* ignore */
+            }
+            setPublishNotice(`Live on the web: ${outcome.url}`);
+          } else {
+            setPublishNotice(outcome.reason);
+          }
+        });
+      }
       return true;
     },
     [analytics.track, rememberLocalProject],
@@ -2657,6 +2709,24 @@ function AppInner() {
           route={route}
           projects={projects}
           onboardingCompleted={config.onboardingCompleted === true}
+          trailing={(
+            <>
+              <OrgSwitcher
+                onManage={() => {
+                  navigate({ kind: 'home', view: 'organization' });
+                }}
+              />
+              <AccountMenu />
+              <MessageCenter
+                onOpenNotificationSettings={() => openSettings('notifications')}
+              />
+              <EntrySettingsMenu
+                config={config}
+                onThemeChange={handleThemeChange}
+                onOpenSettings={openSettings}
+              />
+            </>
+          )}
         />
         <div className="workspace-shell__body">
           {appMain}
@@ -2747,6 +2817,12 @@ function AppInner() {
           message={workingDirError}
           role="alert"
           onDismiss={() => setWorkingDirError(null)}
+        />
+      ) : null}
+      {publishNotice ? (
+        <Toast
+          message={publishNotice}
+          onDismiss={() => setPublishNotice(null)}
         />
       ) : null}
       {projectOpenError ? (

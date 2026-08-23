@@ -1,0 +1,111 @@
+/* The command bar. Readback sits directly under the input so the sentence and
+ * what it was understood to mean are read together. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.readback {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 3px solid var(--border, rgba(127, 127, 127, 0.3));
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Certainty is carried by the border as well as the number, so a confident
+ * match and a hedge do not look identical at a glance. */
+.sure {
+  border-left-color: var(--positive, #2e9e5b);
+}
+
+.hedged {
+  border-left-color: var(--warning, #c98a1b);
+}
+
+.unsure {
+  border-left-color: var(--text-3, rgba(127, 127, 127, 0.5));
+}
+
+.summary {
+  margin: 0;
+  font-weight: 600;
+}
+
+.meta,
+.unmatched {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+}
+
+.unmatched {
+  font-style: italic;
+}
+
+.preview {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail {
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+}
+
+.warning {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--warning, #c98a1b);
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.suggestionsLabel {
+  font-size: 0.78rem;
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+}
+
+.suggestion {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.suggestion:hover {
+  background: var(--surface-3, rgba(127, 127, 127, 0.12));
+}
+
+.error {
+  margin: 0;
+  color: var(--danger, #c0392b);
+  font-size: 0.85rem;
+}

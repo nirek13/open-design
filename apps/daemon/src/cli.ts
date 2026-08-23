@@ -13,6 +13,8 @@ import { BRAND_USAGE, isBrandHelpArg } from './cli-help/index.js';
 import { parseDesignSystemRenameArgs } from './design-systems/rename-args.js';
 import { runLiveArtifactsToolCli } from './tools-live-artifacts-cli.js';
 import { runDataToolCli } from './tools-data-cli.js';
+import { runPagesToolCli } from './tools-pages-cli.js';
+import { runErpToolCli } from './tools-erp-cli.js';
 import { runByokToolCli } from './tools-byok-cli.js';
 import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
@@ -220,7 +222,7 @@ const PROJECT_STRING_FLAGS = new Set([
   'title', 'label', 'against', 'seed-from', 'fork-after', 'mode',
   'source',
 ]);
-const PROJECT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'follow']);
+const PROJECT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'follow', 'all-orgs']);
 // `od templates …` mirrors NewProjectPanel / ExamplesTab. Same surface,
 // same /api/templates store. The CLI form is the embeddability contract:
 // external agents (hermes-agent, openclaw, ...) can snapshot, list, or
@@ -345,13 +347,13 @@ const RECOVERABLE_EXIT_CODES = {
 // which runs during module evaluation — a `const` declared further down would
 // still be in TDZ.
 const ORG_STRING_FLAGS = new Set([
-  'daemon-url', 'org', 'name', 'role', 'expires-in', 'max-uses',
+  'daemon-url', 'org', 'name', 'role', 'expires-in', 'max-uses', 'email', 'username',
 ]);
 const ORG_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 const APP_STRING_FLAGS = new Set([
-  'daemon-url', 'org', 'name', 'description', 'project', 'file', 'visibility', 'expires-in',
+  'daemon-url', 'org', 'name', 'description', 'project', 'file', 'visibility', 'access', 'grant', 'expires-in',
 ]);
-const APP_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'include-archived']);
+const APP_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'include-archived', 'all-orgs', 'pin', 'unpin']);
 const DATA_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'workspace', 'name', 'table', 'data', 'data-file',
   'expected-revision', 'limit', 'cursor', 'sort', 'direction', 'subject',
@@ -359,6 +361,30 @@ const DATA_STRING_FLAGS = new Set([
 const DATA_BOOLEAN_FLAGS = new Set([
   'help', 'h', 'json', 'include-deleted', 'include-archived',
 ]);
+const ERP_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'workspace', 'data', 'data-file', 'file', 'table', 'to',
+  'limit', 'status', 'period', 'start', 'end', 'as-of', 'name', 'question', 'from',
+  'group-by', 'restore', 'type', 'formula', 'options', 'url',
+]);
+const ERP_BOOLEAN_FLAGS = new Set([
+  'help', 'h', 'json', 'off', 'pin', 'save', 'required', 'accept-data-loss',
+]);
+const TEAM_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'message', 'prompt-file', 'topic', 'limit', 'before',
+]);
+const TEAM_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'private']);
+const PAGES_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'title', 'parent', 'icon', 'cover', 'data-file',
+  'query', 'q', 'limit', 'type', 'target', 'table', 'record', 'path', 'url',
+]);
+const PAGES_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'tree', 'recursive']);
+const CALENDAR_STRING_FLAGS = new Set(['daemon-url', 'org', 'from', 'to']);
+const CALENDAR_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const MAIL_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'label', 'query', 'q', 'to', 'cc', 'bcc', 'subject',
+  'body', 'prompt-file', 'page-token', 'max',
+]);
+const MAIL_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'html']);
 const PLUGIN_LIST_FILTER_FLAGS = new Set([
   ...PLUGIN_STRING_FLAGS,
   'task-kind', 'mode', 'tag', 'trust',
@@ -409,6 +435,13 @@ const SUBCOMMAND_MAP = {
   library: runLibrary,
   figma: runFigma,
   data: runData,
+  erp: runErp,
+  team: runTeam,
+  pages: runPages,
+  page: runPages,
+  mail: runMail,
+  gmail: runMail,
+  calendar: runCalendar,
   org: runOrg,
   orgs: runOrg,
   app: runApp,
@@ -612,6 +645,26 @@ if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
       process.stderr.write(`${JSON.stringify({ ok: false, error: { message } })}\n`);
       process.exitCode = 1;
     });
+} else if (argv[0] === 'tools' && argv[1] === 'pages') {
+  runPagesToolCli(argv.slice(2))
+    .then(({ exitCode }) => {
+      process.exitCode = exitCode;
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${JSON.stringify({ ok: false, error: { message } })}\n`);
+      process.exitCode = 1;
+    });
+} else if (argv[0] === 'tools' && argv[1] === 'erp') {
+  runErpToolCli(argv.slice(2))
+    .then(({ exitCode }) => {
+      process.exitCode = exitCode;
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${JSON.stringify({ ok: false, error: { message } })}\n`);
+      process.exitCode = 1;
+    });
 } else {
   await runDaemonCliStartup(argv, { printHelp: printRootHelp });
 }
@@ -700,6 +753,14 @@ function printRootHelp() {
 
   od tools design-systems read --path <manifest-declared-path>
       Read active design-system pull-layer files through daemon wrapper commands.
+
+  od tools pages <list|get|search|upsert|append|embed|scaffold|duplicate|archive>
+      Build a Notion-shaped wiki (nested pages, embeds) through daemon wrapper
+      commands. Same store as the Pages UI; agents should prefer this over files.
+
+  od tools erp <import-url|ask|pack|pack-install|preview|propose>
+      Magic-import a public spreadsheet/JSON/HTML table, apply a sentence to
+      ERP tables, and define custom packs. Same store as the ERP UI.
 
   od mcp live-artifacts
       Start the MCP server exposing live-artifact and connector tools.
@@ -6123,7 +6184,8 @@ async function runProject(args) {
   od project import <baseDir> [--name "<title>"]
   od project import-folder <path> [--name "<title>"] [--skill <id>]
                     [--design-system <id>] [--json]
-  od project list                         List projects.
+  od project list                         List projects (--all-orgs to span
+                                          every organization you belong to).
   od project info <id>                    Print one project.
   od project delete <id>                  Delete a project.
   od project editors                      List locally-installed editors that
@@ -6156,7 +6218,11 @@ Common options:
   const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
   switch (sub) {
     case 'list': {
-      const resp = await fetch(`${base}/api/projects`);
+      // `--all-orgs` spans every organization you belong to, which is how a
+      // person thinks about their own work; the daemon bounds it by
+      // membership so a wider view is never a wider grant.
+      const listPath = flags['all-orgs'] ? '/api/projects?scope=all' : '/api/projects';
+      const resp = await fetch(`${base}${listPath}`);
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
@@ -10967,6 +11033,2073 @@ async function runData(args) {
 }
 
 // ---------------------------------------------------------------------------
+// od erp — the business layer: hub documents, the books, proposals, saved
+// questions, spreadsheet import, and search.
+//
+// Same endpoints the web UI calls. The split from `od data` is deliberate:
+// `od data` is the raw table/record plane, while everything here is about the
+// business meaning laid over it — a document that posts to the ledger, a
+// change waiting for someone to approve it, a question pinned to the home
+// screen. Nothing here can approve its own proposal or post to a closed
+// period; those refusals live in the daemon, so the CLI gets them for free.
+
+function printErpHelp() {
+  console.log(`Usage: od erp <subcommand> [options]
+
+Subcommands:
+  ask "<what you want>"                Say what to change or find in plain
+                                       words; shows what it would do, and
+                                       --save applies it (undoable)
+  record <record-id>                   One record with its links, related
+                                       lists, totals, and valid actions
+  history <record-id>                  Every version of a record and what
+                                       changed; --restore <n> goes back
+  field list --table <t>               Fields on a table, with types
+  field impact <f> --table <t> [--to|--type]
+                                       What a rename/retype/remove would cost
+  field rename <f> --table <t> --to <n> Rename, carrying values across
+  field retype <f> --table <t> --type <ty>
+                                       Change type (--accept-data-loss if the
+                                       impact report showed losses)
+  field remove <f> --table <t>         Take it off; values are kept
+  field restore <f> --table <t>        Put it back with its values
+  field set <f> --table <t> [--name|--options|--formula|--required]
+                                       Label, choices, formula, required
+  views list --table <table>           Saved views on a table
+  views create --table <t> --name <n>  Add a view (--group-by <field> for a board)
+  views records <view-id>              Run a view: filtered, sorted, grouped
+  search <text>                        Search every table at once
+  recent                               Recently touched documents (--limit)
+  pack list                            Packs this organization wrote itself
+  pack create --data-file <spec.json>  Define a pack (validated before storing)
+  pack install <slug>                  Install one, same installer as built-ins
+  pack export <slug>                   Print its spec, ready to pipe elsewhere
+  pack delete <slug>                   Delete the definition; tables stay
+  template list                        Template packs and which are installed
+  template install <id>                Install a pack (sales, crm, purchasing,
+                                       inventory, projects, expenses, hr,
+                                       support) and anything it requires; never
+                                       overwrites a table you already have
+  crm pipeline                         Deals by stage, with weighted forecast
+  crm move <record-id> --to <stage>    Move a deal along the pipeline
+  crm to-quote <record-id>             Draft a quote from a won deal (--save
+                                       to create it)
+  purchasing payables                  What you owe vendors, most overdue first
+  inventory stock                      Stock on hand and what needs reordering
+  projects summary                     Hours, billable value, and budget left
+  hub status                           Is the business hub set up?
+  hub setup                            Create customers/quotes/orders/invoices/
+                                       payments and the chart of accounts
+  hub next-number <table>              Next document number for a table
+  hub convert <record-id> --to <table> Draft the next document from this one
+                                       (quote -> order -> invoice); --save to
+                                       create it
+  hub post <table> <record-id>         Post a document to the books
+  hub unpost <record-id>               Reverse a document's journal entry
+  ledger accounts                      Chart of accounts
+  ledger entries                       Journal entries (--limit, --status)
+  ledger show <entry-id>               One entry with its lines
+  ledger post --data <json>            Post a journal entry (must balance)
+  ledger reverse <entry-id>            Reverse a posted entry
+  ledger trial-balance                 Trial balance (--as-of <YYYY-MM-DD>)
+  ledger periods                       Accounting periods
+  ledger close --period <YYYY-MM>      Close a period so nothing can post into
+                                       it (or --start/--end <YYYY-MM-DD>)
+  proposals list                       Pending changes (--status)
+  proposals show <id>                  One proposal with its preview
+  proposals approve <id>               Apply it (all-or-nothing)
+  proposals reject <id>                Decline it
+  proposals undo <id>                  Undo an applied proposal
+  questions list                       Saved questions
+  questions ask "<question>" --table <t>  Save a question (--pin to put it
+                                       on the home screen, --data for filters
+                                       and aggregates)
+  questions answer <id>                Answer a saved question
+  questions pin <id>                   Pin/unpin on the home screen (--off)
+  widgets                              Answers for every pinned question
+  import plan --file <path|->          Read a spreadsheet, show what we found
+  import commit --file <path|->        Import it (--table to name the table)
+  import plan --url <https://...>      Magic-import a public Sheet / CSV /
+                                       JSON / HTML table (same preview)
+  import commit --url <https://...>    Fetch and import in one step
+
+Options:
+  --org <id>         Organization to operate in (default: your first)
+  --data <json>      Inline JSON payload
+  --data-file <path|->  JSON payload from a file, or - for stdin
+  --file <path|->    Spreadsheet (CSV/TSV) for import, or - for stdin
+  --json             Machine-readable output
+  --daemon-url <url> Daemon base URL
+
+Examples:
+  od erp hub setup --json
+  od erp ask "add a phone column to customers" --save
+  od erp ask "show overdue invoices" --json
+  od erp history rec-1a2b --json
+  od erp history rec-1a2b --restore 3
+  od erp template install crm
+  od erp crm pipeline --json
+  od erp purchasing payables --as-of 2026-06-30
+  od erp search "INV-1001"
+  od erp import plan --file customers.csv
+  od erp import commit --url https://docs.google.com/spreadsheets/d/…/edit
+  od erp ledger post --data '{"date":"2026-04-02","memo":"Opening balance",
+    "lines":[{"accountCode":"1000","direction":"debit","amount":500000},
+             {"accountCode":"3000","direction":"credit","amount":500000}]}'
+  od erp proposals list --status pending --json
+`);
+}
+
+async function runErp(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printErpHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: ERP_STRING_FLAGS, boolean: ERP_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, ERP_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.json();
+  }
+
+  async function readTextArg(flagName, required) {
+    const file = flags[flagName];
+    if (!file) {
+      if (required) {
+        console.error(`provide --${flagName} <path|->`);
+        process.exit(2);
+      }
+      return undefined;
+    }
+    if (file === '-') {
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      return Buffer.concat(chunks).toString('utf8');
+    }
+    const { readFile } = await import('node:fs/promises');
+    return readFile(file, 'utf8');
+  }
+
+  async function readDataPayload(required) {
+    if (flags.data !== undefined) {
+      try {
+        return JSON.parse(flags.data);
+      } catch {
+        console.error('--data must be valid JSON');
+        process.exit(2);
+      }
+    }
+    const text = await readTextArg('data-file', false);
+    if (text !== undefined) {
+      try {
+        return JSON.parse(text);
+      } catch {
+        console.error('--data-file must contain valid JSON');
+        process.exit(2);
+      }
+    }
+    if (required) {
+      console.error('provide --data <json> or --data-file <path|->');
+      process.exit(2);
+    }
+    return undefined;
+  }
+
+  async function resolveOrgId() {
+    if (flags.org) return flags.org;
+    if (flags.workspace) return flags.workspace;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  /** Money is integer minor units across this product; render it once, here. */
+  const money = (minor) =>
+    typeof minor === 'number' ? (minor / 100).toFixed(2) : String(minor ?? '');
+
+  const orgId = await resolveOrgId();
+  const scope = `/api/orgs/${encodeURIComponent(orgId)}`;
+
+  if (sub === 'search') {
+    const text = positionals.slice(1).join(' ').trim();
+    if (!text) {
+      console.error('provide the text to search for: od erp search <text>');
+      process.exit(2);
+    }
+    const data = await request('GET', `${scope}/search?q=${encodeURIComponent(text)}`);
+    if (flags.json) return writeJsonOut(data);
+    const groups = data.groups ?? [];
+    if (groups.length === 0) {
+      console.log(`[erp] nothing matches "${text}"`);
+      return;
+    }
+    for (const group of groups) {
+      console.log(`${group.tableDisplayName} (${group.total})`);
+      for (const item of group.hits ?? []) {
+        console.log(`  ${item.recordId}\t${item.label}${item.secondary ? `\t${item.secondary}` : ''}`);
+      }
+    }
+    return;
+  }
+
+  if (sub === 'recent') {
+    const query = flags.limit ? `?limit=${encodeURIComponent(flags.limit)}` : '';
+    const data = await request('GET', `${scope}/recent${query}`);
+    if (flags.json) return writeJsonOut(data);
+    for (const item of data.records ?? []) {
+      console.log(`${item.recordId}\t${item.tableDisplayName}\t${item.label}`);
+    }
+    return;
+  }
+
+  if (sub === 'hub') {
+    const action = positionals[1] ?? 'status';
+    if (action === 'status') {
+      const data = await request('GET', `${scope}/hub/status`);
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] hub ${data.status?.ready ? 'ready' : 'not set up'}`);
+      if (data.status?.ready) {
+        console.log(`[erp] ${data.status.accountCount} ledger accounts`);
+        for (const table of data.status.tables ?? []) {
+          console.log(`  ${table.name}\t${table.recordCount ?? 0} records`);
+        }
+      } else {
+        console.log('[erp] run `od erp hub setup` to create it');
+      }
+      return;
+    }
+    if (action === 'setup') {
+      const data = await request('POST', `${scope}/hub/setup`);
+      if (flags.json) return writeJsonOut(data);
+      // Setup is idempotent, so say which tables it made and which were
+      // already there rather than implying it rebuilt everything.
+      const created = data.setup?.created ?? [];
+      const skipped = data.setup?.skipped ?? [];
+      console.log('[erp] business hub ready');
+      if (created.length) console.log(`  created: ${created.join(', ')}`);
+      if (skipped.length) console.log(`  already there: ${skipped.join(', ')}`);
+      if (data.setup?.accountsCreated) {
+        console.log(`  chart of accounts: ${data.setup.accountsCreated} accounts`);
+      }
+      return;
+    }
+    if (action === 'next-number') {
+      const table = positionals[2];
+      if (!table) {
+        console.error('provide a table: od erp hub next-number <table>');
+        process.exit(2);
+      }
+      const data = await request('GET', `${scope}/hub/next-number/${encodeURIComponent(table)}`);
+      if (flags.json) return writeJsonOut(data);
+      console.log(data.number);
+      return;
+    }
+    if (action === 'convert') {
+      const recordId = positionals[2];
+      if (!recordId || !flags.to) {
+        console.error('usage: od erp hub convert <record-id> --to <table>');
+        process.exit(2);
+      }
+      // The chain only runs one way — a quote becomes an order, an order
+      // becomes an invoice — so the source follows from the target.
+      const from = flags.from ?? (flags.to === 'orders' ? 'quotes' : 'orders');
+      if (flags.to !== 'orders' && flags.to !== 'invoices') {
+        console.error('--to must be orders or invoices');
+        process.exit(2);
+      }
+      const data = await request('POST', `${scope}/hub/convert`, {
+        recordId,
+        from,
+        to: flags.to,
+      });
+      // Converting prepares the next document; it does not save it, so that a
+      // person can look before committing. `--save` completes the step for
+      // scripts that already know they want it.
+      if (!flags.save) {
+        if (flags.json) return writeJsonOut({ ...data, saved: false });
+        const number = Object.entries(data.data ?? {}).find(([key]) => key.endsWith('_number'))?.[1];
+        console.log(`[erp] drafted a ${data.table} document${number ? ` (${number})` : ''}`);
+        console.log(JSON.stringify(data.data, null, 2));
+        console.log('[erp] nothing saved yet — re-run with --save to create it');
+        return;
+      }
+      const saved = await request(
+        'POST',
+        `/api/data/orgs/${encodeURIComponent(orgId)}/tables/${encodeURIComponent(data.table)}/records`,
+        { data: data.data },
+      );
+      if (flags.json) return writeJsonOut({ ...saved, table: data.table, saved: true });
+      const savedNumber = Object.entries(saved.record?.data ?? {}).find(([key]) =>
+        key.endsWith('_number'),
+      )?.[1];
+      console.log(`[erp] ${from} -> ${data.table}${savedNumber ? `: ${savedNumber}` : ''} (${saved.record?.id})`);
+      return;
+    }
+    if (action === 'post') {
+      const table = positionals[2];
+      const recordId = positionals[3];
+      if (!table || !recordId) {
+        console.error('usage: od erp hub post <table> <record-id>');
+        process.exit(2);
+      }
+      const data = await request(
+        'POST',
+        `${scope}/hub/post/${encodeURIComponent(table)}/${encodeURIComponent(recordId)}`,
+      );
+      if (flags.json) return writeJsonOut(data);
+      if (data.entry) console.log(`[erp] posted journal entry ${data.entry.number ?? data.entry.id}`);
+      else console.log(`[erp] not posted: ${data.skipped ?? 'nothing to post'}`);
+      return;
+    }
+    if (action === 'unpost') {
+      const recordId = positionals[2];
+      if (!recordId) {
+        console.error('usage: od erp hub unpost <record-id>');
+        process.exit(2);
+      }
+      const data = await request('POST', `${scope}/hub/unpost/${encodeURIComponent(recordId)}`);
+      if (flags.json) return writeJsonOut(data);
+      // Nothing is edited away: unposting writes reversing entries, so report
+      // the entries it added rather than claiming something was removed.
+      const reversals = data.reversals ?? [];
+      if (reversals.length === 0) {
+        console.log('[erp] nothing was posted for this document');
+        return;
+      }
+      for (const entry of reversals) {
+        console.log(`[erp] reversed with entry ${entry.number ?? entry.id}`);
+      }
+      return;
+    }
+    console.error(`unknown hub action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'ledger') {
+    const action = positionals[1] ?? 'accounts';
+    if (action === 'accounts') {
+      const data = await request('GET', `${scope}/ledger/accounts`);
+      if (flags.json) return writeJsonOut(data);
+      for (const account of data.accounts ?? []) {
+        console.log(`${account.code}\t${account.name}\t${account.type}`);
+      }
+      return;
+    }
+    if (action === 'entries') {
+      const params = new URLSearchParams();
+      if (flags.limit) params.set('limit', flags.limit);
+      if (flags.status) params.set('status', flags.status);
+      const query = params.toString() ? `?${params}` : '';
+      const data = await request('GET', `${scope}/ledger/entries${query}`);
+      if (flags.json) return writeJsonOut(data);
+      for (const entry of data.entries ?? []) {
+        console.log(`${entry.number ?? entry.id}\t${entry.date}\t${entry.status}\t${entry.memo ?? ''}`);
+      }
+      return;
+    }
+    if (action === 'show') {
+      const entryId = positionals[2];
+      if (!entryId) {
+        console.error('usage: od erp ledger show <entry-id>');
+        process.exit(2);
+      }
+      const data = await request('GET', `${scope}/ledger/entries/${encodeURIComponent(entryId)}`);
+      if (flags.json) return writeJsonOut(data);
+      const entry = data.entry;
+      console.log(`${entry.number ?? entry.id}\t${entry.date}\t${entry.status}`);
+      if (entry.memo) console.log(entry.memo);
+      for (const line of entry.lines ?? []) {
+        const side = line.direction === 'debit' ? 'Dr' : '  Cr';
+        console.log(`  ${side} ${line.accountCode ?? line.accountId}\t${money(line.amount)}`);
+      }
+      return;
+    }
+    if (action === 'post') {
+      const payload = await readDataPayload(true);
+      const data = await request('POST', `${scope}/ledger/entries`, payload);
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] posted ${data.entry?.number ?? data.entry?.id ?? ''}`);
+      return;
+    }
+    if (action === 'reverse') {
+      const entryId = positionals[2];
+      if (!entryId) {
+        console.error('usage: od erp ledger reverse <entry-id>');
+        process.exit(2);
+      }
+      const data = await request(
+        'POST',
+        `${scope}/ledger/entries/${encodeURIComponent(entryId)}/reverse`,
+        await readDataPayload(false),
+      );
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] reversed with ${data.entry?.number ?? data.entry?.id ?? ''}`);
+      return;
+    }
+    if (action === 'trial-balance') {
+      const query = flags['as-of'] ? `?asOf=${encodeURIComponent(flags['as-of'])}` : '';
+      const data = await request('GET', `${scope}/ledger/trial-balance${query}`);
+      if (flags.json) return writeJsonOut(data);
+      const balance = data.trialBalance ?? data;
+      for (const row of balance.rows ?? []) {
+        console.log(`${row.code}\t${row.name}\tDr ${money(row.debit)}\tCr ${money(row.credit)}`);
+      }
+      console.log(`total\tDr ${money(balance.totalDebit)}\tCr ${money(balance.totalCredit)}`);
+      if (balance.balanced === false) console.log('[erp] WARNING: books do not balance');
+      return;
+    }
+    if (action === 'periods') {
+      const data = await request('GET', `${scope}/ledger/periods`);
+      if (flags.json) return writeJsonOut(data);
+      for (const period of data.periods ?? []) {
+        console.log(`${period.period}\t${period.status}${period.closedAt ? `\tclosed` : ''}`);
+      }
+      return;
+    }
+    if (action === 'close') {
+      // A period is a month in the way people talk about the books, but the
+      // API works in explicit dates. Accept the month and expand it, so the
+      // caller never has to know that February ends on the 28th or 29th.
+      let startDate = flags.start;
+      let endDate = flags.end;
+      if (flags.period) {
+        const match = /^(\d{4})-(\d{2})$/.exec(flags.period);
+        if (!match) {
+          console.error('--period must look like YYYY-MM');
+          process.exit(2);
+        }
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        if (month < 1 || month > 12) {
+          console.error('--period month must be 01-12');
+          process.exit(2);
+        }
+        const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+        startDate = `${match[1]}-${match[2]}-01`;
+        endDate = `${match[1]}-${match[2]}-${String(lastDay).padStart(2, '0')}`;
+      }
+      if (!startDate || !endDate) {
+        console.error('usage: od erp ledger close --period <YYYY-MM> (or --start/--end <YYYY-MM-DD>)');
+        process.exit(2);
+      }
+      const data = await request('POST', `${scope}/ledger/periods/close`, { startDate, endDate });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] closed ${startDate} to ${endDate}; posting into it is now refused`);
+      return;
+    }
+    console.error(`unknown ledger action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'proposals') {
+    const action = positionals[1] ?? 'list';
+    if (action === 'list') {
+      const query = flags.status ? `?status=${encodeURIComponent(flags.status)}` : '';
+      const data = await request('GET', `${scope}/proposals${query}`);
+      if (flags.json) return writeJsonOut(data);
+      for (const proposal of data.proposals ?? []) {
+        console.log(`${proposal.id}\t${proposal.status}\t${proposal.intent}`);
+      }
+      return;
+    }
+    if (action === 'show') {
+      const id = positionals[2];
+      if (!id) {
+        console.error('usage: od erp proposals show <id>');
+        process.exit(2);
+      }
+      const data = await request('GET', `${scope}/proposals/${encodeURIComponent(id)}`);
+      if (flags.json) return writeJsonOut(data);
+      const proposal = data.proposal;
+      console.log(`${proposal.id}\t${proposal.status}`);
+      console.log(proposal.intent);
+      // The preview is the point: approving should never be a leap of faith.
+      for (const line of proposal.preview?.lines ?? []) {
+        console.log(`  ${line.summary}${line.detail ? `\t${line.detail}` : ''}`);
+      }
+      for (const warning of proposal.preview?.warnings ?? []) console.log(`  ! ${warning}`);
+      return;
+    }
+    if (action === 'approve' || action === 'reject' || action === 'undo') {
+      const id = positionals[2];
+      if (!id) {
+        console.error(`usage: od erp proposals ${action} <id>`);
+        process.exit(2);
+      }
+      const data = await request(
+        'POST',
+        `${scope}/proposals/${encodeURIComponent(id)}/${action}`,
+      );
+      if (flags.json) return writeJsonOut(data);
+      const past = { approve: 'approved', reject: 'rejected', undo: 'undone' }[action];
+      console.log(`[erp] ${past}: ${id}`);
+      const effects = data.proposal?.appliedEffects ?? [];
+      if (action === 'approve') {
+        for (const effect of effects) console.log(`  ${effect.summary ?? effect.kind}`);
+      }
+      if (action === 'undo') {
+        // Undo reverses data, but a new field or table is left in place on
+        // purpose — dropping it would destroy whatever anyone has since put
+        // in it. Say so rather than implying everything went back.
+        const kept = effects.filter(
+          (effect) => effect.kind === 'field-added' || effect.kind === 'table-created',
+        );
+        for (const effect of kept) {
+          const what = effect.kind === 'field-added' ? 'field' : 'table';
+          console.log(`  kept the new ${what} (${effect.summary ?? effect.kind}) — removing it would`);
+          console.log('  destroy anything since stored there; archive it by hand if unwanted');
+        }
+      }
+      return;
+    }
+    console.error(`unknown proposals action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'questions') {
+    const action = positionals[1] ?? 'list';
+    if (action === 'list') {
+      const data = await request('GET', `${scope}/questions`);
+      if (flags.json) return writeJsonOut(data);
+      for (const question of data.questions ?? []) {
+        // Pinning is recorded as a position, so "pinned" means it has one.
+        const pinned = question.pinnedPosition !== null && question.pinnedPosition !== undefined;
+        console.log(`${question.id}\t${pinned ? 'pinned' : '      '}\t${question.question}`);
+      }
+      return;
+    }
+    if (action === 'ask') {
+      // The question reads best as the thing you type: everything else
+      // (which table, what to aggregate) is a flag.
+      const text = flags.question ?? positionals.slice(2).join(' ').trim();
+      const extra = (await readDataPayload(false)) ?? {};
+      const body = { ...extra };
+      if (text) body.question = text;
+      if (flags.table) body.tableRef = flags.table;
+      if (flags.pin) body.pin = true;
+      if (!body.question || !body.tableRef) {
+        console.error('usage: od erp questions ask "<question>" --table <table> [--data <json>]');
+        process.exit(2);
+      }
+      const data = await request('POST', `${scope}/questions`, body);
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] saved: ${data.question?.question ?? text}`);
+      if (data.answer) console.log(`  answer now: ${data.answer.value ?? '—'}`);
+      return;
+    }
+    if (action === 'answer') {
+      const id = positionals[2];
+      if (!id) {
+        console.error('usage: od erp questions answer <id>');
+        process.exit(2);
+      }
+      const data = await request('GET', `${scope}/questions/${encodeURIComponent(id)}/answer`);
+      if (flags.json) return writeJsonOut(data);
+      const answer = data.answer ?? data;
+      console.log(`${answer.question?.question ?? id}: ${answer.value ?? '—'}`);
+      return;
+    }
+    if (action === 'pin') {
+      const id = positionals[2];
+      if (!id) {
+        console.error('usage: od erp questions pin <id> [--off]');
+        process.exit(2);
+      }
+      const data = await request('POST', `${scope}/questions/${encodeURIComponent(id)}/pin`, {
+        pinned: !flags.off,
+      });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] ${flags.off ? 'unpinned' : 'pinned'} ${id}`);
+      return;
+    }
+    console.error(`unknown questions action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'widgets') {
+    const data = await request('GET', `${scope}/home-widgets`);
+    if (flags.json) return writeJsonOut(data);
+    for (const widget of data.widgets ?? []) {
+      console.log(`${widget.question?.question ?? widget.questionId}\t${widget.value ?? '—'}`);
+    }
+    return;
+  }
+
+  if (sub === 'import') {
+    const action = positionals[1] ?? 'plan';
+    if (flags.url) {
+      const body = {
+        url: flags.url,
+        ...(flags.table ? { tableName: flags.table } : {}),
+        commit: action === 'commit',
+      };
+      const data = await request('POST', `${scope}/import/from-url`, body);
+      if (flags.json) return writeJsonOut(data);
+      const plan = data.plan;
+      console.log(
+        `[erp] ${plan.rowCount} rows -> ${plan.tableName}${plan.appendingToExisting ? ' (appending)' : ''} (${data.source?.kind ?? 'url'})`,
+      );
+      for (const column of plan.columns ?? []) {
+        console.log(`  ${column.header}\t${column.type}\t${column.reason}`);
+      }
+      if (plan.skipped?.length) console.log(`  ${plan.skipped.length} rows skipped`);
+      if (action === 'commit') {
+        console.log(`[erp] imported ${data.imported ?? 0} rows into ${plan.tableName}`);
+      } else {
+        console.log('[erp] run the same command with `commit` to import');
+      }
+      return;
+    }
+    const content = await readTextArg('file', true);
+    // The table is named after the file, so send the basename the way the web
+    // UI does — a full path here would name the table after every directory
+    // above it.
+    const fileName =
+      flags.file && flags.file !== '-'
+        ? (await import('node:path')).basename(flags.file)
+        : 'pasted.csv';
+    if (action === 'plan') {
+      const data = await request('POST', `${scope}/import/plan`, { content, fileName });
+      if (flags.json) return writeJsonOut(data);
+      const plan = data.plan;
+      console.log(
+        `[erp] ${plan.rowCount} rows -> ${plan.tableName}${plan.appendingToExisting ? ' (appending)' : ''}`,
+      );
+      // Show the reading before anything is written: a wrong column guess is
+      // cheap to fix here and expensive to fix later.
+      for (const column of plan.columns ?? []) {
+        console.log(`  ${column.header}\t${column.type}\t${column.reason}`);
+      }
+      if (plan.skipped?.length) console.log(`  ${plan.skipped.length} rows skipped`);
+      console.log('[erp] run the same command with `commit` to import');
+      return;
+    }
+    if (action === 'commit') {
+      const planned = await request('POST', `${scope}/import/plan`, { content, fileName });
+      const plan = flags.table ? { ...planned.plan, tableName: flags.table } : planned.plan;
+      const data = await request('POST', `${scope}/import/commit`, { plan, content });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] imported ${data.imported ?? 0} rows into ${plan.tableName}`);
+      return;
+    }
+    console.error(`unknown import action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'pack' || sub === 'packs') {
+    const action = positionals[1] ?? 'list';
+    if (action === 'list') {
+      const data = await request('GET', `${scope}/packs`);
+      if (flags.json) return writeJsonOut(data);
+      for (const pack of data.packs ?? []) {
+        const tables = (pack.spec?.tables ?? []).map((t) => t.name).join(', ');
+        console.log(`${pack.slug}\t${pack.displayName}\t[${pack.origin}]\t${tables}`);
+      }
+      if (!data.packs?.length) {
+        console.log('[erp] no custom packs yet — write one with `od erp pack create --data-file <spec.json>`');
+      }
+      return;
+    }
+    if (action === 'show' || action === 'export') {
+      const ref = positionals[2];
+      if (!ref) {
+        console.error('usage: od erp pack export <slug>');
+        process.exit(2);
+      }
+      const data = await request('GET', `${scope}/packs/${encodeURIComponent(ref)}`);
+      // Export prints the bare spec, so it can be piped straight into
+      // `pack create` in another organization.
+      return writeJsonOut(flags.json ? data : data.pack.spec);
+    }
+    if (action === 'create') {
+      const spec = await readDataPayload(true);
+      const data = await request('POST', `${scope}/packs`, {
+        spec,
+        ...(flags.name ? { slug: flags.name } : {}),
+      });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] defined pack ${data.pack.slug} — install it with \`od erp pack install ${data.pack.slug}\``);
+      return;
+    }
+    if (action === 'install') {
+      const ref = positionals[2];
+      if (!ref) {
+        console.error('usage: od erp pack install <slug>');
+        process.exit(2);
+      }
+      const data = await request('POST', `${scope}/packs/${encodeURIComponent(ref)}/install`);
+      if (flags.json) return writeJsonOut(data);
+      for (const result of data.installed ?? []) {
+        const created = result.created?.length ? result.created.join(', ') : 'nothing new';
+        console.log(`[erp] ${result.templateId}: created ${created}`);
+        if (result.skipped?.length) console.log(`  left alone: ${result.skipped.join(', ')}`);
+      }
+      return;
+    }
+    if (action === 'delete') {
+      const ref = positionals[2];
+      if (!ref) {
+        console.error('usage: od erp pack delete <slug>');
+        process.exit(2);
+      }
+      await request('DELETE', `${scope}/packs/${encodeURIComponent(ref)}`);
+      console.log(`[erp] deleted the definition; the tables it created are untouched`);
+      return;
+    }
+    console.error(`unknown pack action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'template' || sub === 'templates') {
+    const action = positionals[1] ?? 'list';
+    if (action === 'list') {
+      const data = await request('GET', `${scope}/templates`);
+      if (flags.json) return writeJsonOut(data);
+      for (const template of data.templates ?? []) {
+        const missing = (template.tables ?? []).filter((table) => !table.present).length;
+        const state = template.installed ? 'installed' : missing ? `${missing} table(s) missing` : 'not installed';
+        console.log(`${template.templateId}\t${state}\t${template.description}`);
+      }
+      console.log('[erp] install one with `od erp template install <id>`');
+      return;
+    }
+    if (action === 'install') {
+      const templateId = positionals[2];
+      if (!templateId) {
+        console.error('usage: od erp template install <sales|crm|purchasing>');
+        process.exit(2);
+      }
+      const data = await request(
+        'POST',
+        `${scope}/templates/${encodeURIComponent(templateId)}/install`,
+      );
+      if (flags.json) return writeJsonOut(data);
+      for (const result of data.installed ?? []) {
+        const created = result.created?.length ? result.created.join(', ') : 'nothing new';
+        console.log(`[erp] ${result.templateId}: created ${created}`);
+        if (result.skipped?.length) {
+          console.log(`  left alone (already yours): ${result.skipped.join(', ')}`);
+        }
+        if (result.accountsCreated) console.log(`  ${result.accountsCreated} accounts added`);
+      }
+      return;
+    }
+    console.error(`unknown template action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'crm') {
+    const action = positionals[1] ?? 'pipeline';
+    if (action === 'pipeline') {
+      const data = await request('GET', `${scope}/crm/pipeline`);
+      if (flags.json) return writeJsonOut(data);
+      const pipeline = data.pipeline;
+      for (const stage of pipeline.stages ?? []) {
+        console.log(
+          `${stage.stage}\t${stage.dealCount} deal(s)\t${money(stage.totalValue)}\tweighted ${money(stage.weightedValue)}`,
+        );
+        for (const deal of stage.deals ?? []) {
+          console.log(`  ${deal.recordId}\t${deal.title}\t${deal.customerName ?? '—'}\t${money(deal.value)}`);
+        }
+      }
+      console.log(
+        `[erp] open ${money(pipeline.openValue)}, weighted ${money(pipeline.weightedValue)}, won ${money(pipeline.wonValue)}`,
+      );
+      return;
+    }
+    if (action === 'move') {
+      const recordId = positionals[2];
+      const stage = flags.to ?? flags.status;
+      if (!recordId || !stage) {
+        console.error('usage: od erp crm move <record-id> --to <stage>');
+        process.exit(2);
+      }
+      const data = await request('POST', `${scope}/crm/deals/${encodeURIComponent(recordId)}/stage`, {
+        stage,
+      });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] moved ${recordId} to ${stage}`);
+      return;
+    }
+    if (action === 'to-quote') {
+      const recordId = positionals[2];
+      if (!recordId) {
+        console.error('usage: od erp crm to-quote <record-id> [--save]');
+        process.exit(2);
+      }
+      const data = await request(
+        'POST',
+        `${scope}/crm/deals/${encodeURIComponent(recordId)}/to-quote`,
+      );
+      // Without --save this only drafts the row, matching `hub convert`: the
+      // person sees the quote before it exists.
+      if (!flags.save) {
+        if (flags.json) return writeJsonOut(data);
+        console.log(`[erp] draft ${data.table} row:`);
+        for (const [key, value] of Object.entries(data.data ?? {})) {
+          console.log(`  ${key}\t${String(value)}`);
+        }
+        console.log('[erp] add --save to create it');
+        return;
+      }
+      const created = await request(
+        'POST',
+        `/api/data/orgs/${encodeURIComponent(orgId)}/tables/${encodeURIComponent(data.table)}/records`,
+        { data: data.data },
+      );
+      if (flags.json) return writeJsonOut(created);
+      console.log(`[erp] created ${data.table} record ${created.record?.id ?? ''}`);
+      return;
+    }
+    console.error(`unknown crm action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'ask' || sub === 'do') {
+    const text = positionals.slice(1).join(' ').trim();
+    if (!text) {
+      console.error('usage: od erp ask "add a phone column to customers"');
+      process.exit(2);
+    }
+    const interpreted = await request('POST', `${scope}/assist/interpret`, {
+      text,
+      ...(flags.table ? { tableRef: flags.table } : {}),
+    });
+    if (flags.json && !flags.save) return writeJsonOut(interpreted);
+
+    console.log(`[erp] ${interpreted.summary}`);
+    if (interpreted.kind !== 'unsupported') {
+      console.log(`  confidence: ${Math.round(interpreted.confidence * 100)}%`);
+    }
+    if (interpreted.unmatched) console.log(`  ignored: ${interpreted.unmatched}`);
+    for (const line of interpreted.preview?.lines ?? []) {
+      console.log(`  - ${line.summary}${line.detail ? ` (${line.detail})` : ''}`);
+    }
+    for (const warning of interpreted.preview?.warnings ?? []) {
+      console.log(`  ! ${warning}`);
+    }
+
+    if (interpreted.kind === 'query' && interpreted.query) {
+      // A question runs immediately: reading changes nothing, so there is
+      // nothing to confirm.
+      const data = await request(
+        'POST',
+        `/api/data/orgs/${encodeURIComponent(orgId)}/tables/${encodeURIComponent(interpreted.query.tableRef)}/records/query`,
+        {
+          filters: interpreted.query.filters,
+          ...(interpreted.query.sort ? { sort: interpreted.query.sort } : {}),
+          limit: flags.limit ? Number(flags.limit) : 50,
+        },
+      );
+      if (flags.json) return writeJsonOut(data);
+      for (const record of data.records ?? []) {
+        console.log(`  ${record.id}\t${JSON.stringify(record.data)}`);
+      }
+      console.log(`[erp] ${(data.records ?? []).length} row(s)`);
+      return;
+    }
+
+    if (interpreted.operations.length === 0) {
+      for (const suggestion of interpreted.suggestions.slice(0, 4)) {
+        console.log(`  try: od erp ask "${suggestion}"`);
+      }
+      return;
+    }
+
+    // Changes are shown and then confirmed, matching `hub convert`: seeing
+    // what will happen and choosing it are separate steps.
+    if (!flags.save) {
+      console.log('[erp] add --save to apply this');
+      return;
+    }
+    const applied = await request('POST', `${scope}/assist/apply`, {
+      text,
+      operations: interpreted.operations,
+      applyNow: true,
+    });
+    if (flags.json) return writeJsonOut(applied);
+    console.log(`[erp] applied — proposal ${applied.proposal?.id ?? ''} (undo with \`od erp proposals undo\`)`);
+    return;
+  }
+
+  if (sub === 'history') {
+    const recordId = positionals[1];
+    if (!recordId) {
+      console.error('usage: od erp history <record-id> [--restore <revision>]');
+      process.exit(2);
+    }
+    if (flags.restore) {
+      const data = await request('POST', `${scope}/records/${encodeURIComponent(recordId)}/restore-version`, {
+        revision: Number(flags.restore),
+      });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] restored to version ${flags.restore} — that step is itself in the history`);
+      return;
+    }
+    const data = await request('GET', `${scope}/records/${encodeURIComponent(recordId)}/history`);
+    if (flags.json) return writeJsonOut(data);
+    for (const entry of data.history ?? []) {
+      const when = new Date(entry.createdAt).toISOString().replace('T', ' ').slice(0, 16);
+      console.log(`v${entry.revision}\t${when}\t${entry.op}${entry.isCurrent ? '\t(current)' : ''}`);
+      for (const change of entry.changes ?? []) {
+        const from = change.from === null || change.from === '' ? '—' : String(change.from);
+        const to = change.to === null || change.to === '' ? '—' : String(change.to);
+        console.log(`    ${change.label}: ${from} -> ${to}`);
+      }
+    }
+    console.log('[erp] go back with `od erp history <record-id> --restore <n>`');
+    return;
+  }
+
+  if (sub === 'record') {
+    const recordId = positionals[1];
+    if (!recordId) {
+      console.error('usage: od erp record <record-id>');
+      process.exit(2);
+    }
+    const data = await request('GET', `${scope}/records/${encodeURIComponent(recordId)}/detail`);
+    if (flags.json) return writeJsonOut(data);
+    const detail = data.detail;
+    console.log(`${detail.title}\t(${detail.table.displayName})`);
+    for (const [key, value] of Object.entries(detail.record.data ?? {})) {
+      console.log(`  ${key}\t${value === null ? '—' : String(value)}`);
+    }
+    for (const link of detail.links ?? []) {
+      console.log(`  -> ${link.fieldLabel}: ${link.label}${link.deleted ? ' (deleted)' : ''}`);
+    }
+    for (const list of detail.related ?? []) {
+      const totals = (list.rollups ?? []).map((r) => `${r.label} ${money(r.value)}`).join(', ');
+      console.log(`  ${list.tableDisplayName} (${list.total})${totals ? `\t${totals}` : ''}`);
+    }
+    if (detail.actions?.length) console.log(`  actions: ${detail.actions.join(', ')}`);
+    return;
+  }
+
+  if (sub === 'field' || sub === 'fields') {
+    const action = positionals[1] ?? 'list';
+    const tableRef = flags.table;
+    const fieldName = positionals[2];
+
+    if (action === 'list') {
+      if (!tableRef) {
+        console.error('usage: od erp field list --table <table>');
+        process.exit(2);
+      }
+      const data = await request('GET', `/api/data/orgs/${encodeURIComponent(orgId)}/tables/${encodeURIComponent(tableRef)}`);
+      if (flags.json) return writeJsonOut(data);
+      for (const field of data.table?.fields ?? []) {
+        const marks = [
+          field.type,
+          field.required ? 'required' : null,
+          field.unique ? 'unique' : null,
+          field.config?.formula ? `= ${field.config.formula}` : null,
+        ].filter(Boolean).join(', ');
+        console.log(`${field.name}\t${field.displayName}\t[${marks}]`);
+      }
+      return;
+    }
+
+    if (!tableRef || !fieldName) {
+      console.error(`usage: od erp field ${action} <field> --table <table>`);
+      process.exit(2);
+    }
+    const base = `${scope}/tables/${encodeURIComponent(tableRef)}/fields/${encodeURIComponent(fieldName)}`;
+
+    if (action === 'impact') {
+      const kind = flags.to ? (flags.type ? 'retype' : 'rename') : 'delete';
+      const query = `?kind=${kind}&to=${encodeURIComponent(flags.to ?? flags.type ?? '')}`;
+      const data = await request('GET', `${base}/impact${query}`);
+      if (flags.json) return writeJsonOut(data);
+      const i = data.impact;
+      console.log(`[erp] ${i.recordCount} row(s), ${i.populatedCount} with a value`);
+      if (i.valuesAtRisk) console.log(`  ** ${i.valuesAtRisk} value(s) cannot convert`);
+      for (const loss of i.sampleLosses ?? []) console.log(`     e.g. "${loss.value}"`);
+      if (i.referencedByFormulas?.length) console.log(`  formulas: ${i.referencedByFormulas.join(', ')}`);
+      if (i.referencedByViews?.length) console.log(`  views: ${i.referencedByViews.join(', ')}`);
+      console.log(`  reversible: ${i.reversible}`);
+      return;
+    }
+    if (action === 'rename') {
+      if (!flags.to) {
+        console.error('usage: od erp field rename <field> --table <t> --to <new-name>');
+        process.exit(2);
+      }
+      const data = await request('POST', `${base}/rename`, { to: flags.to });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] renamed to ${flags.to}; values carried across`);
+      return;
+    }
+    if (action === 'retype') {
+      if (!flags.type) {
+        console.error('usage: od erp field retype <field> --table <t> --type <type> [--accept-data-loss]');
+        process.exit(2);
+      }
+      const data = await request('POST', `${base}/retype`, {
+        to: flags.type,
+        acceptDataLoss: Boolean(flags['accept-data-loss']),
+      });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] '${fieldName}' is now ${flags.type}`);
+      return;
+    }
+    if (action === 'remove' || action === 'delete') {
+      const data = await request('DELETE', base);
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] removed '${fieldName}'; its values are kept — restore with \`od erp field restore\``);
+      return;
+    }
+    if (action === 'restore') {
+      const data = await request('POST', `${base}/restore`);
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] restored '${fieldName}' with its values`);
+      return;
+    }
+    if (action === 'set') {
+      const patch = {};
+      if (flags.name) patch.displayName = flags.name;
+      if (flags.options) patch.options = flags.options.split(',').map((o) => o.trim());
+      if (flags.formula) patch.formula = flags.formula;
+      if (flags.required) patch.required = true;
+      const data = await request('PATCH', base, patch);
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] updated '${fieldName}'`);
+      return;
+    }
+    console.error(`unknown field action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'views') {
+    const action = positionals[1] ?? 'list';
+    const tableRef = flags.table ?? positionals[2];
+    if (action === 'list') {
+      if (!tableRef) {
+        console.error('usage: od erp views list --table <table>');
+        process.exit(2);
+      }
+      const data = await request('GET', `${scope}/tables/${encodeURIComponent(tableRef)}/views`);
+      if (flags.json) return writeJsonOut(data);
+      for (const view of data.views ?? []) {
+        const marks = [view.isDefault ? 'default' : null, view.kind, view.groupBy ? `by ${view.groupBy}` : null]
+          .filter(Boolean)
+          .join(', ');
+        console.log(`${view.id}\t${view.name}\t${marks}`);
+      }
+      return;
+    }
+    if (action === 'create') {
+      const name = flags.name ?? positionals[3];
+      if (!tableRef || !name) {
+        console.error('usage: od erp views create --table <table> --name <name> [--group-by <field>]');
+        process.exit(2);
+      }
+      const data = await request('POST', `${scope}/tables/${encodeURIComponent(tableRef)}/views`, {
+        name,
+        ...(flags['group-by'] ? { kind: 'board', groupBy: flags['group-by'] } : {}),
+      });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[erp] created view ${data.view.id}`);
+      return;
+    }
+    if (action === 'show' || action === 'records') {
+      const viewId = positionals[2];
+      if (!viewId) {
+        console.error('usage: od erp views records <view-id>');
+        process.exit(2);
+      }
+      const data = await request('GET', `${scope}/views/${encodeURIComponent(viewId)}/records`);
+      if (flags.json) return writeJsonOut(data);
+      for (const group of data.groups ?? []) {
+        console.log(`${group.label} (${group.count})`);
+      }
+      for (const record of data.records ?? []) {
+        console.log(`  ${record.id}\t${JSON.stringify(record.data)}`);
+      }
+      return;
+    }
+    console.error(`unknown views action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'inventory' || sub === 'stock') {
+    const action = sub === 'stock' ? 'stock' : (positionals[1] ?? 'stock');
+    if (action === 'stock') {
+      const data = await request('GET', `${scope}/inventory/stock`);
+      if (flags.json) return writeJsonOut(data);
+      const stock = data.stock;
+      for (const level of stock.levels ?? []) {
+        const flag = level.belowReorderPoint ? '  ** reorder' : '';
+        console.log(
+          `${level.sku}\t${level.name}\t${level.onHand} on hand\t${money(level.stockValue)}${flag}`,
+        );
+      }
+      console.log(
+        `[erp] ${money(stock.totalValue)} of stock, ${stock.needsReorder} product(s) at or below reorder point`,
+      );
+      return;
+    }
+    console.error(`unknown inventory action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'projects') {
+    const action = positionals[1] ?? 'summary';
+    if (action === 'summary' || action === 'list') {
+      const data = await request('GET', `${scope}/projects/summary`);
+      if (flags.json) return writeJsonOut(data);
+      for (const project of data.projects?.projects ?? []) {
+        const over = project.budgetRemaining < 0 ? '  ** over budget' : '';
+        console.log(
+          `${project.code ?? project.projectId}\t${project.name}\t${project.hours}h (${project.billableHours}h billable)\t${money(project.billableValue)} of ${money(project.budget)}${over}`,
+        );
+      }
+      console.log(
+        `[erp] ${data.projects?.totalHours ?? 0}h booked, ${money(data.projects?.totalBillableValue ?? 0)} billable`,
+      );
+      return;
+    }
+    console.error(`unknown projects action: ${action}`);
+    process.exit(2);
+  }
+
+  if (sub === 'purchasing') {
+    const action = positionals[1] ?? 'payables';
+    if (action === 'payables') {
+      const query = flags['as-of'] ? `?asOf=${encodeURIComponent(flags['as-of'])}` : '';
+      const data = await request('GET', `${scope}/purchasing/payables${query}`);
+      if (flags.json) return writeJsonOut(data);
+      const payables = data.payables;
+      for (const row of payables.rows ?? []) {
+        const late = row.daysOverdue > 0 ? `${row.daysOverdue}d overdue` : 'not due';
+        console.log(
+          `${row.billNumber}\t${row.vendorName ?? '—'}\t${money(row.outstanding)} of ${money(row.total)}\t${late}`,
+        );
+      }
+      console.log(
+        `[erp] owed ${money(payables.totalOutstanding)}, of which ${money(payables.totalOverdue)} overdue`,
+      );
+      return;
+    }
+    console.error(`unknown purchasing action: ${action}`);
+    process.exit(2);
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printErpHelp();
+  process.exit(2);
+}
+
+// ---------------------------------------------------------------------------
+// od team — team chat.
+//
+// Named `team` rather than `chat` because `od chat` is the agent conversation
+// surface and the two are unrelated. Everything here talks to the same
+// /api/orgs/:orgId/chat endpoints the web client uses.
+//
+// Reading does not mark anything read: `od team read` is explicit, so piping a
+// channel through grep in a script cannot silently clear someone's badge.
+
+function printTeamHelp() {
+  console.log(`Usage: od team <subcommand> [options]
+
+Subcommands:
+  channels                             Channels you can see, with unread counts
+  setup                                Create the starting channels
+  create <name>                        Create a channel (--private, --topic)
+  show <channel>                       Recent messages in a channel (--limit)
+  post <channel> --message <text>      Post a message (or --prompt-file <path|->)
+  reply <message-id> --message <text>  Reply in a thread
+  thread <message-id>                  Replies to one message
+  join <channel>                       Join a channel
+  leave <channel>                      Leave a channel
+  members <channel>                    Who is in a channel
+  read <channel>                       Mark a channel read
+  archive <channel>                    Archive a channel (admin)
+
+Options:
+  --org <id>            Organization to operate in (default: your first)
+  --message <text>      Message body
+  --prompt-file <path|-> Message body from a file, or - for stdin
+  --topic <text>        Channel topic
+  --limit <n>           How many messages to show
+  --private             Create a private channel
+  --json                Machine-readable output
+  --daemon-url <url>    Daemon base URL
+
+Examples:
+  od team channels --json
+  od team post general --message "invoice INV-1042 is overdue"
+  od team post incidents --prompt-file report.md
+  od team show sales --limit 20
+`);
+}
+
+async function runTeam(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printTeamHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: TEAM_STRING_FLAGS, boolean: TEAM_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, TEAM_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.status === 204 ? null : resp.json();
+  }
+
+  /** Message body from --message or --prompt-file, so long-form posts can come
+   * from a heredoc or a pipe rather than being wrestled onto one line. */
+  async function readMessageBody() {
+    if (typeof flags.message === 'string' && flags.message.trim()) return flags.message;
+    const file = flags['prompt-file'];
+    if (!file) {
+      console.error('provide --message <text> or --prompt-file <path|->');
+      process.exit(2);
+    }
+    if (file === '-') {
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      return Buffer.concat(chunks).toString('utf8').trim();
+    }
+    const { readFile } = await import('node:fs/promises');
+    return (await readFile(file, 'utf8')).trim();
+  }
+
+  async function resolveOrgId() {
+    if (flags.org) return flags.org;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  const orgId = await resolveOrgId();
+  const scope = `/api/orgs/${encodeURIComponent(orgId)}/chat`;
+  const channelPath = (ref) => `${scope}/channels/${encodeURIComponent(String(ref).replace(/^#/, ''))}`;
+  const when = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 16);
+
+  function printMessages(messages) {
+    for (const message of messages ?? []) {
+      const who = message.system ? '*' : (message.authorName ?? message.authorMemberId ?? 'someone');
+      const edited = message.editedAt ? ' (edited)' : '';
+      console.log(`${when(message.createdAt)}  ${who}: ${message.body}${edited}`);
+      for (const attachment of message.attachments ?? []) {
+        console.log(`    ↳ ${attachment.kind} ${attachment.label}`);
+      }
+      if (message.replyCount) console.log(`    ${message.replyCount} reply(s) — od team thread ${message.id}`);
+    }
+  }
+
+  if (sub === 'channels') {
+    const data = await request('GET', `${scope}/channels`);
+    if (flags.json) return writeJsonOut(data);
+    for (const channel of data.channels ?? []) {
+      const unread = channel.unreadCount ? `\t${channel.unreadCount} unread` : '';
+      const membership = channel.joined ? '' : '\t(not joined)';
+      console.log(`#${channel.slug}\t${channel.messageCount} msg${unread}${membership}`);
+    }
+    if (!data.channels?.length) console.log('[team] no channels yet — run `od team setup`');
+    return;
+  }
+
+  if (sub === 'setup') {
+    const data = await request('POST', `${scope}/setup`);
+    if (flags.json) return writeJsonOut(data);
+    const created = (data.channels ?? []).map((channel) => `#${channel.slug}`);
+    console.log(created.length ? `[team] created ${created.join(', ')}` : '[team] channels already exist');
+    return;
+  }
+
+  if (sub === 'create') {
+    const name = positionals.slice(1).join(' ').trim();
+    if (!name) {
+      console.error('usage: od team create <name> [--private] [--topic <text>]');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/channels`, {
+      displayName: name,
+      ...(flags.topic ? { topic: flags.topic } : {}),
+      ...(flags.private ? { visibility: 'private' } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] created #${data.channel.slug}`);
+    return;
+  }
+
+  if (sub === 'show') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error('usage: od team show <channel> [--limit <n>]');
+      process.exit(2);
+    }
+    const query = flags.limit ? `?limit=${encodeURIComponent(flags.limit)}` : '';
+    const data = await request('GET', `${channelPath(ref)}/messages${query}`);
+    if (flags.json) return writeJsonOut(data);
+    printMessages(data.messages);
+    if (!data.messages?.length) console.log('[team] nothing here yet');
+    return;
+  }
+
+  if (sub === 'post') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error('usage: od team post <channel> --message <text>');
+      process.exit(2);
+    }
+    const body = await readMessageBody();
+    const data = await request('POST', `${channelPath(ref)}/messages`, { body });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] posted to #${String(ref).replace(/^#/, '')}`);
+    return;
+  }
+
+  if (sub === 'reply') {
+    const messageId = positionals[1];
+    if (!messageId) {
+      console.error('usage: od team reply <message-id> --message <text>');
+      process.exit(2);
+    }
+    const body = await readMessageBody();
+    // A reply needs its parent's channel; ask the daemon for the parent rather
+    // than making the caller repeat something it already knows.
+    const parent = await request('GET', `${scope}/messages/${encodeURIComponent(messageId)}`);
+    const data = await request('POST', `${scope}/channels/${encodeURIComponent(parent.message.channelId)}/messages`, {
+      body,
+      parentMessageId: messageId,
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log('[team] replied');
+    return;
+  }
+
+  if (sub === 'thread') {
+    const messageId = positionals[1];
+    if (!messageId) {
+      console.error('usage: od team thread <message-id>');
+      process.exit(2);
+    }
+    const parent = await request('GET', `${scope}/messages/${encodeURIComponent(messageId)}`);
+    const data = await request(
+      'GET',
+      `${scope}/channels/${encodeURIComponent(parent.message.channelId)}/messages?parentMessageId=${encodeURIComponent(messageId)}`,
+    );
+    if (flags.json) return writeJsonOut(data);
+    printMessages([parent.message, ...(data.messages ?? [])]);
+    return;
+  }
+
+  if (sub === 'join' || sub === 'leave' || sub === 'read' || sub === 'archive') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error(`usage: od team ${sub} <channel>`);
+      process.exit(2);
+    }
+    const action = sub === 'read' ? 'read' : sub;
+    const data = await request('POST', `${channelPath(ref)}/${action}`);
+    if (flags.json) return writeJsonOut(data ?? { ok: true });
+    console.log(`[team] ${sub} #${String(ref).replace(/^#/, '')}`);
+    return;
+  }
+
+  if (sub === 'members') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error('usage: od team members <channel>');
+      process.exit(2);
+    }
+    const data = await request('GET', `${channelPath(ref)}/members`);
+    if (flags.json) return writeJsonOut(data);
+    for (const member of data.members ?? []) {
+      console.log(`${member.displayName ?? member.memberId}\t${member.role}`);
+    }
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printTeamHelp();
+  process.exit(2);
+}
+
+// od calendar — organization calendar + Google sync (same HTTP as the Calendar UI).
+
+function printCalendarHelp() {
+  console.log(`Usage: od calendar <subcommand> [options]
+
+Subcommands:
+  list                         List events (--from / --to ISO dates)
+  sync                         Pull Google Calendar into the org calendar
+
+Options:
+  --org <id>                   Organization (defaults to the first membership)
+  --from <iso>                 Inclusive range start
+  --to <iso>                   Inclusive range end
+  --json                       Machine-readable output
+  --daemon-url <url>           Daemon base URL
+
+Examples:
+  od calendar list --json
+  od calendar sync
+`);
+}
+
+async function runCalendar(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printCalendarHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: CALENDAR_STRING_FLAGS, boolean: CALENDAR_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, CALENDAR_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.status === 204 ? null : resp.json();
+  }
+
+  async function resolveOrgId() {
+    if (flags.org) return flags.org;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  const orgId = await resolveOrgId();
+  const scope = `/api/orgs/${encodeURIComponent(orgId)}/calendar`;
+
+  if (sub === 'list') {
+    const params = new URLSearchParams();
+    if (flags.from) params.set('from', flags.from);
+    if (flags.to) params.set('to', flags.to);
+    const qs = params.size > 0 ? `?${params.toString()}` : '';
+    const data = await request('GET', `${scope}/events${qs}`);
+    if (flags.json) return writeJsonOut(data);
+    for (const event of data.events ?? []) {
+      console.log(`${event.startsAt}\t${event.endsAt}\t${event.title}\t${event.id}`);
+    }
+    return;
+  }
+
+  if (sub === 'sync') {
+    const data = await request('POST', `${scope}/google/sync`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`imported ${data.imported} event(s)`);
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printCalendarHelp();
+  process.exit(2);
+}
+
+// od mail — live Gmail client (same HTTP as the Mail UI).
+
+function printMailHelp() {
+  console.log(`Usage: od mail <subcommand> [options]
+
+Subcommands:
+  status                       Connection, profile, and labels
+  list                         List messages (--label INBOX, --query, --max)
+  get <thread-id>              Read a thread
+  send                         Send a message (--to, --subject, --body or --prompt-file)
+  reply <thread-id>            Reply in-thread (--to, --body or --prompt-file)
+  archive <message-id>         Remove INBOX
+  star <message-id>            Add STARRED
+  unstar <message-id>          Remove STARRED
+  read <message-id>            Mark as read
+  unread <message-id>          Mark as unread
+  trash <message-id>           Move to trash
+
+Options:
+  --org <id>                   Organization (defaults to the first membership)
+  --label <id>                 Gmail label id (INBOX, SENT, STARRED, TRASH, …)
+  --query, --q <text>          Gmail search query
+  --to <emails>                Comma-separated recipients
+  --cc <emails>                Carbon copy
+  --bcc <emails>               Blind carbon copy
+  --subject <text>             Subject line
+  --body <text>                Message body
+  --prompt-file <path|->       Long-form body from a file or stdin
+  --html                       Treat body as HTML
+  --max <n>                    Page size (default 40)
+  --page-token <token>         Pagination token from a previous list
+  --json                       Machine-readable output
+  --daemon-url <url>           Daemon base URL
+
+Examples:
+  od mail list --label INBOX --json
+  od mail send --to teammate@example.com --subject "Hello" --body "Hi"
+  od mail reply THREAD_ID --to teammate@example.com --prompt-file -
+`);
+}
+
+async function runMail(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printMailHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: MAIL_STRING_FLAGS, boolean: MAIL_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, MAIL_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.status === 204 ? null : resp.json();
+  }
+
+  async function resolveOrgId() {
+    if (flags.org) return flags.org;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  const orgId = await resolveOrgId();
+  const scope = `/api/orgs/${encodeURIComponent(orgId)}/mail`;
+
+  async function readBodyText() {
+    const fromFile = await readMemoryPromptFile(flags);
+    if (typeof fromFile === 'string') return fromFile;
+    return typeof flags.body === 'string' ? flags.body : '';
+  }
+
+  if (sub === 'status') {
+    const data = await request('GET', `${scope}/status`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.connected) {
+      console.log('Gmail is not connected. Open Integrations in the app, or connect the gmail connector.');
+      return;
+    }
+    console.log(data.profile?.emailAddress || 'connected');
+    for (const label of data.labels ?? []) {
+      const unread = typeof label.messagesUnread === 'number' ? ` (${label.messagesUnread} unread)` : '';
+      console.log(`${label.id}\t${label.name}${unread}`);
+    }
+    return;
+  }
+
+  if (sub === 'list') {
+    const params = new URLSearchParams();
+    if (flags.label) params.set('label', flags.label);
+    const query = flags.query || flags.q;
+    if (query) params.set('q', query);
+    if (flags['page-token']) params.set('pageToken', flags['page-token']);
+    if (flags.max) params.set('maxResults', flags.max);
+    const qs = params.size > 0 ? `?${params.toString()}` : '';
+    const data = await request('GET', `${scope}/messages${qs}`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.connected) {
+      console.log('Gmail is not connected.');
+      return;
+    }
+    for (const message of data.messages ?? []) {
+      const unread = message.unread ? 'unread' : 'read';
+      console.log(`${message.internalDate ?? ''}\t${unread}\t${message.from}\t${message.subject}\t${message.threadId}`);
+    }
+    return;
+  }
+
+  if (sub === 'get') {
+    const threadId = positionals[1];
+    if (!threadId) {
+      console.error('usage: od mail get <thread-id>');
+      process.exit(2);
+    }
+    const data = await request('GET', `${scope}/threads/${encodeURIComponent(threadId)}`);
+    if (flags.json) return writeJsonOut(data);
+    for (const message of data.thread?.messages ?? []) {
+      console.log(`From: ${message.from}`);
+      console.log(`Subject: ${message.subject}`);
+      console.log('');
+      console.log(message.text || message.snippet || '');
+      console.log('---');
+    }
+    return;
+  }
+
+  if (sub === 'send') {
+    const to = String(flags.to || '');
+    if (!to) {
+      console.error('usage: od mail send --to <emails> --subject <text> [--body <text> | --prompt-file <path|->]');
+      process.exit(2);
+    }
+    const result = await request('POST', `${scope}/send`, {
+      to,
+      cc: flags.cc,
+      bcc: flags.bcc,
+      subject: flags.subject || '',
+      body: await readBodyText(),
+      isHtml: flags.html === true,
+    });
+    if (flags.json) return writeJsonOut(result);
+    console.log(`sent ${result.id ?? ''}`.trim());
+    return;
+  }
+
+  if (sub === 'reply') {
+    const threadId = positionals[1];
+    const to = String(flags.to || '');
+    if (!threadId || !to) {
+      console.error('usage: od mail reply <thread-id> --to <emails> [--body <text> | --prompt-file <path|->]');
+      process.exit(2);
+    }
+    const result = await request('POST', `${scope}/threads/${encodeURIComponent(threadId)}/reply`, {
+      to,
+      cc: flags.cc,
+      bcc: flags.bcc,
+      body: await readBodyText(),
+      isHtml: flags.html === true,
+    });
+    if (flags.json) return writeJsonOut(result);
+    console.log(`replied ${result.id ?? ''}`.trim());
+    return;
+  }
+
+  async function modify(messageId, body) {
+    if (!messageId) {
+      console.error(`usage: od mail ${sub} <message-id>`);
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/messages/${encodeURIComponent(messageId)}/modify`, body);
+    if (flags.json) return writeJsonOut(data ?? { ok: true });
+    console.log('ok');
+  }
+
+  if (sub === 'archive') return modify(positionals[1], { removeLabelIds: ['INBOX'] });
+  if (sub === 'star') return modify(positionals[1], { addLabelIds: ['STARRED'] });
+  if (sub === 'unstar') return modify(positionals[1], { removeLabelIds: ['STARRED'] });
+  if (sub === 'read') return modify(positionals[1], { removeLabelIds: ['UNREAD'] });
+  if (sub === 'unread') return modify(positionals[1], { addLabelIds: ['UNREAD'] });
+
+  if (sub === 'trash') {
+    const messageId = positionals[1];
+    if (!messageId) {
+      console.error('usage: od mail trash <message-id>');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/messages/${encodeURIComponent(messageId)}/trash`);
+    if (flags.json) return writeJsonOut(data ?? { ok: true });
+    console.log('trashed');
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printMailHelp();
+  process.exit(2);
+}
+
+// od pages — Notion-shaped organization notes (blocks + table embeds).
+// Same /api/orgs/:orgId/pages endpoints the Pages UI and agent tools use.
+
+function printPagesHelp() {
+  console.log(`Usage: od pages <subcommand> [options]
+
+Subcommands:
+  list                         List pages (--tree for nested outline)
+  get <page-id>                Page with full block tree
+  search <query>               Search titles and block text
+  create [--title <t>]         Create a page (--parent <id>, --data-file blocks JSON)
+  update <page-id>             Update title/parent/icon (--title, --parent, --icon, --cover)
+  set-blocks <page-id>         Replace block tree (--data-file <path|->)
+  append <page-id>             Append blocks (--data-file <path|->)
+  embed <page-id>              Embed a page, table, record, artifact, or bookmark
+  scaffold                     Create a nested wiki (--data-file tree JSON)
+  duplicate <page-id>          Copy a page (--recursive for children)
+  archive <page-id>            Soft-archive a page
+
+Options:
+  --org <id>            Organization (default: your first)
+  --title <text>        Page title
+  --parent <page-id>    Parent page (omit for top-level)
+  --icon <emoji>        Optional icon
+  --cover <id-or-url>   Cover preset id or image URL
+  --query <text>        Search query
+  --limit <n>           Search hit cap
+  --type <kind>         Embed kind: page|database|record|artifact|bookmark
+  --target <page-id>    Page to embed
+  --table <table-id>    Workspace table to embed
+  --record <record-id>  Record to embed
+  --path <file>         Design artifact path to embed
+  --url <url>           Bookmark URL
+  --recursive           Duplicate nested children too
+  --data-file <path|->  JSON body or { "blocks": [...] } from file/stdin
+  --tree                Nested tree for list
+  --json                Machine-readable output
+  --daemon-url <url>    Daemon base URL
+
+Examples:
+  od pages list --tree --json
+  od pages create --title "Launch notes" --json
+  od pages scaffold --data-file - <<'JSON'
+  {"pages":[{"title":"Handbook","icon":"📘","children":[{"title":"Onboarding"}]}]}
+  JSON
+  od pages embed PAGE_ID --type bookmark --url https://example.com --json
+  od pages set-blocks PAGE_ID --data-file - <<'JSON'
+  {"blocks":[{"type":"heading_1","content":"Goals"},{"type":"bulleted_list_item","content":"Ship MVP"}]}
+  JSON
+`);
+}
+
+async function runPages(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printPagesHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: PAGES_STRING_FLAGS, boolean: PAGES_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, PAGES_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.status === 204 ? null : resp.json();
+  }
+
+  async function resolveOrgId() {
+    if (flags.org) return flags.org;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  async function readDataFile() {
+    const file = flags['data-file'];
+    if (!file) return null;
+    let raw;
+    if (file === '-') {
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      raw = Buffer.concat(chunks).toString('utf8');
+    } else {
+      const { readFile } = await import('node:fs/promises');
+      raw = await readFile(file, 'utf8');
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error(`invalid JSON in --data-file: ${String(err?.message ?? err)}`);
+      process.exit(2);
+    }
+  }
+
+  const orgId = await resolveOrgId();
+  const scope = `/api/orgs/${encodeURIComponent(orgId)}/pages`;
+
+  function printTree(nodes, indent = '') {
+    for (const node of nodes ?? []) {
+      const icon = node.page.icon ? `${node.page.icon} ` : '';
+      console.log(`${indent}${icon}${node.page.title}\t${node.page.id}`);
+      printTree(node.children, `${indent}  `);
+    }
+  }
+
+  if (sub === 'list') {
+    const qs = flags.tree ? '?tree=1' : '';
+    const data = await request('GET', `${scope}${qs}`);
+    if (flags.json) return writeJsonOut(data);
+    if (flags.tree) {
+      printTree(data.tree);
+      if (!data.tree?.length) console.log('[pages] no pages yet — od pages create --title "Untitled"');
+      return;
+    }
+    for (const page of data.pages ?? []) {
+      const icon = page.icon ? `${page.icon} ` : '';
+      const parent = page.parentPageId ? `\tparent=${page.parentPageId}` : '';
+      console.log(`${icon}${page.title}\t${page.id}${parent}`);
+    }
+    if (!data.pages?.length) console.log('[pages] no pages yet — od pages create --title "Untitled"');
+    return;
+  }
+
+  if (sub === 'get') {
+    const id = positionals[1];
+    if (!id) {
+      console.error('usage: od pages get <page-id>');
+      process.exit(2);
+    }
+    const data = await request('GET', `${scope}/${encodeURIComponent(id)}`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`${data.page.icon ?? ''} ${data.page.title}`.trim());
+    console.log(`id ${data.page.id}`);
+    for (const block of data.page.blocks ?? []) {
+      console.log(`- [${block.type}] ${typeof block.content === 'string' ? block.content : JSON.stringify(block.content)}`);
+    }
+    return;
+  }
+
+  if (sub === 'create') {
+    const file = await readDataFile();
+    const body = {
+      title: flags.title ?? file?.title ?? 'Untitled',
+      parentPageId: flags.parent ?? file?.parentPageId ?? null,
+      icon: flags.icon ?? file?.icon ?? null,
+      cover: flags.cover ?? file?.cover ?? null,
+      blocks: file?.blocks ?? file ?? undefined,
+    };
+    if (Array.isArray(file)) body.blocks = file;
+    const data = await request('POST', scope, body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[pages] created ${data.page.id}\t${data.page.title}`);
+    return;
+  }
+
+  if (sub === 'update') {
+    const id = positionals[1];
+    if (!id) {
+      console.error('usage: od pages update <page-id> [--title] [--parent] [--icon]');
+      process.exit(2);
+    }
+    const body = {};
+    if (flags.title !== undefined) body.title = flags.title;
+    if (flags.parent !== undefined) body.parentPageId = flags.parent || null;
+    if (flags.icon !== undefined) body.icon = flags.icon || null;
+    if (flags.cover !== undefined) body.cover = flags.cover || null;
+    const data = await request('PATCH', `${scope}/${encodeURIComponent(id)}`, body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[pages] updated ${data.page.id}\t${data.page.title}`);
+    return;
+  }
+
+  if (sub === 'set-blocks') {
+    const id = positionals[1];
+    if (!id) {
+      console.error('usage: od pages set-blocks <page-id> --data-file <path|->');
+      process.exit(2);
+    }
+    const file = await readDataFile();
+    if (!file) {
+      console.error('provide --data-file <path|-> with { "blocks": [...] } or a blocks array');
+      process.exit(2);
+    }
+    const blocks = Array.isArray(file) ? file : file.blocks;
+    const data = await request('PUT', `${scope}/${encodeURIComponent(id)}/blocks`, { blocks });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[pages] set ${data.page.blocks?.length ?? 0} top-level blocks on ${data.page.id}`);
+    return;
+  }
+
+  if (sub === 'search') {
+    const q = positionals[1] || flags.query || flags.q;
+    if (!q) {
+      console.error('usage: od pages search <query>');
+      process.exit(2);
+    }
+    const qs = new URLSearchParams({ q: String(q) });
+    if (flags.limit) qs.set('limit', String(flags.limit));
+    const data = await request('GET', `${scope}/search?${qs.toString()}`);
+    if (flags.json) return writeJsonOut(data);
+    for (const hit of data.hits ?? []) {
+      const icon = hit.page.icon ? `${hit.page.icon} ` : '';
+      const snippet = hit.snippet ? `\t${String(hit.snippet).slice(0, 80)}` : '';
+      console.log(`${icon}${hit.page.title}\t${hit.page.id}${snippet}`);
+    }
+    if (!data.hits?.length) console.log('[pages] no matches');
+    return;
+  }
+
+  if (sub === 'append') {
+    const id = positionals[1];
+    if (!id) {
+      console.error('usage: od pages append <page-id> --data-file <path|->');
+      process.exit(2);
+    }
+    const file = await readDataFile();
+    if (!file) {
+      console.error('provide --data-file <path|-> with { "blocks": [...] } or a blocks array');
+      process.exit(2);
+    }
+    const blocks = Array.isArray(file) ? file : file.blocks;
+    const data = await request('POST', `${scope}/${encodeURIComponent(id)}/blocks/append`, { blocks });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[pages] appended on ${data.page.id} (${data.page.blocks?.length ?? 0} top-level blocks)`);
+    return;
+  }
+
+  if (sub === 'embed') {
+    const id = positionals[1];
+    if (!id || !flags.type) {
+      console.error('usage: od pages embed <page-id> --type <page|database|record|artifact|bookmark> [...]');
+      process.exit(2);
+    }
+    const body = {
+      type: flags.type,
+      targetPageId: flags.target,
+      tableId: flags.table,
+      recordId: flags.record,
+      path: flags.path,
+      url: flags.url,
+    };
+    const data = await request('POST', `${scope}/${encodeURIComponent(id)}/embed`, body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[pages] embedded ${flags.type} on ${data.page.id}`);
+    return;
+  }
+
+  if (sub === 'scaffold') {
+    const file = await readDataFile();
+    if (!file) {
+      console.error('provide --data-file <path|-> with { "pages": [...] }');
+      process.exit(2);
+    }
+    const body = Array.isArray(file) ? { pages: file } : file;
+    const data = await request('POST', `${scope}/scaffold`, body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[pages] scaffolded ${data.pages?.length ?? 0} page(s)`);
+    return;
+  }
+
+  if (sub === 'duplicate') {
+    const id = positionals[1];
+    if (!id) {
+      console.error('usage: od pages duplicate <page-id> [--recursive]');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/${encodeURIComponent(id)}/duplicate`, {
+      recursive: Boolean(flags.recursive),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[pages] duplicated ${data.page.id}\t${data.page.title}`);
+    return;
+  }
+
+  if (sub === 'archive') {
+    const id = positionals[1];
+    if (!id) {
+      console.error('usage: od pages archive <page-id>');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/${encodeURIComponent(id)}/archive`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[pages] archived ${data.page.id}`);
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printPagesHelp();
+  process.exit(2);
+}
+
+// ---------------------------------------------------------------------------
 // od org — organizations, members, and invite links.
 // Mirrors the Organization surfaces in the web UI against /api/orgs/*. The CLI
 // form is the embeddability contract: an external agent or a setup script can
@@ -10983,11 +13116,14 @@ Subcommands:
   members                      List members and their roles
   role <member-id> --role <r>  Set a member's role (owner|admin|member)
   remove <member-id>           Remove a member from the organization
-  invites                      List invite links
+  invites                      List invite links and targeted invites
   invite [--role <r>] [--expires-in <hours>] [--max-uses <n>]
-                               Create an invite link (printed once)
-  revoke-invite <invite-id>    Stop an invite link from working
-  join <token-or-url>          Accept an invite and join
+         [--email <addr> | --username <name>]
+                               Invite by email, username, or a shareable link
+  revoke-invite <invite-id>    Stop an invite from working
+  pending                      Targeted invites waiting on you
+  accept <invite-id>           Join from a pending email/username invite
+  join <token-or-url>          Accept an invite link and join
   whoami                       Show how you are signed in
 
 Options:
@@ -10997,7 +13133,11 @@ Options:
 
 Examples:
   od org create --name "Acme" --json
+  od org invite --email teammate@acme.com --role member
+  od org invite --username jane --role admin
   od org invite --role member --expires-in 168 --max-uses 25
+  od org pending
+  od org join https://…/join/<token>
   od org role wsm-1234 --role admin
 `);
 }
@@ -11145,20 +13285,43 @@ async function runOrg(args) {
     for (const invite of data.invites) {
       const state = invite.revokedAt ? 'revoked' : 'active';
       const uses = invite.maxUses ? `${invite.useCount}/${invite.maxUses}` : `${invite.useCount}`;
-      console.log(`${invite.id}\t${invite.role}\t${state}\tuses ${uses}`);
+      const target =
+        invite.kind === 'email'
+          ? invite.targetEmail
+          : invite.kind === 'username'
+            ? invite.targetUsername
+            : 'link';
+      console.log(`${invite.id}\t${invite.kind}\t${target}\t${invite.role}\t${state}\tuses ${uses}`);
     }
     return;
   }
 
   if (sub === 'invite') {
+    if (flags.email && flags.username) {
+      console.error('invite accepts --email or --username, not both');
+      process.exit(2);
+    }
     const body = {};
     if (flags.role) body.role = flags.role;
     if (flags['expires-in']) body.expiresInHours = Number(flags['expires-in']);
     if (flags['max-uses']) body.maxUses = Number(flags['max-uses']);
+    if (flags.email) body.email = flags.email;
+    if (flags.username) body.username = flags.username;
     const data = await request('POST', `/api/orgs/${encodeURIComponent(await activeOrgId())}/invites`, body);
     if (flags.json) return writeJsonOut(data);
     console.log(data.url);
-    console.log('[org] this link is shown once — copy it now');
+    if (data.invite?.kind === 'email') {
+      if (data.emailed) {
+        console.log(`[org] emailed ${data.invite.targetEmail} via Gmail`);
+      } else {
+        console.log(`[org] send this link to ${data.invite.targetEmail} — it is shown once`);
+        if (data.emailError) console.log(`[org] Gmail did not send: ${data.emailError}`);
+      }
+    } else if (data.invite?.kind === 'username') {
+      console.log(`[org] send this link to ${data.invite.targetUsername} — it is shown once`);
+    } else {
+      console.log('[org] this link is shown once — copy it now');
+    }
     return;
   }
 
@@ -11191,6 +13354,31 @@ async function runOrg(args) {
     return;
   }
 
+  if (sub === 'pending') {
+    const data = await request('GET', '/api/me/invites');
+    if (flags.json) return writeJsonOut(data);
+    if (!data.invites?.length) {
+      console.log('[org] no pending invites');
+      return;
+    }
+    for (const invite of data.invites) {
+      console.log(`${invite.id}\t${invite.orgName}\t${invite.kind}\t${invite.role}`);
+    }
+    return;
+  }
+
+  if (sub === 'accept') {
+    const inviteId = positionals[1];
+    if (!inviteId) {
+      console.error('accept requires an invite id (from od org pending)');
+      process.exit(2);
+    }
+    const data = await request('POST', `/api/me/invites/${encodeURIComponent(inviteId)}/accept`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[org] joined ${data.organization.name} as ${data.member.role}`);
+    return;
+  }
+
   console.error(`unknown subcommand: ${sub}`);
   printOrgHelp();
   process.exit(2);
@@ -11204,14 +13392,20 @@ function printAppHelp() {
 
 Subcommands:
   list                          Apps in the active organization
-  publish --project <id> --file <path> --name <name> [--visibility <v>]
+  publish --project <id> --file <path> --name <name>
+                                [--visibility <v>] [--access org|restricted] [--pin]
+                                [--grant <memberId:view|edit>]…
                                 Publish a project file as an app
   show <app-id>                 Show one app
-  update <app-id> [--name <n>] [--description <d>] [--visibility <v>] [--file <path>]
+  update <app-id> [--name <n>] [--description <d>] [--visibility <v>]
+                [--file <path>] [--access org|restricted] [--pin|--unpin]
                                 Change an app
   archive <app-id>              Hide an app from the gallery (nothing is deleted)
+  grants <app-id>               List who can view/edit a restricted app
+  set-grants <app-id> [--grant <memberId:view|edit>]…
+                                Replace the grant list
   share <app-id> [--expires-in <hours>]
-                                Create a public share link (printed once)
+                                Create a preview share link (daemon must be online)
   shares <app-id>               List an app's share links
   revoke-share <app-id> <share-id>
                                 Stop a share link from working
@@ -11219,7 +13413,11 @@ Subcommands:
 Visibility:
   private  only you see it in the gallery
   org      every member can open it (default)
-  link     additionally reachable by anyone holding a share link
+  link     additionally reachable by a preview share link
+
+Access (--access):
+  org         whole organization can view (default)
+  restricted  only listed --grant members (plus you and admins)
 
 Options:
   --org <id>         Organization to act in (default: your first)
@@ -11227,7 +13425,8 @@ Options:
   --daemon-url <url> Daemon base URL
 
 Examples:
-  od app publish --project proj-1 --file expenses.html --name "Expense form"
+  od app publish --project proj-1 --file expenses.html --name "Expense form" --pin
+  od app publish --project proj-1 --file board.html --name "Board" --access restricted --grant mem-2:edit
   od app share app-1234 --expires-in 72
 `);
 }
@@ -11244,6 +13443,28 @@ async function runApp(args) {
     console.error(String(err?.message ?? err));
     process.exit(2);
   }
+
+  function parseGrantFlags(raw) {
+    const parts = [];
+    if (Array.isArray(raw)) parts.push(...raw);
+    else if (typeof raw === 'string' && raw.trim()) parts.push(...raw.split(','));
+    // Also accept repeated --grant on argv (parseFlags keeps last; scan argv).
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--grant' && typeof args[i + 1] === 'string') parts.push(args[i + 1]);
+    }
+    const out = [];
+    const seen = new Set();
+    for (const part of parts) {
+      const [memberId, role] = String(part).split(':');
+      if (!memberId?.trim() || (role !== 'view' && role !== 'edit')) continue;
+      const id = memberId.trim();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ memberId: id, role });
+    }
+    return out;
+  }
+
   const positionals = positionalArgs(args, APP_STRING_FLAGS);
   const sub = positionals[0];
   const base = await cliDaemonBaseUrl(flags);
@@ -11282,10 +13503,15 @@ async function runApp(args) {
   const orgPath = async (suffix) => `/api/orgs/${encodeURIComponent(await activeOrgId())}/apps${suffix}`;
 
   if (sub === 'list') {
-    const data = await request('GET', await orgPath(''));
+    // `--all-orgs` is the cross-organization view: everything you published,
+    // wherever you published it. Bounded by membership on the daemon side.
+    const data = flags['all-orgs']
+      ? await request('GET', '/api/apps')
+      : await request('GET', await orgPath(''));
     if (flags.json) return writeJsonOut(data);
     for (const item of data.apps) {
-      console.log(`${item.id}\t${item.name}\t${item.visibility}\t${item.openCount} open(s)\tby ${item.createdByName ?? item.createdBy}`);
+      const org = item.orgName ? `\t[${item.orgName}]` : '';
+      console.log(`${item.id}\t${item.name}\t${item.visibility}\t${item.openCount} open(s)\tby ${item.createdByName ?? item.createdBy}${org}`);
     }
     return;
   }
@@ -11295,15 +13521,19 @@ async function runApp(args) {
       console.error('publish requires --project, --file, and --name');
       process.exit(2);
     }
+    const grants = parseGrantFlags(flags.grant);
     const data = await request('POST', await orgPath(''), {
       name: flags.name,
       projectId: flags.project,
       filePath: flags.file,
       ...(flags.description ? { description: flags.description } : {}),
       ...(flags.visibility ? { visibility: flags.visibility } : {}),
+      ...(flags.access ? { accessMode: flags.access } : {}),
+      ...(flags.pin ? { pinned: true } : {}),
+      ...(grants.length ? { grants } : {}),
     });
     if (flags.json) return writeJsonOut(data);
-    console.log(`[app] published ${data.app.id} (${data.app.name}) — ${data.app.visibility}`);
+    console.log(`[app] published ${data.app.id} (${data.app.name}) — ${data.app.visibility}/${data.app.accessMode}${data.app.pinned ? ' pinned' : ''}`);
     return;
   }
 
@@ -11316,7 +13546,7 @@ async function runApp(args) {
     }
     const data = await request('GET', await orgPath(`/${encodeURIComponent(appId)}`));
     if (flags.json) return writeJsonOut(data);
-    console.log(`${data.app.id}\t${data.app.name}\t${data.app.visibility}\t${data.app.projectId}/${data.app.filePath}`);
+    console.log(`${data.app.id}\t${data.app.name}\t${data.app.visibility}\t${data.app.accessMode}\t${data.app.pinned ? 'pinned' : ''}\t${data.app.projectId}/${data.app.filePath}`);
     return;
   }
 
@@ -11331,10 +13561,38 @@ async function runApp(args) {
       if (flags.description) body.description = flags.description;
       if (flags.visibility) body.visibility = flags.visibility;
       if (flags.file) body.filePath = flags.file;
+      if (flags.access) body.accessMode = flags.access;
+      if (flags.pin) body.pinned = true;
+      if (flags.unpin) body.pinned = false;
     }
     const data = await request('PATCH', await orgPath(`/${encodeURIComponent(appId)}`), body);
     if (flags.json) return writeJsonOut(data);
     console.log(`[app] ${sub === 'archive' ? 'archived' : 'updated'} ${data.app.id}`);
+    return;
+  }
+
+  if (sub === 'grants') {
+    if (!appId) {
+      console.error('grants requires an app id');
+      process.exit(2);
+    }
+    const data = await request('GET', await orgPath(`/${encodeURIComponent(appId)}/grants`));
+    if (flags.json) return writeJsonOut(data);
+    for (const grant of data.grants) {
+      console.log(`${grant.memberId}\t${grant.role}\t${grant.memberName ?? ''}`);
+    }
+    return;
+  }
+
+  if (sub === 'set-grants') {
+    if (!appId) {
+      console.error('set-grants requires an app id');
+      process.exit(2);
+    }
+    const grants = parseGrantFlags(flags.grant);
+    const data = await request('PUT', await orgPath(`/${encodeURIComponent(appId)}/grants`), { grants });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[app] set ${data.grants.length} grant(s) on ${appId}`);
     return;
   }
 

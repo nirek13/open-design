@@ -37,7 +37,6 @@ import type { DesignSystemGenerateSnapshot } from './DesignSystemFlow';
 import { useAnalytics } from '../analytics/provider';
 import {
   trackHomeNavClick,
-  trackHomeToolbarClick,
   trackOnboardingClick,
   trackOnboardingCompleteResult,
   trackOnboardingRuntimeScanResult,
@@ -101,20 +100,20 @@ import { BrandsTab } from './BrandsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
 import { LibrarySection } from './LibrarySection';
 import { DatabaseView } from './database/DatabaseView';
-import { OrgSwitcher } from './org/OrgSwitcher';
+import { ErpShell, erpModuleFromView, isErpEntryView } from './erp/ErpShell';
+import { TeamChatView } from './team/TeamChatView';
+import { PagesView } from './pages/PagesView';
+import { CalendarView } from './calendar/CalendarView';
+import { MailView } from './mail/MailView';
 import { OrgAppsView } from './org/OrgAppsView';
 import { OrgMembersView } from './org/OrgMembersView';
+import { useOptionalRunningApp } from './apps/RunningAppContext';
 import { UpdaterPopup } from './UpdaterPopup';
 import { WhatsNewPopup } from './WhatsNewPopup';
 import { AmrBalanceDialog } from './AmrBalanceDialog';
 import { AmrLowBalanceDialog, type AmrLowBalanceDecision } from './AmrLowBalanceDialog';
 import { checkAmrBalanceGate } from '../runtime/amr-balance-gate';
 import { isPaidAmrPlan, resolveAmrPlan } from '../runtime/amr-low-balance-plan';
-import { GithubStarBadge } from './GithubStarBadge';
-import {
-  formatDiscordPresenceCount,
-  useDiscordPresence,
-} from './useDiscordPresence';
 import { HomeView } from './HomeView';
 import {
   createPluginAuthoringHandoff,
@@ -143,11 +142,7 @@ import { LanguageMenu } from './LanguageMenu';
 import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
 import { InlineModelSwitcher } from './InlineModelSwitcher';
 import { enterpriseUrl } from './enterpriseUrl';
-import {
-  EntrySettingsMenu,
-  type EntrySettingsSection,
-} from './EntrySettingsMenu';
-import { MessageCenter } from './MessageCenter';
+import type { EntrySettingsSection } from './EntrySettingsMenu';
 import { NewProjectModal } from './NewProjectModal';
 import { PluginsView } from './PluginsView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
@@ -218,21 +213,12 @@ function writeStoredRailOpen(open: boolean): void {
   }
 }
 
-const DISCORD_URL = 'https://discord.gg/mHAjSMV6gz';
-const X_URL = 'https://x.com/OpenDesignHQ';
 const ONBOARDING_DROPDOWN_OPEN_EVENT = 'open-design:onboarding-dropdown-open';
 
 type OnboardingAgentTestState =
   | { status: 'idle' }
   | { status: 'running'; inputKey: string }
   | { status: 'done'; inputKey: string; result: ConnectionTestResponse };
-
-// The topbar chips (GitHub star, model switcher, Use everywhere)
-// collapse into the settings dropdown when the viewport gets
-// narrow. The transition is driven entirely by CSS @media queries
-// in `entry-layout.css` so server and client render identical
-// markup — both surfaces are always present, and CSS toggles
-// `display` based on `--compact-topbar` breakpoint (900px).
 
 // Default scenario plugin for each project kind/intent. The mapping
 // lives in `@open-design/contracts` so the daemon's `/api/projects`
@@ -556,7 +542,6 @@ export function EntryShell({
 }: Props) {
   const t = useT();
   const { locale: uiLocale } = useI18n();
-  const discordPresence = useDiscordPresence();
   // Each entry sub-view (home / projects / design-systems) is its own
   // URL now, so the browser back/forward buttons work and a deep link
   // to /design-systems lands on that section. We derive the active
@@ -600,6 +585,25 @@ export function EntryShell({
   useEffect(() => {
     writeStoredRailOpen(railOpen);
   }, [railOpen]);
+
+  // Keep the entry nav rail visible beside a running workspace app so users
+  // can switch destinations / pinned apps without closing the instance first.
+  const runningApp = useOptionalRunningApp();
+  const isAppRunning = Boolean(runningApp?.running);
+  const setRunningAppSidebarVisible = runningApp?.setSidebarVisible;
+  useEffect(() => {
+    if (!setRunningAppSidebarVisible) return;
+    if (!isAppRunning) {
+      setRunningAppSidebarVisible(false);
+      return;
+    }
+    setRailOpen(true);
+    setRunningAppSidebarVisible(true);
+    return () => {
+      setRunningAppSidebarVisible(false);
+    };
+  }, [isAppRunning, setRunningAppSidebarVisible]);
+
   const [localProviderModelsCache, setLocalProviderModelsCache] =
     useState<ProviderModelsCache>({});
   const hasSharedProviderModelsCache =
@@ -630,14 +634,6 @@ export function EntryShell({
     scrollContainer.scrollTop = 0;
   }, [view]);
   const analytics = useAnalytics();
-  const discordOnlineLabel = discordPresence
-    ? t('entry.discordOnlineLabel', {
-        count: formatDiscordPresenceCount(discordPresence.onlineCount),
-      })
-    : null;
-  const discordAriaLabel = discordOnlineLabel
-    ? t('entry.discordAriaWithOnline', { online: discordOnlineLabel })
-    : t('entry.discordAria');
   function changeView(next: EntryViewKind) {
     const navElement = navElementForView(next);
     if (navElement) {
@@ -692,15 +688,8 @@ export function EntryShell({
   }
 
   function startBlankProjectFromRail() {
-    void Promise.resolve(
-      onCreateProject({
-        name: t('common.untitled'),
-        skillId: null,
-        designSystemId: null,
-      }),
-    ).catch((err) => {
-      console.warn('Failed to create blank project from entry rail', err);
-    });
+    // Require the New Project form so Private/Public is chosen before create.
+    openNewProject('prototype');
   }
 
   function handleCreate(input: CreateInput) {
@@ -807,6 +796,8 @@ export function EntryShell({
       ...(payload.projectMetadata ?? {}),
       kind: payload.projectKind ?? payload.projectMetadata?.kind ?? 'prototype',
       nameSource: 'prompt',
+      visibility: payload.visibility ?? 'private',
+      ...(payload.visibility === 'public' ? { autoPublish: true } : {}),
       ...(payload.contextPlugins && payload.contextPlugins.length > 0
         ? { contextPlugins: payload.contextPlugins }
         : {}),
@@ -912,22 +903,6 @@ export function EntryShell({
     return ok;
   }
 
-  const avatarMenu = (
-    <EntrySettingsMenu
-      config={config}
-      onThemeChange={onThemeChange}
-      onOpenSettings={onOpenSettings}
-      onTrackTriggerClick={() => {
-        trackHomeToolbarClick(analytics.track, {
-          page_name: 'home',
-          area: 'toolbar',
-          element: 'settings',
-        });
-      }}
-    />
-  );
-
-
   if (view === 'onboarding') {
     return (
       <div className="entry-shell entry-shell--no-header entry-shell--onboarding">
@@ -960,21 +935,6 @@ export function EntryShell({
     );
   }
 
-  const executionSwitcher = (
-    <InlineModelSwitcher
-      config={config}
-      agents={agents}
-      providerModelsCache={activeProviderModelsCache}
-      onProviderModelsCacheChange={activeSetProviderModelsCache}
-      daemonLive={daemonLive}
-      onModeChange={onModeChange}
-      onAgentChange={onAgentChange}
-      onAgentModelChange={onAgentModelChange}
-      onApiProtocolChange={onApiProtocolChange}
-      onApiModelChange={onApiModelChange}
-      onOpenSettings={onOpenSettings}
-    />
-  );
   const homeExecutionSwitcher = (
     <InlineModelSwitcher
       compact
@@ -1021,67 +981,6 @@ export function EntryShell({
             >
               <Icon name="panel-left" size={20} />
             </button>
-            <div className="entry-main__topbar-chips entry-main__topbar-chips--icon-only">
-              <GithubStarBadge />
-              {/* Was a marketing link to the enterprise page; now the real
-                  organization switcher, which is the anchor for everything
-                  org-scoped in the app. */}
-              <OrgSwitcher
-                onManage={() => {
-                  trackHomeToolbarClick(analytics.track, {
-                    page_name: 'home',
-                    area: 'toolbar',
-                    element: 'workspace_teams',
-                  });
-                  changeView('organization');
-                }}
-              />
-              <a
-                className="entry-discord-badge od-tooltip"
-                href={DISCORD_URL}
-                aria-label={discordAriaLabel}
-                data-tooltip={discordAriaLabel}
-                data-tooltip-placement="bottom"
-                data-testid="entry-discord-badge"
-              >
-                <Icon name="discord" size={14} className="entry-discord-badge__icon" />
-                <span className="entry-discord-badge__label">{t('entry.discordLabel')}</span>
-                {discordOnlineLabel ? (
-                  <>
-                    <span className="entry-discord-badge__sep" aria-hidden>
-                      ·
-                    </span>
-                    <span className="entry-discord-badge__online">
-                      {discordOnlineLabel}
-                    </span>
-                  </>
-                ) : null}
-              </a>
-              {view === 'home' ? null : executionSwitcher}
-              <button
-                type="button"
-                className="use-everywhere-chip od-tooltip"
-                onClick={() => {
-                  trackHomeToolbarClick(analytics.track, {
-                    page_name: 'home',
-                    area: 'toolbar',
-                    element: 'use_everywhere',
-                  });
-                  openIntegrationTab('use-everywhere');
-                }}
-                data-tooltip={t('entry.useEverywhereTitle')}
-                data-tooltip-placement="bottom"
-                aria-label={t('entry.useEverywhereAria')}
-                data-testid="entry-use-everywhere-button"
-              >
-                <span className="use-everywhere-chip__icon" aria-hidden>
-                  <Icon name="hammer" size={13} />
-                </span>
-                <span className="use-everywhere-chip__label">
-                  {t('entry.useEverywhereTitle')}
-                </span>
-              </button>
-            </div>
             <UpdaterPopup
               allowSilentUpdates={config.allowSilentUpdates}
               silentUpdatePreferenceReady={daemonAppConfigReady}
@@ -1091,10 +990,6 @@ export function EntryShell({
               }
             />
             <WhatsNewPopup active={view === 'home'} />
-            <MessageCenter
-              onOpenNotificationSettings={() => onOpenSettings('notifications')}
-            />
-            {avatarMenu}
             {amrBalanceGateBlock ? (
               <AmrBalanceDialog
                 reason={amrBalanceGateBlock.reason}
@@ -1120,7 +1015,11 @@ export function EntryShell({
           </div>
           <div
             className={`entry-main__inner${
-              view === 'home' ? '' : ' entry-main__inner--wide'
+              view === 'pages' || view === 'mail'
+                ? ' entry-main__inner--fullscreen'
+                : view === 'home'
+                  ? ''
+                  : ' entry-main__inner--wide'
             }`}
           >
             <div data-testid="entry-view-home" data-active={view === 'home' ? 'true' : 'false'} {...inactiveViewProps(view === 'home')}>
@@ -1240,6 +1139,38 @@ export function EntryShell({
                 />
               </div>
             ) : null}
+            <div
+              data-testid="entry-view-erp"
+              data-active={isErpEntryView(view) ? 'true' : 'false'}
+              {...inactiveViewProps(isErpEntryView(view))}
+            >
+              <ErpShell
+                module={erpModuleFromView(view)}
+                active={isErpEntryView(view)}
+              />
+            </div>
+            <div data-testid="entry-view-team" data-active={view === 'team' ? 'true' : 'false'} {...inactiveViewProps(view === 'team')}>
+              <TeamChatView active={view === 'team'} />
+            </div>
+            <div data-testid="entry-view-pages" data-active={view === 'pages' ? 'true' : 'false'} {...inactiveViewProps(view === 'pages')}>
+              <PagesView
+                active={view === 'pages'}
+                initialPageId={route.kind === 'home' && route.view === 'pages' ? route.pageId : undefined}
+                config={config}
+                agents={agents}
+                skills={skills}
+                onOpenSettings={(section) => onOpenSettings(section as never)}
+              />
+            </div>
+            <div data-testid="entry-view-calendar" data-active={view === 'calendar' ? 'true' : 'false'} {...inactiveViewProps(view === 'calendar')}>
+              <CalendarView active={view === 'calendar'} />
+            </div>
+            <div data-testid="entry-view-mail" data-active={view === 'mail' ? 'true' : 'false'} {...inactiveViewProps(view === 'mail')}>
+              <MailView
+                active={view === 'mail'}
+                initialThreadId={route.kind === 'home' && route.view === 'mail' ? route.threadId : undefined}
+              />
+            </div>
             <div data-testid="entry-view-apps" data-active={view === 'apps' ? 'true' : 'false'} {...inactiveViewProps(view === 'apps')}>
               <OrgAppsView active={view === 'apps'} />
             </div>
@@ -1347,12 +1278,10 @@ function OnboardingView({
   const t = useT();
   const analytics = useAnalytics();
   const [step, setStep] = useState(0);
-  const [runtime, setRuntime] = useState<'amr' | 'local' | 'byok' | null>(null);
-  // Connect step (step 0) faces: the minimal cloud sign-in landing (null), or
-  // a single dedicated setup page for the local CLI or BYOK that the landing's
-  // two secondary links open directly. AMR has no card anymore — it signs in
-  // straight from the landing's primary button.
-  const [connectExpanded, setConnectExpanded] = useState<'local' | 'byok' | null>(null);
+  const [runtime, setRuntime] = useState<'amr' | 'local' | 'byok' | null>('byok');
+  // Connect step starts on API-key (BYOK) setup — Cloud / local CLI are not
+  // offered in this streamlined first-run flow.
+  const [connectExpanded, setConnectExpanded] = useState<'local' | 'byok' | null>('byok');
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [byokPersistPending, setByokPersistPending] = useState(false);
   const [cliScanStatus, setCliScanStatus] = useState<'idle' | 'scanning' | 'done'>('idle');
@@ -1567,11 +1496,10 @@ function OnboardingView({
   }, []);
 
   useEffect(() => {
-    if (!amrAgent || runtime !== null) return;
-    setRuntime('amr');
-    onModeChange('daemon');
-    onAgentChange('amr');
-  }, [amrAgent, onAgentChange, onModeChange, runtime]);
+    // Streamlined onboarding is BYOK-only — never auto-select AMR cloud.
+    if (runtime !== 'byok') return;
+    onModeChange('api');
+  }, [onModeChange, runtime]);
 
   useEffect(() => {
     if (runtime !== 'local') return;
@@ -2141,7 +2069,9 @@ function OnboardingView({
         });
         await onConfigPersist(applySavedByokCredentialProfile(config, profile));
         emitOnboardingClick('continue', 'continue');
-        setStep((current) => current + 1);
+        // API-key setup is the whole onboarding — skip survey / newsletter.
+        await runOnboardingCompletion('completed_without_design_system');
+        onFinish();
       } catch (error) {
         setProviderTestState({
           status: 'done',
@@ -2771,6 +2701,8 @@ function OnboardingView({
     ? t('settings.amrSigningIn')
     : step === 0 && amrSelectedAndSignedOut
       ? t('settings.amrSignInToContinue')
+    : step === 0 && runtime === 'byok'
+      ? t('settings.onboardingFinish')
     : isLastStep
       ? t('settings.onboardingFinish')
       : t('settings.onboardingContinue');
@@ -2924,53 +2856,11 @@ function OnboardingView({
         <div className="onboarding-view__content">
           {step === 0 ? (
             <div className="onboarding-view__panel">
-              <button
-                type="button"
-                className="onboarding-view__back-to-cloud"
-                onClick={() => setConnectExpanded(null)}
-              >
-                <Icon name="chevron-left" size={14} />
-                <span>{t('settings.onboardingBack')}</span>
-              </button>
               <OnboardingPanelHeader
-                title={
-                  connectExpanded === 'byok'
-                    ? t('settings.onboardingByokTitle')
-                    : t('settings.onboardingLocalTitle')
-                }
-                body={
-                  connectExpanded === 'byok'
-                    ? t('settings.onboardingByokBody')
-                    : t('settings.onboardingLocalBody')
-                }
+                title={t('settings.onboardingByokTitle')}
+                body={t('settings.onboardingByokBody')}
               />
               <div className="onboarding-view__runtime-stack">
-                {connectExpanded === 'local' ? (
-                  <OnboardingCliSetupPanel
-                    agents={visibleAgents}
-                    daemonLive={daemonLive}
-                    selectedAgentId={config.agentId}
-                    selectedAgent={selectedAgent}
-                    selectedModel={normalizedSelectedAgentChoice.model ?? defaultAgentModelId(selectedAgent) ?? ''}
-                    modelOptions={agentModelOptions}
-                    scanStatus={cliScanStatus}
-                    onRefresh={() => void scanCliAgents()}
-                    onSelectAgent={(agentId) => {
-                      onModeChange('daemon');
-                      onAgentChange(agentId);
-                    }}
-                    onSelectModel={(model) => {
-                      if (!selectedAgent) return;
-                      onAgentModelChange(selectedAgent.id, {
-                        model,
-                        serviceTier: undefined,
-                      });
-                    }}
-                    testState={visibleAgentTestState}
-                    canTest={canTestAgent}
-                    onTest={() => void testAgentInline()}
-                  />
-                ) : null}
                 {connectExpanded === 'byok' ? (
                   <OnboardingByokSetupPanel
                     apiProtocol={apiProtocol}

@@ -200,6 +200,11 @@ vi.mock('../../src/providers/registry', async () => {
   );
   return {
     ...actual,
+    fetchAuthContext: vi.fn().mockResolvedValue({
+      mode: 'local-owner',
+      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null },
+      organizations: [],
+    }),
     daemonIsLive: vi.fn(),
     fetchAgentsStream: vi.fn(),
     fetchAppVersionInfo: vi.fn(),
@@ -740,7 +745,8 @@ describe('App project creation routing', () => {
         'Fresh project',
       );
     });
-    expect(window.location.pathname).toBe('/');
+    // Home is /home since the workspace became the front door.
+    expect(window.location.pathname).toBe('/home');
     expect(screen.queryByTestId('entry-project-project-existing')).toBeNull();
   });
 

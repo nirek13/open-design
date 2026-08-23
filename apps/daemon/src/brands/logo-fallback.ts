@@ -13,6 +13,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { fetchExternalBrandAsset } from './safe-fetch.js';
+import {
+  discoverLogoRefs,
+  findManifestHref,
+  parseManifestIcons,
+  toHarvestLogoKind,
+  wellKnownLogoRefs,
+} from './logo-refs.js';
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -53,50 +60,13 @@ interface LogoRef {
   kind: string;
 }
 
-const decodeEntities = (s: string): string =>
-  s
-    .replace(/&amp;/g, '&')
-    .replace(/&#x2F;/gi, '/')
-    .replace(/&#47;/g, '/')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-
-function metaContent(html: string, nameOrProp: string): string {
-  const re = new RegExp(
-    `<meta[^>]+(?:name|property)=["']${nameOrProp.replace(/[:.]/g, '\\$&')}["'][^>]*>`,
-    'i',
-  );
-  const tag = re.exec(html)?.[0];
-  if (!tag) return '';
-  return decodeEntities(/content=["']([^"']*)["']/i.exec(tag)?.[1] ?? '');
-}
-
 /** Discover icon/og refs from the page HTML, ranked best-primary-first. */
 export function findLogoRefs(html: string, baseUrl: string): LogoRef[] {
-  const refs: LogoRef[] = [];
-  const seen = new Set<string>();
-  const push = (href: string | undefined, rank: number, kind: string) => {
-    if (!href || href.startsWith('data:')) return;
-    let abs: string;
-    try {
-      abs = new URL(decodeEntities(href), baseUrl).href;
-    } catch {
-      return;
-    }
-    if (seen.has(abs)) return;
-    seen.add(abs);
-    refs.push({ url: abs, rank, kind });
-  };
-
-  for (const m of html.matchAll(/<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*>/gi)) {
-    const href = /href=["']([^"']+)["']/i.exec(m[0])?.[1];
-    if (/apple-touch/i.test(m[0])) push(href, 0, 'apple-touch-icon');
-    else push(href, 2, 'favicon');
-  }
-  push(metaContent(html, 'og:image') || metaContent(html, 'twitter:image'), 4, 'og-image');
-
-  refs.sort((a, b) => a.rank - b.rank);
-  return refs;
+  return discoverLogoRefs(html, baseUrl).map((r) => ({
+    url: r.url,
+    rank: r.rank,
+    kind: toHarvestLogoKind(r.kind),
+  }));
 }
 
 function extFor(contentType: string, url: string): string {
@@ -140,9 +110,16 @@ async function fetchBinary(
       signal: AbortSignal.timeout(ASSET_TIMEOUT_MS),
     });
     if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') ?? '';
+    const ct = contentType.toLowerCase();
+    if (ct.includes('text/html') || ct.includes('application/json') || ct.includes('javascript')) {
+      return null;
+    }
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length === 0 || buf.length > MAX_ASSET_BYTES) return null;
-    return { buf, contentType: res.headers.get('content-type') ?? '' };
+    const head = buf.subarray(0, 64).toString('utf8').trimStart();
+    if (/^<!doctype html|<html[\s>]/i.test(head)) return null;
+    return { buf, contentType };
   } catch {
     return null;
   }
@@ -185,10 +162,32 @@ export async function harvestFallbackLogos(
 
   const refs: LogoRef[] = [];
   const html = await fetchText(siteUrl);
-  if (html) refs.push(...findLogoRefs(html, siteUrl));
-  // Always consider the conventional favicon location too.
-  if (!refs.some((r) => r.url === `${origin}/favicon.ico`)) {
+  if (html) {
+    refs.push(...findLogoRefs(html, siteUrl));
+    const manifestUrl = findManifestHref(html, siteUrl);
+    if (manifestUrl) {
+      const man = await fetchText(manifestUrl);
+      if (man) {
+        const seen = new Set(refs.map((r) => r.url));
+        for (const iconUrl of parseManifestIcons(man, manifestUrl)) {
+          if (seen.has(iconUrl)) continue;
+          seen.add(iconUrl);
+          refs.push({ url: iconUrl, rank: 0, kind: 'apple-touch-icon' });
+        }
+      }
+    }
+  }
+  const seen = new Set(refs.map((r) => r.url));
+  if (!seen.has(`${origin}/favicon.ico`)) {
     refs.push({ url: `${origin}/favicon.ico`, rank: 3, kind: 'favicon' });
+    seen.add(`${origin}/favicon.ico`);
+  }
+  if (refs.filter((r) => r.kind !== 'og-image').length < 3) {
+    for (const extra of wellKnownLogoRefs(siteUrl)) {
+      if (seen.has(extra.url)) continue;
+      seen.add(extra.url);
+      refs.push({ url: extra.url, rank: extra.rank, kind: toHarvestLogoKind(extra.kind) });
+    }
   }
   refs.sort((a, b) => a.rank - b.rank);
 

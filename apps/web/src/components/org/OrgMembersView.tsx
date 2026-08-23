@@ -1,15 +1,14 @@
 // Who is in this organization, and how do I add someone?
 //
-// Adding a coworker is deliberately one click: create a link, copy it, paste
-// it wherever your team already talks. The link is shown exactly once because
-// only its hash is stored — so the UI keeps it on screen until dismissed
-// rather than hiding it behind a reveal.
+// Three ways in: email, username, or a shareable link. Email and username
+// invites are bound to that person; the link is for anyone you send it to.
+// The token is shown exactly once because only its hash is stored.
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, Select } from '@open-design/components';
 import type { OrgInvite, OrgMember, OrgRole } from '@open-design/contracts';
 import { useT } from '../../i18n';
-import { useOrg } from '../../org/OrgContext';
+import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
   createOrgInvite,
   fetchOrgInvites,
@@ -27,16 +26,30 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function looksLikeEmail(value: string): boolean {
+  return value.includes('@');
+}
+
+function inviteTargetLabel(invite: OrgInvite, t: (key: never) => string): string {
+  if (invite.kind === 'email') return invite.targetEmail ?? t('org.kind.email' as never);
+  if (invite.kind === 'username') return invite.targetUsername ?? t('org.kind.username' as never);
+  return t('org.kind.link' as never);
+}
+
 export function OrgMembersView({ active }: { active: boolean }) {
   const t = useT();
-  const { activeOrg, activeOrgId, can, refresh } = useOrg();
+  const { activeOrg, activeOrgId, can, refresh } = useOptionalOrg() ?? NO_ORG_CONTEXT;
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [invites, setInvites] = useState<OrgInvite[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [freshLink, setFreshLink] = useState<string | null>(null);
+  const [freshTarget, setFreshTarget] = useState<string | null>(null);
+  const [emailed, setEmailed] = useState(false);
   const [copied, setCopied] = useState(false);
   const [inviteRole, setInviteRole] = useState<OrgRole>('member');
+  const [inviteTarget, setInviteTarget] = useState('');
   const [orgName, setOrgName] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const isAdmin = can('admin');
   const isOwner = can('owner');
@@ -60,11 +73,21 @@ export function OrgMembersView({ active }: { active: boolean }) {
     void load();
   }, [active, activeOrg?.name, load]);
 
-  async function handleInvite() {
+  async function mintInvite(request: { email?: string; username?: string }) {
     if (!activeOrgId) return;
+    setBusy(true);
     try {
-      const created = await createOrgInvite(activeOrgId, { role: inviteRole });
+      const created = await createOrgInvite(activeOrgId, { role: inviteRole, ...request });
       setFreshLink(created.url);
+      setEmailed(Boolean(created.emailed));
+      if (created.emailError) setError(created.emailError);
+      setFreshTarget(
+        created.invite.kind === 'email'
+          ? created.invite.targetEmail
+          : created.invite.kind === 'username'
+            ? created.invite.targetUsername
+            : null,
+      );
       setCopied(false);
       try {
         await navigator.clipboard.writeText(created.url);
@@ -72,10 +95,27 @@ export function OrgMembersView({ active }: { active: boolean }) {
       } catch {
         // Clipboard permission is not guaranteed; the link stays on screen.
       }
+      if (request.email || request.username) setInviteTarget('');
       await load();
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setBusy(false);
     }
+  }
+
+  async function handleSendInvite() {
+    const target = inviteTarget.trim();
+    if (!target) {
+      setError(t('org.inviteNeedTarget'));
+      return;
+    }
+    if (looksLikeEmail(target)) await mintInvite({ email: target });
+    else await mintInvite({ username: target });
+  }
+
+  async function handleCreateLink() {
+    await mintInvite({});
   }
 
   async function handleRoleChange(member: OrgMember, role: OrgRole) {
@@ -127,6 +167,17 @@ export function OrgMembersView({ active }: { active: boolean }) {
           <h2 className={styles.panelTitle}>{t('org.inviteTitle')}</h2>
           <p className={styles.panelHint}>{t('org.inviteHint')}</p>
           <div className={styles.row}>
+            <Input
+              type="text"
+              value={inviteTarget}
+              onChange={(event) => setInviteTarget(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleSendInvite();
+              }}
+              placeholder={t('org.invitePlaceholder')}
+              aria-label={t('org.invitePlaceholder')}
+              data-testid="org-invite-target"
+            />
             <Select
               value={inviteRole}
               aria-label={t('org.role')}
@@ -138,7 +189,20 @@ export function OrgMembersView({ active }: { active: boolean }) {
                 </option>
               ))}
             </Select>
-            <Button variant="primary" onClick={handleInvite} data-testid="org-create-invite">
+            <Button
+              variant="primary"
+              onClick={() => void handleSendInvite()}
+              disabled={busy}
+              data-testid="org-send-invite"
+            >
+              {t('org.sendInvite')}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => void handleCreateLink()}
+              disabled={busy}
+              data-testid="org-create-invite"
+            >
               {t('org.createInvite')}
             </Button>
           </div>
@@ -159,11 +223,24 @@ export function OrgMembersView({ active }: { active: boolean }) {
                 >
                   {copied ? t('org.copied') : t('org.copyLink')}
                 </Button>
-                <Button variant="ghost" onClick={() => setFreshLink(null)}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setFreshLink(null);
+                    setFreshTarget(null);
+                    setEmailed(false);
+                  }}
+                >
                   {t('org.dismiss')}
                 </Button>
               </div>
-              <p className={styles.linkWarning}>{t('org.linkShownOnce')}</p>
+              <p className={styles.linkWarning}>
+                {freshTarget
+                  ? emailed
+                    ? t('org.inviteEmailed', { target: freshTarget })
+                    : t('org.inviteSentTo', { target: freshTarget })
+                  : t('org.linkShownOnce')}
+              </p>
             </div>
           ) : null}
         </section>
@@ -229,6 +306,7 @@ export function OrgMembersView({ active }: { active: boolean }) {
             <table className={styles.table}>
               <thead>
                 <tr>
+                  <th scope="col">{t('org.inviteTarget')}</th>
                   <th scope="col">{t('org.role')}</th>
                   <th scope="col">{t('org.uses')}</th>
                   <th scope="col">{t('org.status')}</th>
@@ -238,6 +316,7 @@ export function OrgMembersView({ active }: { active: boolean }) {
               <tbody>
                 {invites.map((invite) => (
                   <tr key={invite.id}>
+                    <td>{inviteTargetLabel(invite, t)}</td>
                     <td>{t(`org.role.${invite.role}` as never)}</td>
                     <td>
                       {invite.useCount}

@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@open-design/components';
 import type { OrgInvitePreview } from '@open-design/contracts';
 import { useT } from '../../i18n';
-import { useOrg } from '../../org/OrgContext';
+import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import { acceptInvite, fetchInvitePreview } from '../../providers/registry';
 import { navigate } from '../../router';
 import styles from './JoinOrgView.module.css';
@@ -17,7 +17,7 @@ type Phase = 'loading' | 'ready' | 'joining' | 'joined' | 'failed';
 
 export function JoinOrgView({ token }: { token: string }) {
   const t = useT();
-  const { setActiveOrg, refresh } = useOrg();
+  const { setActiveOrg, refresh } = useOptionalOrg() ?? NO_ORG_CONTEXT;
   const [preview, setPreview] = useState<OrgInvitePreview | null>(null);
   const [phase, setPhase] = useState<Phase>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +63,9 @@ export function JoinOrgView({ token }: { token: string }) {
         ? 'join.revoked'
         : preview?.reason === 'exhausted'
           ? 'join.exhausted'
-          : 'join.invalid';
+          : preview?.reason === 'wrong-recipient'
+            ? 'join.wrongRecipient'
+            : 'join.invalid';
 
   return (
     <div className={styles.root} data-testid="join-org-view">
@@ -77,6 +79,7 @@ export function JoinOrgView({ token }: { token: string }) {
             <p className={styles.body}>
               {t('join.roleLine', { role: t(`org.role.${preview.role}` as never) })}
             </p>
+            {preview.restricted ? <p className={styles.body}>{t('join.restrictedHint')}</p> : null}
             <Button variant="primary" onClick={handleJoin} data-testid="join-accept">
               {t('join.accept')}
             </Button>

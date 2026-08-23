@@ -59,7 +59,10 @@ export function PublishPanel({ projectId, projectName, fileName, onClose }: Publ
     available: null,
     message: null,
   });
-  const [visibility, setVisibility] = useState<SiteVisibility>('public');
+  const [visibility, setVisibility] = useState<SiteVisibility>(
+    // Public projects deploy to the open web; private ones stay org-gated.
+    'public',
+  );
   const [publishing, setPublishing] = useState(false);
   const [progress, setProgress] = useState<PublishProgress>(IDLE_PROGRESS);
   const [error, setError] = useState<string | null>(null);

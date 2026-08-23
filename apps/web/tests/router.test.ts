@@ -25,8 +25,17 @@ function roundTrip(route: Route): Route {
 
 describe('parseRoute / buildPath (issue #1505)', () => {
   it('parses the home route', () => {
-    expect(parseRoute('/')).toEqual({ kind: 'home', view: 'home' });
-    expect(parseRoute('')).toEqual({ kind: 'home', view: 'home' });
+    // The workspace is the landing surface; the agent hero lives at /home.
+    expect(parseRoute('/')).toEqual({ kind: 'home', view: 'workspace' });
+    expect(parseRoute('')).toEqual({ kind: 'home', view: 'workspace' });
+    expect(parseRoute('/home')).toEqual({ kind: 'home', view: 'home' });
+  });
+
+  it('round-trips ERP connections', () => {
+    const route: Route = { kind: 'home', view: 'connections' };
+    expect(parseRoute('/erp/connections')).toEqual(route);
+    expect(parseRoute('/connections')).toEqual(route);
+    expect(buildPath(route)).toBe('/erp/connections');
   });
 
   it('round-trips a bare project route', () => {
@@ -105,6 +114,16 @@ describe('parseRoute / buildPath (issue #1505)', () => {
       conversationId: 'c-2',
       fileName: null,
     });
+  });
+
+  it('round-trips mail and a mail thread', () => {
+    const inbox: Route = { kind: 'home', view: 'mail' };
+    expect(parseRoute('/mail')).toEqual(inbox);
+    expect(buildPath(inbox)).toBe('/mail');
+    const thread: Route = { kind: 'home', view: 'mail', threadId: '18c5f42779f726f0' };
+    expect(parseRoute('/mail/18c5f42779f726f0')).toEqual(thread);
+    expect(buildPath(thread)).toBe('/mail/18c5f42779f726f0');
+    expect(roundTrip(thread)).toEqual(thread);
   });
 
   it('falls back to home when the URL is unrecognized', () => {

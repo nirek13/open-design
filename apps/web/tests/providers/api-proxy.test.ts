@@ -273,6 +273,51 @@ describe('buildProxyMessages', () => {
   });
 });
 
+describe('streamProxyEndpoint credentials', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('sends a BYOK profile id instead of a raw key when the env profile is selected', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('event: end\ndata: {}\n\n'));
+          controller.close();
+        },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamProxyEndpoint(
+      '/api/proxy/openai/stream',
+      {
+        apiKey: '',
+        byokProfileId: 'byok-env-openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o-mini',
+      } as any,
+      'System prompt',
+      [userMessage('Hello', [])],
+      new AbortController().signal,
+      {
+        onDelta: vi.fn(),
+        onDone: vi.fn(),
+        onError: vi.fn(),
+      },
+    );
+
+    const proxyInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(proxyInit.body))).toMatchObject({
+      byokProfileId: 'byok-env-openai',
+      model: 'gpt-4o-mini',
+    });
+    expect(JSON.parse(String(proxyInit.body)).apiKey).toBeUndefined();
+  });
+});
+
 function userMessage(
   content: string,
   attachments: NonNullable<ChatMessage['attachments']>,

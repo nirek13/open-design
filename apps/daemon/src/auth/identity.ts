@@ -2,29 +2,34 @@
 //
 // The daemon has two identity modes:
 //
-//   local-owner (default) — no auth configured. Every interactive request is
-//     the machine's owner. This keeps the local dev loop and the packaged
-//     single-user app working with zero setup, and it is the mode every
-//     existing test runs in.
+//   clerk (default) — every person signs in. Requests carry a session JWT
+//     verified against OD_CLERK_ISSUER's JWKS; the subject is mapped to a
+//     directory user row. If the issuer is missing, the app still requires
+//     sign-in and shows a setup screen rather than silently becoming owner.
 //
-//   clerk — OD_CLERK_ISSUER (and optionally OD_CLERK_PUBLISHABLE_KEY) is set.
-//     Requests carry a session JWT which is verified against the issuer's
-//     JWKS; the subject is mapped to a directory user row.
+//   local-owner — opt-in via OD_AUTH_MODE=local-owner, and only when no
+//     issuer is set. Every interactive request is the machine's owner. This
+//     is for tests and a truly keyless laptop loop, not for a shared app.
 //
 // Both modes produce the same `Viewer`, so everything downstream — membership
 // checks, audit attribution, app sharing — is written once and does not care
 // how the person was authenticated.
 //
 // SECURITY NOTE: in local-owner mode, anyone who can reach the daemon port is
-// the owner. That is the historical (and correct) posture for a loopback
-// single-user tool, but it means multi-user deployments MUST configure clerk
-// mode; see `isMultiUserMode`.
+// the owner. That is only for tests and an explicit keyless laptop loop.
+// Shared or production use must stay on clerk; see `isMultiUserMode`.
 
 import type { Request } from 'express';
 import { LOCAL_OWNER_USER_ID, type AuthMode } from '@open-design/contracts';
 import { JwksKeyStore, verifyJwt } from './jwt-verify.js';
 import type { SqlExecutor } from '../storage/sql.js';
-import { ensureLocalOwnerUser, getUser, upsertExternalUser, type DirectoryUser } from '../workspace-data/tenancy.js';
+import {
+  ensureLocalOwnerUser,
+  ensurePersonalOrganization,
+  getUser,
+  upsertExternalUser,
+  type DirectoryUser,
+} from '../workspace-data/tenancy.js';
 
 export interface Viewer {
   userId: string;
@@ -42,14 +47,19 @@ export interface AuthConfig {
 export function readAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
   const issuer = env.OD_CLERK_ISSUER?.trim() || null;
   const publishableKey = env.OD_CLERK_PUBLISHABLE_KEY?.trim() || null;
-  if (!issuer) return { mode: 'local-owner', issuer: null, publishableKey: null };
-  return { mode: 'clerk', issuer: issuer.replace(/\/+$/, ''), publishableKey };
+  if (issuer) return { mode: 'clerk', issuer: issuer.replace(/\/+$/, ''), publishableKey };
+  // Sign-in is the default. Local-owner is an explicit opt-in so a missing
+  // Clerk config cannot silently grant machine-owner powers.
+  if (env.OD_AUTH_MODE?.trim() === 'local-owner') {
+    return { mode: 'local-owner', issuer: null, publishableKey: null };
+  }
+  return { mode: 'clerk', issuer: null, publishableKey };
 }
 
 /** True when identities are real and separable — the precondition for
  * treating membership and roles as a security boundary rather than a UI hint. */
 export function isMultiUserMode(config: AuthConfig): boolean {
-  return config.mode === 'clerk';
+  return config.mode === 'clerk' && Boolean(config.issuer);
 }
 
 function bearerToken(req: Request): string | null {
@@ -76,6 +86,14 @@ function displayNameFromClaims(claims: Record<string, unknown>, fallback: string
 function emailFromClaims(claims: Record<string, unknown>): string | null {
   const email = claims.email ?? claims.primary_email_address;
   return typeof email === 'string' && email.trim() ? email.trim() : null;
+}
+
+function usernameFromClaims(claims: Record<string, unknown>): string | null {
+  const candidates = [claims.username, claims.preferred_username];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return null;
 }
 
 export class IdentityService {
@@ -116,6 +134,12 @@ export class IdentityService {
       externalId: claims.sub,
       displayName: displayNameFromClaims(claims, claims.sub),
       email: emailFromClaims(claims),
+      username: usernameFromClaims(claims),
+    });
+    // A new account must land in a workspace they own, not an empty shell.
+    await ensurePersonalOrganization(directory, {
+      userId: user.id,
+      displayName: user.displayName,
     });
     return { userId: user.id, displayName: user.displayName, email: user.email, mode: 'clerk' };
   }

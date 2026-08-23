@@ -54,6 +54,8 @@
      Border lives on the `::after` hairline below (from main), not on the box. */
   width: 100%;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   border-right: 0;
   background: var(--bg-panel);
   padding: 8px 0 10px;
@@ -63,7 +65,9 @@
   justify-content: space-between;
   gap: 8px;
   position: relative;
-  z-index: 30;
+  /* Above the running-app overlay (z-index 80) so pinned apps / nav stay
+     clickable in the left rail strip the overlay leaves open. */
+  z-index: 90;
   /* Visibility is driven purely by the grid track width (0 collapsed) plus
      the overflow clip below — no opacity fade, which previously crossed with
      the topbar toggle's fade-out and caused a flash on expand. */
@@ -203,6 +207,203 @@
   align-items: center;
   gap: 5px;
   width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* Dock-style destination stack: drag to reorder, scroll as a wheel. */
+.entry-nav-rail__dock {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 0;
+  padding: 10px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  perspective: 560px;
+  perspective-origin: 50% 50%;
+  touch-action: pan-y;
+}
+.entry-nav-rail__dock::-webkit-scrollbar {
+  display: none;
+}
+.entry-nav-rail__dock.is-overflowing {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 16px,
+    #000 calc(100% - 16px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 16px,
+    #000 calc(100% - 16px),
+    transparent 100%
+  );
+}
+.entry-nav-rail__slot {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  flex-shrink: 0;
+  transform-origin: center center;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  transition:
+    transform 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 140ms cubic-bezier(0.23, 1, 0.32, 1);
+  touch-action: pan-y;
+  user-select: none;
+}
+.entry-nav-rail.is-reordering .entry-nav-rail__slot {
+  transition: none;
+}
+.entry-nav-rail__slot.is-dragging {
+  opacity: 0.38;
+}
+.entry-nav-rail__slot.is-drop-before::before,
+.entry-nav-rail__slot.is-drop-after::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  z-index: 5;
+  pointer-events: none;
+}
+.entry-nav-rail__slot.is-drop-before::before {
+  top: -3px;
+}
+.entry-nav-rail__slot.is-drop-after::after {
+  bottom: -3px;
+}
+.entry-nav-rail__dock .entry-nav-rail__btn {
+  cursor: pointer;
+}
+.entry-nav-rail.is-reordering .entry-nav-rail__dock .entry-nav-rail__btn {
+  cursor: grabbing;
+}
+.entry-nav-rail__slot.is-throwing {
+  opacity: 0.28;
+}
+.entry-nav-rail__add {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  flex-shrink: 0;
+}
+.entry-nav-dock-menu {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 0;
+  z-index: 80;
+  min-width: 196px;
+  max-height: min(360px, 70vh);
+  overflow: auto;
+  padding: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg, 0 14px 36px rgba(0, 0, 0, 0.14));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.entry-nav-dock-menu--add {
+  bottom: 0;
+  top: auto;
+}
+.entry-nav-dock-menu--fixed {
+  position: fixed;
+  z-index: 120;
+}
+.entry-nav-dock-menu__item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.entry-nav-dock-menu__item:hover {
+  background: var(--bg-subtle);
+  color: var(--text-strong);
+}
+.entry-nav-dock-menu__empty {
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.entry-nav-dock-remove-hint {
+  position: fixed;
+  left: calc(var(--entry-rail-width, 56px) + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 120;
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--bg-panel);
+  background: var(--text-strong, #111);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+.entry-nav-rail__wheel-tip {
+  position: fixed;
+  z-index: 120;
+  transform: translateY(-50%);
+  padding: 5px 9px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--bg-panel);
+  background: var(--text-strong, #111);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.12));
+  pointer-events: none;
+}
+.entry-nav-rail__wheel-tip.is-rtl {
+  transform: translate(-100%, -50%);
+}
+.entry-nav-rail__dock [data-tooltip]::after {
+  content: none;
+}
+[dir='rtl'] .entry-nav-dock-menu:not(.entry-nav-dock-menu--fixed) {
+  left: auto;
+  right: calc(100% + 12px);
+}
+[dir='rtl'] .entry-nav-dock-remove-hint {
+  left: auto;
+  right: calc(var(--entry-rail-width, 56px) + 12px);
+}
+.entry-nav-rail__btn--fixed {
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.entry-nav-rail.is-open .entry-nav-rail__slot .entry-nav-rail__btn:active:not(:disabled) {
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .entry-nav-rail__slot {
+    transition: none;
+  }
 }
 .entry-nav-rail__footer {
   display: flex;
@@ -211,6 +412,7 @@
   gap: 5px;
   width: 100%;
   padding-bottom: 4px;
+  flex-shrink: 0;
 }
 .entry-nav-rail__divider {
   display: none;
@@ -252,6 +454,11 @@
 .entry-nav-rail [data-tooltip]:focus-visible::after {
   opacity: 1;
   transform: translateY(-50%) translateX(0);
+}
+.entry-nav-rail.is-reordering [data-tooltip]::after,
+.entry-nav-rail.is-reordering [data-tooltip]:hover::after,
+.entry-nav-rail.is-reordering [data-tooltip]:focus-visible::after {
+  opacity: 0;
 }
 .entry-nav-rail [data-tooltip][aria-expanded='true']::after {
   display: none;
@@ -643,6 +850,19 @@
   height: 18px;
   flex: 0 0 18px;
 }
+.entry-nav-rail__app-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
 .entry-nav-rail__btn:not(.is-active):hover {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
   color: var(--accent);
@@ -735,6 +955,47 @@
   max-width: 1440px;
 }
 
+/* Pages / Substrate notes: edge-to-edge canvas under the topbar. */
+.entry-main__inner--fullscreen {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  flex: 1 1 auto;
+  min-height: calc(100vh - var(--entry-topbar-h, 44px));
+  display: flex;
+  flex-direction: column;
+}
+
+.entry-main__inner--fullscreen > [data-testid='entry-view-pages'] {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Mail is a contained app: the reading pane scrolls, not the page. */
+.entry-main--scroll:has([data-testid='entry-view-mail'][data-active='true']) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.entry-main--scroll:has([data-testid='entry-view-mail'][data-active='true']) .entry-main__inner--fullscreen {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.entry-main__inner--fullscreen > [data-testid='entry-view-mail'] {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* Sticky top-right control strip inside the main scroll area.
    Stays visually pinned regardless of scroll position so the
    avatar / settings menu and the chip cluster are always
@@ -774,9 +1035,9 @@
   pointer-events: none;
   background: var(--bg);
 }
-/* Chip group — the GitHub star, inline model switcher, and Use
-   everywhere chip live inside this wrapper so the responsive
-   media query can flip the whole row's visibility in one place. */
+/* Chip group — historically held the GitHub / Discord / Use-everywhere
+   cluster in the entry topbar. Those controls moved to the tab chrome;
+   these rules remain for any leftover chip markup. */
 .entry-main__topbar-chips {
   display: inline-flex;
   align-items: center;

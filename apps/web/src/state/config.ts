@@ -65,18 +65,18 @@ export const DEFAULT_ORBIT: OrbitConfig = {
 };
 
 export const DEFAULT_CONFIG: AppConfig = {
-  mode: 'daemon',
+  mode: 'api',
   apiKey: '',
-  baseUrl: 'https://api.anthropic.com',
-  model: 'claude-sonnet-4-5',
+  baseUrl: 'https://api.openai.com/v1',
+  model: 'gpt-4o-mini',
   // New configs should be explicit. loadConfig() still detects parsed legacy
   // saved configs that did not have this field and migrates those from their
   // saved baseUrl/model before applying the current migration version.
-  apiProtocol: 'anthropic',
+  apiProtocol: 'openai',
   apiVersion: '',
   apiProtocolConfigs: {},
   configMigrationVersion: CONFIG_MIGRATION_VERSION,
-  apiProviderBaseUrl: 'https://api.anthropic.com',
+  apiProviderBaseUrl: 'https://api.openai.com/v1',
   agentId: null,
   skillId: null,
   designSystemId: null,
@@ -1204,16 +1204,42 @@ export async function migrateLegacyByokCredentialsToDaemon(
 
 /**
  * Reconciles a locally selected non-secret profile reference with the daemon.
- * No automatic "first profile" selection is made: changing execution
- * credentials must remain an explicit user choice.
+ * When no profile is selected yet but a configured OpenAI (api.openai.com) BYOK
+ * profile exists, bind it so a saved API key is used without another setup step.
  */
 export function mergeByokCredentialProfiles(
   config: AppConfig,
   response: ByokCredentialProfilesResponse | null,
 ): AppConfig {
-  if (!config.byokProfileId || !response) return config;
+  if (!response) return config;
+
+  if (!config.byokProfileId) {
+    if (config.mode === 'daemon' && config.agentId && config.agentId !== 'byok-opencode') {
+      return config;
+    }
+    const openAiProfile = response.profiles.find(
+      (candidate) =>
+        candidate.configured
+        && candidate.protocol === 'openai'
+        && /api\.openai\.com/i.test(candidate.baseUrl),
+    );
+    if (openAiProfile) {
+      return {
+        ...applySavedByokCredentialProfile(config, openAiProfile),
+        mode: 'api',
+        onboardingCompleted: true,
+        baseUrl: openAiProfile.baseUrl,
+        model: openAiProfile.model || config.model || 'gpt-4o-mini',
+        apiProtocol: 'openai',
+        apiProviderBaseUrl: 'https://api.openai.com/v1',
+        agentId: null,
+      };
+    }
+    return config;
+  }
+
   const profile = response.profiles.find((candidate) => candidate.id === config.byokProfileId);
-  if (!response.available || !profile?.configured) {
+  if (!profile?.configured) {
     return {
       ...config,
       byokProfileId: undefined,

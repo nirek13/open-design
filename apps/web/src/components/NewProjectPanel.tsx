@@ -304,6 +304,8 @@ export function NewProjectPanel({
     { message: string; details?: string } | null
   >(null);
   const [tab, setTab] = useState<CreateTab>(initialTab);
+  /** Required: null until the user picks Private or Public. */
+  const [visibility, setVisibility] = useState<'private' | 'public' | null>(null);
   // P0 analytics — fire surface_view once per (panel mount, tab) pair so the
   // funnel sees both initial open and tab switches without double-counting on
   // unrelated re-renders. Ref keys on a tab string because the panel is a
@@ -614,7 +616,7 @@ export function NewProjectPanel({
   }, [tab, mediaSurface, skillIdForTab, videoModelTouched]);
 
   const canCreate =
-    !loading && (tab !== 'template' || templateId != null);
+    !loading && visibility != null && (tab !== 'template' || templateId != null);
 
   function updateTabScrollState() {
     const el = tabsRef.current;
@@ -769,6 +771,8 @@ export function NewProjectPanel({
       designSystemId: primaryDs,
       metadata: {
         ...metadata,
+        visibility: visibility!,
+        ...(visibility === 'public' ? { autoPublish: true } : {}),
         nameSource: trimmedName ? 'user' : 'generated',
         ...(workingDir ? { userWorkingDir: workingDir } : {}),
       },
@@ -915,6 +919,32 @@ export function NewProjectPanel({
             onChange={(e) => setName(e.target.value)}
           />
         </div>
+
+        <fieldset className="newproj-visibility" data-testid="new-project-visibility">
+          <legend>{t('newproj.visibilityLabel')}</legend>
+          <div className="newproj-visibility__choices">
+            <button
+              type="button"
+              className={`newproj-visibility__choice${visibility === 'private' ? ' is-active' : ''}`}
+              aria-pressed={visibility === 'private'}
+              onClick={() => setVisibility('private')}
+              data-testid="new-project-visibility-private"
+            >
+              <strong>{t('newproj.visibilityPrivate')}</strong>
+              <span>{t('newproj.visibilityPrivateDetail')}</span>
+            </button>
+            <button
+              type="button"
+              className={`newproj-visibility__choice${visibility === 'public' ? ' is-active' : ''}`}
+              aria-pressed={visibility === 'public'}
+              onClick={() => setVisibility('public')}
+              data-testid="new-project-visibility-public"
+            >
+              <strong>{t('newproj.visibilityPublic')}</strong>
+              <span>{t('newproj.visibilityPublicDetail')}</span>
+            </button>
+          </div>
+        </fieldset>
 
         <div className="newproj-working-dir-row">
           <button
@@ -1105,9 +1135,11 @@ export function NewProjectPanel({
           onClick={handleCreate}
           disabled={!canCreate}
           title={
-            tab === 'template' && templateId == null
-              ? t('newproj.createDisabledTitle')
-              : undefined
+            visibility == null
+              ? t('newproj.visibilityRequired')
+              : tab === 'template' && templateId == null
+                ? t('newproj.createDisabledTitle')
+                : undefined
           }
         >
           <Icon name="plus" size={13} />
@@ -1158,7 +1190,9 @@ export function NewProjectPanel({
           </div>
         ) : null}
       </div>
-      <div className="newproj-footer">{t('newproj.privacyFooter')}</div>
+      {visibility == null ? (
+        <div className="newproj-footer newproj-footer--warn">{t('newproj.visibilityRequired')}</div>
+      ) : null}
       {importZipError ? (
         <Toast
           message={importZipError.message}

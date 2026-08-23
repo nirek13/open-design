@@ -38,7 +38,7 @@ describe('router /marketplace', () => {
   });
 
   it('does not break the home / project routes', () => {
-    expect(parseRoute('/')).toEqual({ kind: 'home', view: 'home' });
+    expect(parseRoute('/')).toEqual({ kind: 'home', view: 'workspace' });
     expect(parseRoute('/projects/abc')).toEqual({
       kind: 'project',
       projectId: 'abc',

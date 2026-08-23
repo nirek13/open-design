@@ -129,7 +129,7 @@ export function RecommendedStartRegion({ recommendation, onStart, onDismiss }: P
       (await onStart({
         name: projectNameFromPrompt(firstPrompt, t('home.recommendation.defaultProjectName')),
         prompt: firstPrompt,
-        metadata: { kind: PRODUCT_KIND[current.productType], nameSource: 'prompt' },
+        metadata: { kind: PRODUCT_KIND[current.productType], nameSource: 'prompt', visibility: 'private' },
         onboardingEntry,
       })) !== false;
     if (!started) setPending(false);

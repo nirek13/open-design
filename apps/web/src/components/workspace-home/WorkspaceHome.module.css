@@ -1,0 +1,374 @@
+/* Search ------------------------------------------------------------------ */
+
+.searchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.searchIcon {
+  position: absolute;
+  inset-inline-start: 14px;
+  display: grid;
+  place-items: center;
+  color: var(--text-soft);
+  pointer-events: none;
+}
+
+.search {
+  width: 100%;
+  height: 46px;
+  padding-inline: 40px 40px;
+  border-radius: var(--radius-lg);
+  font-size: 15px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+
+.search:focus {
+  box-shadow: var(--shadow-sm);
+}
+
+/* The browser's own search-cancel button is inconsistent across platforms and
+   nearly invisible in dark mode; this replaces it. */
+.search::-webkit-search-cancel-button {
+  display: none;
+}
+
+.searchClear {
+  position: absolute;
+  inset-inline-end: 12px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg-fill-secondary);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease-out);
+}
+
+.searchClear:hover {
+  background: var(--bg-fill);
+  color: var(--text);
+}
+
+.searchResults {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.countChip {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-fill-secondary);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* Result and recent rows --------------------------------------------------- */
+
+.resultList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+}
+
+.resultList > li + li .result {
+  border-top: 1px solid var(--border-soft);
+}
+
+.result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease-out);
+}
+
+.result:hover {
+  background: var(--bg-subtle);
+}
+
+.result:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.resultMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.resultLabel {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resultSecondary {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resultMeta {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Set-up prompt ------------------------------------------------------------ */
+
+.setupCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--accent-tint), var(--bg-panel));
+  box-shadow: var(--shadow-xs);
+}
+
+.setupText {
+  min-width: 0;
+}
+
+.setupTitle {
+  margin: 0 0 4px;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.setupBody {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* Create row --------------------------------------------------------------- */
+
+.createGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.createCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 15px 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+
+.createCard:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.createCard:active {
+  transform: translateY(0);
+}
+
+.createCard:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.createCardAccent {
+  border-color: var(--accent-soft);
+  background: var(--accent-tint);
+}
+
+.createCardAccent:hover {
+  border-color: var(--accent);
+}
+
+.createCardName {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 570;
+}
+
+.createCardHint {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+/* Approvals ---------------------------------------------------------------- */
+
+.proposalList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proposal {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 15px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+}
+
+.proposalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.proposalIntent {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 570;
+}
+
+.proposalLines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proposalLine {
+  position: relative;
+  padding-inline-start: 14px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.proposalLine::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 3px;
+  top: 8px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.proposalDetail {
+  color: var(--text-soft);
+  font-style: normal;
+}
+
+.proposalWarning {
+  margin-top: 2px;
+  color: var(--amber);
+  font-size: 12.5px;
+}
+
+.proposalActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+/* Widgets ------------------------------------------------------------------ */
+
+.widgetGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+/* Shared ------------------------------------------------------------------- */
+
+.skeletonList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.error {
+  padding: 11px 14px;
+  border: 1px solid var(--red-border);
+  border-radius: var(--radius-md);
+  background: var(--red-bg);
+  color: var(--red);
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .setupCard,
+  .proposal {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .proposalActions {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .createCard:hover {
+    transform: none;
+  }
+}

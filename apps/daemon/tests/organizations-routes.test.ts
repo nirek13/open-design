@@ -120,6 +120,7 @@ describe('organization routes', () => {
 
       const preview = await json('GET', `/api/invites/${created.body.token}`);
       expect(preview.body).toMatchObject({ valid: true, orgName: 'My Organization', role: 'admin' });
+      expect(created.body.invite.kind).toBe('link');
 
       // Accepting as the local owner is a no-op: they are already a member,
       // and re-opening a link must not burn a use.
@@ -177,6 +178,112 @@ describe('organization routes', () => {
       await expect(
         acceptOrgInvite(manager.directoryExecutor, created.body.token, second.id),
       ).rejects.toThrow(/limit/);
+    });
+
+    it('invites by email and only admits that address', async () => {
+      const created = await json('POST', `/api/orgs/${orgId}/invites`, {
+        email: 'Jane@Co.com',
+        role: 'admin',
+      });
+      expect(created.status).toBe(201);
+      expect(created.body.invite).toMatchObject({
+        kind: 'email',
+        targetEmail: 'jane@co.com',
+        maxUses: 1,
+        role: 'admin',
+      });
+      expect(created.body.invite.expiresAt).toBeGreaterThan(Date.now());
+
+      const dupPending = await json('POST', `/api/orgs/${orgId}/invites`, { email: 'jane@co.com' });
+      expect(dupPending.status).toBe(409);
+
+      const preview = await json('GET', `/api/invites/${created.body.token}`);
+      expect(preview.body).toMatchObject({ valid: true, restricted: true, role: 'admin' });
+      expect(preview.body).not.toHaveProperty('targetEmail');
+
+      const { acceptOrgInvite } = await import('../src/workspace-data/tenancy.js');
+      const stranger = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-stranger',
+        displayName: 'Stranger',
+        email: 'other@co.com',
+      });
+      await expect(
+        acceptOrgInvite(manager.directoryExecutor, created.body.token, stranger.id),
+      ).rejects.toThrow(/someone else/);
+
+      const jane = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-jane',
+        displayName: 'Jane',
+        email: 'jane@co.com',
+      });
+      const result = await acceptOrgInvite(manager.directoryExecutor, created.body.token, jane.id);
+      expect(result.member.role).toBe('admin');
+
+      const duplicate = await json('POST', `/api/orgs/${orgId}/invites`, { email: 'jane@co.com' });
+      expect(duplicate.status).toBe(409);
+    });
+
+    it('invites by username and lists the invite as pending for that person', async () => {
+      const teammate = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-sam',
+        displayName: 'Sam Rivera',
+        email: 'sam@co.com',
+        username: 'sam',
+      });
+      const created = await json('POST', `/api/orgs/${orgId}/invites`, { username: 'Sam' });
+      expect(created.status).toBe(201);
+      expect(created.body.invite).toMatchObject({
+        kind: 'username',
+        targetUsername: 'Sam',
+        targetUserId: teammate.id,
+        maxUses: 1,
+      });
+
+      const { listPendingInvitesForUser, acceptPendingInvite, acceptOrgInvite } = await import(
+        '../src/workspace-data/tenancy.js'
+      );
+      const pending = await listPendingInvitesForUser(manager.directoryExecutor, teammate.id);
+      expect(pending).toEqual([
+        expect.objectContaining({ id: created.body.invite.id, orgId, kind: 'username' }),
+      ]);
+      expect(await listPendingInvitesForUser(manager.directoryExecutor, LOCAL_OWNER_USER_ID)).toEqual([]);
+
+      const stranger = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-not-sam',
+        displayName: 'Not Sam',
+        email: 'not-sam@co.com',
+        username: 'notsam',
+      });
+      await expect(
+        acceptPendingInvite(manager.directoryExecutor, created.body.invite.id, stranger.id),
+      ).rejects.toThrow(/someone else/);
+
+      // Already-members who open someone else's invite are returned as-is and
+      // must not burn the remaining use.
+      await acceptPendingInvite(manager.directoryExecutor, created.body.invite.id, LOCAL_OWNER_USER_ID);
+      expect((await json('GET', `/api/orgs/${orgId}/invites`)).body.invites[0].useCount).toBe(0);
+
+      const accepted = await acceptPendingInvite(
+        manager.directoryExecutor,
+        created.body.invite.id,
+        teammate.id,
+      );
+      expect(accepted.member.userId).toBe(teammate.id);
+
+      const link = await json('POST', `/api/orgs/${orgId}/invites`, {});
+      await expect(
+        acceptPendingInvite(manager.directoryExecutor, link.body.invite.id, teammate.id),
+      ).rejects.toThrow(/not valid/);
+
+      const ghost = await json('POST', `/api/orgs/${orgId}/invites`, { username: 'new-hire' });
+      const hire = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-hire',
+        displayName: 'New Hire',
+        email: null,
+        username: 'new-hire',
+      });
+      const joined = await acceptOrgInvite(manager.directoryExecutor, ghost.body.token, hire.id);
+      expect(joined.member.userId).toBe(hire.id);
     });
   });
 
@@ -341,6 +448,78 @@ describe('organization routes', () => {
       await json('PATCH', `/api/orgs/${orgId}/apps/${app.id}`, { status: 'archived' });
       const page = await fetch(`${base}/s/${shared.body.token}`);
       expect(page.status).toBe(404);
+    });
+
+    it('pins an app and lists it under ?pinned=1', async () => {
+      const app = await publishApp();
+      const updated = await json('PATCH', `/api/orgs/${orgId}/apps/${app.id}`, { pinned: true });
+      expect(updated.body.app.pinned).toBe(true);
+      expect(updated.body.app.pinnedAt).toBeTypeOf('number');
+      const pinned = await json('GET', `/api/orgs/${orgId}/apps?pinned=1`);
+      expect(pinned.body.apps.map((row: { id: string }) => row.id)).toContain(app.id);
+    });
+
+    it('hides a restricted app from members without a grant', async () => {
+      const created = await json('POST', `/api/orgs/${orgId}/apps`, {
+        name: 'Restricted board',
+        projectId: 'proj-1',
+        filePath: 'board.html',
+        accessMode: 'restricted',
+      });
+      expect(created.status).toBe(201);
+      expect(created.body.app.accessMode).toBe('restricted');
+      const appId = created.body.app.id;
+
+      const other = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-restricted-peer',
+        displayName: 'Peer',
+        email: null,
+      });
+      const { acceptOrgInvite } = await import('../src/workspace-data/tenancy.js');
+      const invite = await json('POST', `/api/orgs/${orgId}/invites`, {});
+      await acceptOrgInvite(manager.directoryExecutor, invite.body.token, other.id);
+      const otherMember = await getActiveMemberForUser(manager.directoryExecutor, orgId, other.id);
+      const { listApps, canEditApp, getApp } = await import('../src/workspace-data/apps.js');
+      const before = await listApps(manager.workspaceExecutor(orgId), orgId, {
+        viewerMemberId: otherMember!.id,
+        viewerRole: 'member',
+      });
+      expect(before.find((row) => row.id === appId)).toBeUndefined();
+
+      await json('PUT', `/api/orgs/${orgId}/apps/${appId}/grants`, {
+        grants: [{ memberId: otherMember!.id, role: 'view' }],
+      });
+      const after = await listApps(manager.workspaceExecutor(orgId), orgId, {
+        viewerMemberId: otherMember!.id,
+        viewerRole: 'member',
+      });
+      expect(after.find((row) => row.id === appId)?.id).toBe(appId);
+
+      const app = await getApp(manager.workspaceExecutor(orgId), orgId, appId);
+      expect(canEditApp(app, { memberId: otherMember!.id, role: 'member' }, 'view')).toBe(false);
+      expect(canEditApp(app, { memberId: otherMember!.id, role: 'member' }, 'edit')).toBe(true);
+    });
+
+    it('refuses GET of a private app for a non-creator', async () => {
+      const app = await publishApp();
+      await json('PATCH', `/api/orgs/${orgId}/apps/${app.id}`, { visibility: 'private' });
+      const other = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-private-getter',
+        displayName: 'Snoop',
+        email: null,
+      });
+      const { acceptOrgInvite } = await import('../src/workspace-data/tenancy.js');
+      const invite = await json('POST', `/api/orgs/${orgId}/invites`, {});
+      await acceptOrgInvite(manager.directoryExecutor, invite.body.token, other.id);
+      const { assertCanViewApp, getApp } = await import('../src/workspace-data/apps.js');
+      const otherMember = await getActiveMemberForUser(manager.directoryExecutor, orgId, other.id);
+      const found = await getApp(manager.workspaceExecutor(orgId), orgId, app.id);
+      await expect(
+        assertCanViewApp(manager.workspaceExecutor(orgId), orgId, found, {
+          memberId: otherMember!.id,
+          role: 'member',
+        }),
+      ).rejects.toMatchObject({ code: 'APP_FORBIDDEN' });
     });
   });
 });

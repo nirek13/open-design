@@ -1150,7 +1150,7 @@ describe('loadConfig', () => {
 
     const config = loadConfig();
 
-    expect(config.apiProtocol).toBe('anthropic');
+    expect(config.apiProtocol).toBe(DEFAULT_CONFIG.apiProtocol);
     expect(config.apiKey).toBe('');
     expect(config.apiVersion).toBe('');
     expect(config.baseUrl).toBe(DEFAULT_CONFIG.baseUrl);
@@ -1188,7 +1188,7 @@ describe('loadConfig', () => {
 
     const config = loadConfig();
 
-    expect(config.apiProtocol).toBe('anthropic');
+    expect(config.apiProtocol).toBe(DEFAULT_CONFIG.apiProtocol);
     expect(config.apiKey).toBe('');
     expect(config.apiVersion).toBe('');
     expect(config.baseUrl).toBe(DEFAULT_CONFIG.baseUrl);
@@ -1379,7 +1379,8 @@ describe('loadConfig', () => {
   });
 
   it('sets an explicit apiProtocol for new default configs', () => {
-    expect(DEFAULT_CONFIG.apiProtocol).toBe('anthropic');
+    expect(DEFAULT_CONFIG.apiProtocol).toBe('openai');
+    expect(DEFAULT_CONFIG.mode).toBe('api');
     expect(DEFAULT_CONFIG.configMigrationVersion).toBe(2);
     expect(DEFAULT_CONFIG.accentColor).toBe('#c96442');
   });
@@ -1832,5 +1833,91 @@ describe('secure BYOK profiles', () => {
         },
       },
     });
+  });
+
+  it('keeps a configured profile when OS secret storage is unavailable', () => {
+    const merged = mergeByokCredentialProfiles({
+      ...DEFAULT_CONFIG,
+      byokProfileId: 'byok-env-openai',
+    }, {
+      available: false,
+      backend: 'env-openai',
+      profiles: [{
+        id: 'byok-env-openai',
+        label: 'OpenAI (environment)',
+        protocol: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o-mini',
+        requiresApiKey: true,
+        configured: true,
+        keyTail: 'test',
+        createdAt: 0,
+        updatedAt: 0,
+      }],
+    });
+
+    expect(merged).toMatchObject({
+      byokProfileId: 'byok-env-openai',
+      byokCredentialConfigured: true,
+      apiProtocol: 'openai',
+      model: 'gpt-4o-mini',
+    });
+  });
+
+  it('auto-binds an OpenAI env profile when no CLI agent is selected', () => {
+    const merged = mergeByokCredentialProfiles({
+      ...DEFAULT_CONFIG,
+      onboardingCompleted: false,
+    }, {
+      available: false,
+      backend: 'env-openai',
+      profiles: [{
+        id: 'byok-env-openai',
+        label: 'OpenAI (environment)',
+        protocol: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o-mini',
+        requiresApiKey: true,
+        configured: true,
+        keyTail: 'test',
+        createdAt: 0,
+        updatedAt: 0,
+      }],
+    });
+
+    expect(merged).toMatchObject({
+      mode: 'api',
+      onboardingCompleted: true,
+      byokProfileId: 'byok-env-openai',
+      byokCredentialConfigured: true,
+      apiProtocol: 'openai',
+    });
+  });
+
+  it('does not steal a selected local CLI session for the env OpenAI profile', () => {
+    const merged = mergeByokCredentialProfiles({
+      ...DEFAULT_CONFIG,
+      mode: 'daemon',
+      agentId: 'claude',
+    }, {
+      available: false,
+      backend: 'env-openai',
+      profiles: [{
+        id: 'byok-env-openai',
+        label: 'OpenAI (environment)',
+        protocol: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o-mini',
+        requiresApiKey: true,
+        configured: true,
+        keyTail: 'test',
+        createdAt: 0,
+        updatedAt: 0,
+      }],
+    });
+
+    expect(merged.mode).toBe('daemon');
+    expect(merged.agentId).toBe('claude');
+    expect(merged.byokProfileId).toBeUndefined();
   });
 });

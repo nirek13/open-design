@@ -152,6 +152,9 @@ interface Props {
   // showing: the host seeds the prompt with `scenario.text`, binds the
   // scenario's template, and creates the project -- one-click "just start".
   onSubmitScenario?: (scenario: PlaceholderScenario) => void;
+  /** Required before create: private or public. Null until chosen. */
+  projectVisibility?: 'private' | 'public' | null;
+  onProjectVisibilityChange?: (value: 'private' | 'public') => void;
   sessionMode?: ChatSessionMode;
   onSessionModeChange?: (mode: ChatSessionMode) => void;
   activePluginTitle: string | null;
@@ -298,6 +301,8 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     onPromptChange,
     onSubmit,
     onSubmitScenario = () => undefined,
+    projectVisibility = null,
+    onProjectVisibilityChange = () => undefined,
     sessionMode = 'design',
     onSessionModeChange,
     firstRunGuide,
@@ -420,7 +425,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const shortcutsMenuRef = useRef<HTMLDivElement>(null);
   const canSubmit =
-    (prompt.trim().length > 0 || stagedFiles.length > 0) && !submitDisabled && !submitting;
+    (prompt.trim().length > 0 || stagedFiles.length > 0) &&
+    !submitDisabled &&
+    !submitting &&
+    projectVisibility != null;
   const previewHomeFile = useMemo(() => {
     if (!previewHomeFileKey) return null;
     return stagedFiles.find((file, index) => homeFileKey(file, index) === previewHomeFileKey) ?? null;
@@ -472,9 +480,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     !pluginsLoading &&
     carouselScenario !== null &&
     carouselScenarios.some((scenario) => scenario.id === carouselScenario.id);
-  const sendEnabled = canSubmit || carouselSubmittable;
+  const sendEnabled = (canSubmit || carouselSubmittable) && projectVisibility != null;
   function handleSend() {
     if (submitting || submitDisabled) return;
+    if (projectVisibility == null) return;
     if (canSubmit) {
       onSubmit();
       return;
@@ -1954,6 +1963,26 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
             ) : null}
           </div>
           <div className="home-hero__foot-right">
+            <div className="home-hero__visibility" role="group" aria-label={t('newproj.visibilityLabel')}>
+              <button
+                type="button"
+                className={`home-hero__visibility-btn${projectVisibility === 'private' ? ' is-active' : ''}`}
+                aria-pressed={projectVisibility === 'private'}
+                onClick={() => onProjectVisibilityChange('private')}
+                data-testid="home-visibility-private"
+              >
+                {t('newproj.visibilityPrivate')}
+              </button>
+              <button
+                type="button"
+                className={`home-hero__visibility-btn${projectVisibility === 'public' ? ' is-active' : ''}`}
+                aria-pressed={projectVisibility === 'public'}
+                onClick={() => onProjectVisibilityChange('public')}
+                data-testid="home-visibility-public"
+              >
+                {t('newproj.visibilityPublic')}
+              </button>
+            </div>
             <div className="home-hero__mode-switcher">
               <SessionModeToggle
                 mode={sessionMode}
@@ -1983,8 +2012,24 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               onClick={handleSend}
               onAnimationEnd={() => setSendAttention(false)}
               disabled={!sendEnabled}
-              title={submitting ? t('chat.comments.sending') : sendEnabled ? t('homeHero.run') : t('homeHero.typeSomethingToRun')}
-              data-tooltip={submitting ? t('chat.comments.sending') : sendEnabled ? t('homeHero.run') : t('homeHero.typeSomethingToRun')}
+              title={
+                submitting
+                  ? t('chat.comments.sending')
+                  : projectVisibility == null
+                    ? t('newproj.visibilityRequired')
+                    : sendEnabled
+                      ? t('homeHero.run')
+                      : t('homeHero.typeSomethingToRun')
+              }
+              data-tooltip={
+                submitting
+                  ? t('chat.comments.sending')
+                  : projectVisibility == null
+                    ? t('newproj.visibilityRequired')
+                    : sendEnabled
+                      ? t('homeHero.run')
+                      : t('homeHero.typeSomethingToRun')
+              }
               aria-label={submitting ? t('chat.comments.sending') : t('homeHero.run')}
               aria-busy={submitting}
             >
@@ -3774,6 +3819,7 @@ function homeHeroChipDescription(chipId: string, t: ReturnType<typeof useT>): st
     case 'mobile': return t('homeHero.chip.mobileDesc');
     case 'deck': return t('homeHero.chip.deckDesc');
     case 'document': return t('homeHero.chip.documentDesc');
+    case 'wiki': return t('homeHero.chip.wikiDesc');
     case 'image': return t('homeHero.chip.imageDesc');
     case 'video': return t('homeHero.chip.videoDesc');
     case 'audio': return t('homeHero.chip.audioDesc');
@@ -3815,6 +3861,7 @@ function homeHeroChipTitle(chip: HomeHeroChip, t: ReturnType<typeof useT>): stri
     case 'mobile': return t('homeHero.chip.mobileNext');
     case 'deck': return t('homeHero.chip.deckNext');
     case 'document': return t('homeHero.chip.documentNext');
+    case 'wiki': return t('homeHero.chip.wikiNext');
     case 'image': return t('homeHero.chip.imageNext');
     case 'video': return t('homeHero.chip.videoNext');
     case 'audio': return t('homeHero.chip.audioNext');

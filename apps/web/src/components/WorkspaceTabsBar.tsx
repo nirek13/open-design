@@ -1,4 +1,4 @@
-import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type DragEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { navigate, type EntryHomeView, type Route } from '../router';
@@ -58,6 +58,8 @@ interface Props {
   // paths navigate straight to a new project/design-system and leave the entry
   // tab showing Welcome in the background. This flips it back to Home.
   onboardingCompleted?: boolean;
+  /** Org switcher, notifications, and settings — pinned to the right of the tab strip. */
+  trailing?: ReactNode;
 }
 
 const STORAGE_KEY = 'open-design:workspace-tabs:v1';
@@ -437,7 +439,7 @@ interface HoverPreviewState {
 
 const HOVER_PREVIEW_DELAY_MS = 380;
 
-export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false }: Props) {
+export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false, trailing }: Props) {
   const t = useT();
   const [state, setState] = useState<WorkspaceTabsState>(() => initialTabsState(route));
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
@@ -1159,6 +1161,11 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false 
             )
           : null}
       </div>
+      {trailing ? (
+        <div className="workspace-tabs-trailing" data-testid="workspace-tabs-trailing">
+          {trailing}
+        </div>
+      ) : null}
       {hoverPreview && typeof document !== 'undefined' && !tabsMenuOpen
         ? createPortal(
             (() => {
@@ -1256,6 +1263,21 @@ function displayTabFor(
     database: t('entry.navDatabase'),
     apps: t('entry.navApps'),
     organization: t('entry.navOrganization'),
+    workspace: t('entry.navWorkspace'),
+    erp: t('entry.navErp'),
+    books: t('entry.navBooks'),
+    approvals: t('entry.navApprovals'),
+    crm: t('entry.navCrm'),
+    purchasing: t('entry.navPurchasing'),
+    team: t('entry.navTeam'),
+    pages: t('entry.navPages'),
+    calendar: t('entry.navCalendar'),
+    mail: t('entry.navMail'),
+    templates: t('entry.navTemplates'),
+    tables: t('entry.navTables'),
+    inventory: t('entry.navInventory'),
+    jobs: t('entry.navJobs'),
+    connections: t('erp.module.connections'),
   };
   const entryIcon: Record<EntryHomeView, IconName> = {
     home: 'home',
@@ -1270,6 +1292,21 @@ function displayTabFor(
     database: 'layout',
     apps: 'blocks',
     organization: 'orbit',
+    workspace: 'search',
+    erp: 'grid',
+    books: 'file-text',
+    approvals: 'check',
+    crm: 'handshake',
+    purchasing: 'truck',
+    team: 'message-circle',
+    pages: 'file-text',
+    calendar: 'history',
+    mail: 'mail',
+    templates: 'blocks',
+    tables: 'layout',
+    inventory: 'layers-filled',
+    jobs: 'kanban',
+    connections: 'link',
   };
   return {
     id: tab.id,

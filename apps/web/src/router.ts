@@ -23,7 +23,22 @@ export type EntryHomeView =
   | 'integrations'
   | 'database'
   | 'apps'
-  | 'organization';
+  | 'organization'
+  | 'workspace'
+  | 'erp'
+  | 'books'
+  | 'approvals'
+  | 'crm'
+  | 'purchasing'
+  | 'team'
+  | 'pages'
+  | 'calendar'
+  | 'mail'
+  | 'templates'
+  | 'tables'
+  | 'inventory'
+  | 'jobs'
+  | 'connections';
 
 export type Route =
   | {
@@ -37,6 +52,10 @@ export type Route =
        * select a specific brand without leaving the tab.
        */
       brandId?: string;
+      /** Deep-link into a Substrate page (`/pages/:pageId`). */
+      pageId?: string;
+      /** Deep-link into a mail thread (`/mail/:threadId`). */
+      threadId?: string;
     }
   | { kind: 'design-system-create' }
   | { kind: 'design-system-detail'; designSystemId: string }
@@ -61,7 +80,11 @@ export type Route =
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
-  if (parts.length === 0) return { kind: 'home', view: 'home' };
+  // The workspace is the front door: this product is the company database
+  // first, and the design surface second. `/home` still reaches the agent
+  // hero, which is why it has an explicit path of its own.
+  if (parts.length === 0) return { kind: 'home', view: 'workspace' };
+  if (parts[0] === 'home' && !parts[1]) return { kind: 'home', view: 'home' };
   if (parts[0] === 'onboarding') {
     return { kind: 'home', view: 'onboarding' };
   }
@@ -124,6 +147,59 @@ export function parseRoute(pathname: string): Route {
   if (DATABASE_UI_VISIBLE && parts[0] === 'database' && !parts[1]) {
     return { kind: 'home', view: 'database' };
   }
+  if (parts[0] === 'workspace' && !parts[1]) {
+    return { kind: 'home', view: 'workspace' };
+  }
+  if (parts[0] === 'erp') {
+    if (parts[1] === 'netsuite') return { kind: 'home', view: 'erp' };
+    if (parts[1] === 'connections') return { kind: 'home', view: 'connections' };
+    return { kind: 'home', view: 'workspace' };
+  }
+  if (parts[0] === 'connections' && !parts[1]) {
+    return { kind: 'home', view: 'connections' };
+  }
+  if (parts[0] === 'books' && !parts[1]) {
+    return { kind: 'home', view: 'books' };
+  }
+  if (parts[0] === 'approvals' && !parts[1]) {
+    return { kind: 'home', view: 'approvals' };
+  }
+  if (parts[0] === 'crm' && !parts[1]) {
+    return { kind: 'home', view: 'crm' };
+  }
+  if (parts[0] === 'purchasing' && !parts[1]) {
+    return { kind: 'home', view: 'purchasing' };
+  }
+  if (parts[0] === 'team' && !parts[1]) {
+    return { kind: 'home', view: 'team' };
+  }
+  if (parts[0] === 'pages') {
+    if (parts[1]) {
+      return { kind: 'home', view: 'pages', pageId: decodeURIComponent(parts[1]) };
+    }
+    return { kind: 'home', view: 'pages' };
+  }
+  if (parts[0] === 'calendar' && !parts[1]) {
+    return { kind: 'home', view: 'calendar' };
+  }
+  if (parts[0] === 'mail') {
+    if (parts[1]) {
+      return { kind: 'home', view: 'mail', threadId: decodeURIComponent(parts[1]) };
+    }
+    return { kind: 'home', view: 'mail' };
+  }
+  if (parts[0] === 'templates' && !parts[1]) {
+    return { kind: 'home', view: 'templates' };
+  }
+  if (parts[0] === 'tables' && !parts[1]) {
+    return { kind: 'home', view: 'tables' };
+  }
+  if (parts[0] === 'inventory' && !parts[1]) {
+    return { kind: 'home', view: 'inventory' };
+  }
+  if (parts[0] === 'jobs' && !parts[1]) {
+    return { kind: 'home', view: 'jobs' };
+  }
   if (parts[0] === 'apps' && !parts[1]) {
     return { kind: 'home', view: 'apps' };
   }
@@ -150,7 +226,7 @@ export function parseRoute(pathname: string): Route {
 export function buildPath(route: Route): string {
   if (route.kind === 'home') {
     if (route.view === 'onboarding') return '/onboarding';
-    if (route.view === 'projects') return '/projects';
+    if (route.view === 'jobs') return '/jobs';
     if (route.view === 'tasks') return '/automations';
     if (route.view === 'plugins') return '/plugins';
     if (route.view === 'design-systems') return '/design-systems';
@@ -160,9 +236,28 @@ export function buildPath(route: Route): string {
     }
     if (route.view === 'integrations') return '/integrations';
     if (route.view === 'database') return DATABASE_UI_VISIBLE ? '/database' : '/';
+    if (route.view === 'workspace') return '/';
+    if (route.view === 'erp') return '/erp/netsuite';
+    if (route.view === 'connections') return '/erp/connections';
+    if (route.view === 'books') return '/books';
+    if (route.view === 'approvals') return '/approvals';
+    if (route.view === 'crm') return '/crm';
+    if (route.view === 'purchasing') return '/purchasing';
+    if (route.view === 'team') return '/team';
+    if (route.view === 'pages') {
+      return route.pageId ? `/pages/${encodeURIComponent(route.pageId)}` : '/pages';
+    }
+    if (route.view === 'calendar') return '/calendar';
+    if (route.view === 'mail') {
+      return route.threadId ? `/mail/${encodeURIComponent(route.threadId)}` : '/mail';
+    }
+    if (route.view === 'templates') return '/templates';
+    if (route.view === 'tables') return '/tables';
+    if (route.view === 'inventory') return '/inventory';
+    if (route.view === 'projects') return '/projects';
     if (route.view === 'apps') return '/apps';
     if (route.view === 'organization') return '/organization';
-    return '/';
+    return '/home';
   }
   if (route.kind === 'join') return `/join/${encodeURIComponent(route.token)}`;
   if (route.kind === 'marketplace') return '/marketplace';

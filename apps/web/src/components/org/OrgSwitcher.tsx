@@ -1,14 +1,16 @@
 // Which organization am I in, and how do I get to another one?
 //
-// Sits in the entry top bar. Shows the active organization at a glance, and
+// Sits in the workspace tab chrome. Shows the active organization at a glance, and
 // opens a menu to switch, create, or manage. This is the anchor of the whole
 // org model in the UI — everything else in the app is "inside" whatever this
 // says.
 
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input } from '@open-design/components';
+import type { OrgPendingInvite } from '@open-design/contracts';
 import { useT } from '../../i18n';
-import { useOrg } from '../../org/OrgContext';
+import { useOptionalOrg } from '../../org/OrgContext';
+import { acceptPendingInvite, fetchPendingInvites } from '../../providers/registry';
 import styles from './OrgSwitcher.module.css';
 
 interface Props {
@@ -17,12 +19,30 @@ interface Props {
 
 export function OrgSwitcher({ onManage }: Props) {
   const t = useT();
-  const { organizations, activeOrg, setActiveOrg, createOrganization, loading } = useOrg();
+  const org = useOptionalOrg();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<OrgPendingInvite[]>([]);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!org) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const invites = await fetchPendingInvites();
+        if (!cancelled) setPending(invites);
+      } catch {
+        if (!cancelled) setPending([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [org]);
 
   useEffect(() => {
     if (!open) return;
@@ -40,6 +60,11 @@ export function OrgSwitcher({ onManage }: Props) {
     };
   }, [open]);
 
+  // Rendered outside a provider (an embedded shell, a narrow test harness):
+  // show nothing rather than throwing and blanking everything around us.
+  if (!org) return null;
+  const { organizations, activeOrg, setActiveOrg, createOrganization, loading, refresh } = org;
+
   async function handleCreate() {
     if (!name.trim() || busy) return;
     setBusy(true);
@@ -50,6 +75,20 @@ export function OrgSwitcher({ onManage }: Props) {
       setOpen(false);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleAcceptPending(invite: OrgPendingInvite) {
+    if (acceptingId) return;
+    setAcceptingId(invite.id);
+    try {
+      await acceptPendingInvite(invite.id);
+      setPending((current) => current.filter((item) => item.id !== invite.id));
+      await refresh();
+      setActiveOrg(invite.orgId);
+      setOpen(false);
+    } finally {
+      setAcceptingId(null);
     }
   }
 
@@ -69,6 +108,11 @@ export function OrgSwitcher({ onManage }: Props) {
           {(activeOrg?.name ?? '?').slice(0, 1).toUpperCase()}
         </span>
         <span className={styles.name}>{activeOrg?.name ?? t('org.noOrganization')}</span>
+        {pending.length > 0 ? (
+          <span className={styles.badge} data-testid="org-pending-badge">
+            {pending.length}
+          </span>
+        ) : null}
         <span className={styles.caret} aria-hidden="true">
           ▾
         </span>
@@ -94,6 +138,31 @@ export function OrgSwitcher({ onManage }: Props) {
               </span>
             </button>
           ))}
+
+          {pending.length > 0 ? (
+            <>
+              <div className={styles.divider} role="separator" />
+              <div className={styles.menuLabel}>{t('org.pendingInvites')}</div>
+              {pending.map((invite) => (
+                <div key={invite.id} className={styles.pending} data-testid="org-pending-invite">
+                  <div className={styles.pendingText}>
+                    <span className={styles.itemName}>{invite.orgName}</span>
+                    <span className={styles.itemMeta}>
+                      {t(`org.role.${invite.role}` as never)} · {t(`org.kind.${invite.kind}` as never)}
+                    </span>
+                  </div>
+                  <Button
+                    variant="primary"
+                    onClick={() => void handleAcceptPending(invite)}
+                    disabled={acceptingId === invite.id}
+                    data-testid="org-accept-pending"
+                  >
+                    {t('org.acceptInvite')}
+                  </Button>
+                </div>
+              ))}
+            </>
+          ) : null}
 
           <div className={styles.divider} role="separator" />
 

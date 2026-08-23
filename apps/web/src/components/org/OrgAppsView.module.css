@@ -97,3 +97,123 @@
   background: var(--od-danger-surface, rgba(220, 80, 80, 0.08));
   font-size: 13px;
 }
+
+/* Cross-organization filter -------------------------------------------- */
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.filterCount {
+  color: var(--text-soft);
+  font-size: 12.5px;
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.headRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.manageBox {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.06);
+}
+
+.fieldset {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-radius: 8px;
+}
+
+.radio {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.grants {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.grantRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.82rem;
+}
+
+.grantRoles {
+  display: flex;
+  gap: 4px;
+}
+
+.role,
+.roleActive {
+  border: 1px solid rgba(127, 127, 127, 0.25);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 0.72rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.roleActive {
+  border-color: rgba(76, 124, 243, 0.55);
+  background: rgba(76, 124, 243, 0.16);
+}
+
+.modalScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* The app runtime takes over the surface while an app is running, rather than
+ * opening a window: an ERP tool is the task, not an accessory to it. */
+.runnerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  padding: 16px;
+  background: var(--surface-0, #fff);
+  overflow: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  .runnerOverlay {
+    background: var(--surface-0, #16181c);
+  }
+}

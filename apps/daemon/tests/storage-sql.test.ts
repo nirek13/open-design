@@ -242,3 +242,50 @@ describe('resolveDaemonDbConfig', () => {
     expect(() => resolveDaemonDbConfig({ OD_DAEMON_DB: 'mongo' })).toThrow(/unknown OD_DAEMON_DB/);
   });
 });
+
+describe('buildPoolConfig', () => {
+  it('always sets the search path as a startup option', async () => {
+    // Regression: this was originally a `SET search_path` issued once after
+    // connecting. A pool hands out a different connection per query, so the
+    // setting silently vanished on rotation and every unqualified table name
+    // started reporting "does not exist" mid-session. It has to be a startup
+    // parameter so the pool applies it to every connection it opens.
+    const { buildPoolConfig } = await import('../src/storage/postgres-connection.js');
+    const fromUrl = buildPoolConfig({
+      kind: 'postgres',
+      postgres: {
+        connectionString: 'postgresql://u:p@db.example.supabase.co:5432/postgres',
+        host: 'db.example.supabase.co',
+        port: 5432,
+        database: 'postgres',
+        user: 'u',
+        sslMode: 'require',
+      },
+    });
+    expect(fromUrl.options).toBe('-c search_path=open_design');
+    expect(fromUrl.connectionString).toContain('supabase.co');
+
+    const fromFields = buildPoolConfig({
+      kind: 'postgres',
+      postgres: { host: 'h', port: 5432, database: 'd', user: 'u', sslMode: 'require' },
+    });
+    expect(fromFields.options).toBe('-c search_path=open_design');
+    expect(fromFields.host).toBe('h');
+  });
+
+  it('keeps TLS on unless explicitly disabled', async () => {
+    const { buildPoolConfig } = await import('../src/storage/postgres-connection.js');
+    const base = { host: 'h', port: 5432, database: 'd', user: 'u' } as const;
+    // Supabase's pooler presents a chain Node has no root for, so `require`
+    // encrypts without demanding verification; `verify-full` opts in.
+    expect(buildPoolConfig({ kind: 'postgres', postgres: { ...base, sslMode: 'require' } }).ssl).toEqual({
+      rejectUnauthorized: false,
+    });
+    expect(
+      buildPoolConfig({ kind: 'postgres', postgres: { ...base, sslMode: 'verify-full' } }).ssl,
+    ).toEqual({ rejectUnauthorized: true });
+    expect(buildPoolConfig({ kind: 'postgres', postgres: { ...base, sslMode: 'disable' } }).ssl).toBe(
+      false,
+    );
+  });
+});

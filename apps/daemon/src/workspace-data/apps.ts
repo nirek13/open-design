@@ -5,6 +5,11 @@
 // keeps opening the same stable entry. Archiving hides an app from the
 // gallery; nothing is destroyed, matching the rest of the data plane.
 //
+// Access:
+//   visibility private — only the creator (list/get/open)
+//   accessMode org     — every member can view; creator + admins + edit grants edit
+//   accessMode restricted — only grants ∪ creator ∪ admin can view
+//
 // Every query carries the organization id explicitly. On SQLite that is
 // redundant (the file is the organization) but harmless; on Supabase Postgres
 // one database holds every organization and this is the only thing keeping
@@ -12,13 +17,19 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import type {
+  AppAccessMode,
+  AppGrant,
+  AppGrantRole,
   AppShareLink,
   AppVisibility,
   CreateAppShareLinkRequest,
   OrgApp,
+  OrgRole,
   PublishAppRequest,
+  SetAppGrantsRequest,
   UpdateAppRequest,
 } from '@open-design/contracts';
+import { normalizeAppScopes } from '@open-design/contracts';
 import { WorkspaceDataError, workspaceValidationError } from './errors.js';
 import { hashInviteToken, tokenHashesMatch } from './tenancy.js';
 import type { SqlExecutor } from '../storage/sql.js';
@@ -27,7 +38,11 @@ const APP_COLS = `
   id, name, description, project_id AS "projectId", file_path AS "filePath",
   visibility, status, created_by AS "createdBy",
   created_at AS "createdAt", updated_at AS "updatedAt", archived_at AS "archivedAt",
-  last_opened_at AS "lastOpenedAt", open_count AS "openCount"
+  last_opened_at AS "lastOpenedAt", open_count AS "openCount",
+  data_scopes_json AS "dataScopesJson",
+  COALESCE(access_mode, 'org') AS "accessMode",
+  COALESCE(pinned, 0) AS "pinned",
+  pinned_at AS "pinnedAt"
 `;
 
 const SHARE_COLS = `
@@ -36,6 +51,17 @@ const SHARE_COLS = `
 `;
 
 const VISIBILITIES = new Set<AppVisibility>(['private', 'org', 'link']);
+const ACCESS_MODES = new Set<AppAccessMode>(['org', 'restricted']);
+const GRANT_ROLES = new Set<AppGrantRole>(['view', 'edit']);
+
+function parseScopes(raw: unknown): unknown {
+  if (typeof raw !== 'string') return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
 
 /** Postgres returns BIGINT as a string; epoch milliseconds are numbers in the
  * contracts, so normalize at the boundary. */
@@ -47,11 +73,26 @@ function nullableNum(value: unknown): number | null {
   return value === null || value === undefined ? null : num(value);
 }
 
+function asAccessMode(value: unknown): AppAccessMode {
+  return value === 'restricted' ? 'restricted' : 'org';
+}
+
+function asPinned(value: unknown): boolean {
+  return value === true || value === 1 || value === '1';
+}
+
 function normalizeApp(row: Record<string, any>, orgId: string, createdByName: string | null): OrgApp {
+  const { dataScopesJson, pinned, pinnedAt, accessMode, ...rest } = row;
   return {
-    ...(row as OrgApp),
+    ...(rest as OrgApp),
     orgId,
     createdByName,
+    accessMode: asAccessMode(accessMode),
+    pinned: asPinned(pinned),
+    pinnedAt: nullableNum(pinnedAt),
+    // An app published before scopes existed reads and writes nothing, which
+    // is the safe reading of a missing declaration.
+    dataScopes: normalizeAppScopes(parseScopes(dataScopesJson)),
     description: row.description ?? null,
     createdAt: num(row.createdAt),
     updatedAt: num(row.updatedAt),
@@ -71,6 +112,10 @@ function normalizeShare(row: Record<string, any>): AppShareLink {
   };
 }
 
+function isAdminRole(role: OrgRole | null | undefined): boolean {
+  return role === 'owner' || role === 'admin';
+}
+
 /** A project file path, constrained the same way the project file API
  * constrains it: relative, no traversal, no absolute roots. */
 function assertFilePath(filePath: unknown): string {
@@ -85,6 +130,127 @@ function assertFilePath(filePath: unknown): string {
     ]);
   }
   return value;
+}
+
+function normalizeGrantInput(
+  grants: Array<{ memberId: string; role: AppGrantRole }> | undefined,
+): Array<{ memberId: string; role: AppGrantRole }> {
+  if (!grants?.length) return [];
+  const out: Array<{ memberId: string; role: AppGrantRole }> = [];
+  const seen = new Set<string>();
+  for (const grant of grants) {
+    if (typeof grant.memberId !== 'string' || !grant.memberId.trim()) continue;
+    if (!GRANT_ROLES.has(grant.role)) continue;
+    const memberId = grant.memberId.trim();
+    if (seen.has(memberId)) continue;
+    seen.add(memberId);
+    out.push({ memberId, role: grant.role });
+  }
+  return out;
+}
+
+async function replaceGrants(
+  db: SqlExecutor,
+  orgId: string,
+  appId: string,
+  grants: Array<{ memberId: string; role: AppGrantRole }>,
+): Promise<void> {
+  await db.run('DELETE FROM od_app_grants WHERE app_id = ? AND workspace_id = ?', [appId, orgId]);
+  const now = Date.now();
+  for (const grant of grants) {
+    await db.run(
+      `INSERT INTO od_app_grants (app_id, workspace_id, member_id, role, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [appId, orgId, grant.memberId, grant.role, now],
+    );
+  }
+}
+
+export async function listAppGrants(
+  db: SqlExecutor,
+  orgId: string,
+  appId: string,
+  resolveMemberName?: (memberId: string) => string | null,
+): Promise<AppGrant[]> {
+  await getApp(db, orgId, appId);
+  const rows = await db.all<{ memberId: string; role: AppGrantRole }>(
+    `SELECT member_id AS "memberId", role FROM od_app_grants
+      WHERE app_id = ? AND workspace_id = ? ORDER BY member_id`,
+    [appId, orgId],
+  );
+  return rows.map((row) => ({
+    memberId: row.memberId,
+    role: row.role === 'edit' ? 'edit' : 'view',
+    memberName: resolveMemberName?.(row.memberId) ?? null,
+  }));
+}
+
+export async function setAppGrants(
+  db: SqlExecutor,
+  orgId: string,
+  appId: string,
+  input: SetAppGrantsRequest,
+  resolveMemberName?: (memberId: string) => string | null,
+): Promise<AppGrant[]> {
+  await getApp(db, orgId, appId);
+  const grants = normalizeGrantInput(input.grants);
+  await replaceGrants(db, orgId, appId, grants);
+  return listAppGrants(db, orgId, appId, resolveMemberName);
+}
+
+async function grantRoleFor(
+  db: SqlExecutor,
+  orgId: string,
+  appId: string,
+  memberId: string,
+): Promise<AppGrantRole | null> {
+  const row = await db.get<{ role: string }>(
+    `SELECT role FROM od_app_grants WHERE app_id = ? AND workspace_id = ? AND member_id = ?`,
+    [appId, orgId, memberId],
+  );
+  if (!row) return null;
+  return row.role === 'edit' ? 'edit' : 'view';
+}
+
+export interface AppViewerContext {
+  memberId: string;
+  role: OrgRole;
+}
+
+export function canViewApp(app: OrgApp, viewer: AppViewerContext, grant: AppGrantRole | null): boolean {
+  if (app.createdBy === viewer.memberId || isAdminRole(viewer.role)) return true;
+  if (app.visibility === 'private') return false;
+  if (app.accessMode === 'restricted') return grant !== null;
+  return true;
+}
+
+export function canEditApp(app: OrgApp, viewer: AppViewerContext, grant: AppGrantRole | null): boolean {
+  if (app.createdBy === viewer.memberId || isAdminRole(viewer.role)) return true;
+  return grant === 'edit';
+}
+
+export async function assertCanViewApp(
+  db: SqlExecutor,
+  orgId: string,
+  app: OrgApp,
+  viewer: AppViewerContext,
+): Promise<void> {
+  const grant = await grantRoleFor(db, orgId, app.id, viewer.memberId);
+  if (!canViewApp(app, viewer, grant)) {
+    throw new WorkspaceDataError('APP_FORBIDDEN', 403, 'you do not have access to this app');
+  }
+}
+
+export async function assertCanEditApp(
+  db: SqlExecutor,
+  orgId: string,
+  app: OrgApp,
+  viewer: AppViewerContext,
+): Promise<void> {
+  const grant = await grantRoleFor(db, orgId, app.id, viewer.memberId);
+  if (!canEditApp(app, viewer, grant)) {
+    throw new WorkspaceDataError('APP_FORBIDDEN', 403, 'you cannot edit this app');
+  }
 }
 
 export async function publishApp(
@@ -108,13 +274,28 @@ export async function publishApp(
       { path: 'visibility', message: 'visibility must be private, org, or link' },
     ]);
   }
+  const accessMode = input.accessMode ?? 'org';
+  if (!ACCESS_MODES.has(accessMode)) {
+    throw workspaceValidationError([
+      { path: 'accessMode', message: 'accessMode must be org or restricted' },
+    ]);
+  }
+  const grants = normalizeGrantInput(input.grants);
+  if (accessMode === 'restricted' && grants.length === 0) {
+    // Creator always retains access; empty grants means only creator + admins.
+  }
+  // Malformed entries are dropped rather than failing the publish; dropping
+  // is the safe direction, since the result is less access, never more.
+  const dataScopes = normalizeAppScopes(input.dataScopes);
   const now = Date.now();
+  const pinned = Boolean(input.pinned);
   const id = `app-${randomUUID()}`;
   await db.run(
     `INSERT INTO od_apps
        (id, workspace_id, name, description, project_id, file_path, visibility, status,
-        created_by, created_at, updated_at, open_count)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0)`,
+        created_by, created_at, updated_at, open_count, data_scopes_json,
+        access_mode, pinned, pinned_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, ?, ?, ?, ?)`,
     [
       id,
       orgId,
@@ -126,8 +307,13 @@ export async function publishApp(
       memberId,
       now,
       now,
+      JSON.stringify(dataScopes),
+      accessMode,
+      pinned ? 1 : 0,
+      pinned ? now : null,
     ],
   );
+  if (grants.length) await replaceGrants(db, orgId, id, grants);
   return getApp(db, orgId, id, memberName);
 }
 
@@ -149,8 +335,11 @@ export async function getApp(
 
 export interface ListAppsOptions {
   includeArchived?: boolean;
-  /** Member id of the viewer. Private apps are only listed for their creator. */
+  /** Member id of the viewer. Private / restricted apps are filtered here. */
   viewerMemberId?: string | null;
+  viewerRole?: OrgRole | null;
+  /** Only apps pinned to the sidebar. */
+  pinnedOnly?: boolean;
   /** Resolves member ids to display names for the gallery byline. */
   resolveMemberName?: (memberId: string) => string | null;
 }
@@ -160,14 +349,44 @@ export async function listApps(
   orgId: string,
   options: ListAppsOptions = {},
 ): Promise<OrgApp[]> {
-  const where = options.includeArchived ? '' : " AND status = 'active'";
+  const where = [
+    options.includeArchived ? '' : " AND status = 'active'",
+    options.pinnedOnly ? ' AND pinned = 1' : '',
+  ].join('');
   const rows = await db.all<Record<string, any>>(
     `SELECT ${APP_COLS} FROM od_apps WHERE workspace_id = ?${where} ORDER BY updated_at DESC`,
     [orgId],
   );
-  return rows
-    .filter((row) => row.visibility !== 'private' || row.createdBy === options.viewerMemberId)
-    .map((row) => normalizeApp(row, orgId, options.resolveMemberName?.(row.createdBy) ?? null));
+  const viewerId = options.viewerMemberId ?? null;
+  const viewerRole = options.viewerRole ?? null;
+  const grantRows =
+    viewerId == null
+      ? []
+      : await db.all<{ appId: string; role: string }>(
+          `SELECT app_id AS "appId", role FROM od_app_grants
+            WHERE workspace_id = ? AND member_id = ?`,
+          [orgId, viewerId],
+        );
+  const grants = new Map<string, AppGrantRole>(
+    grantRows.map((row) => [row.appId, row.role === 'edit' ? 'edit' : 'view']),
+  );
+
+  const out: OrgApp[] = [];
+  for (const row of rows) {
+    const app = normalizeApp(row, orgId, options.resolveMemberName?.(row.createdBy) ?? null);
+    if (viewerId) {
+      const viewer: AppViewerContext = {
+        memberId: viewerId,
+        role: viewerRole ?? 'member',
+      };
+      if (!canViewApp(app, viewer, grants.get(app.id) ?? null)) continue;
+    }
+    out.push(app);
+  }
+  if (options.pinnedOnly) {
+    out.sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
+  }
+  return out.slice(0, options.pinnedOnly ? 8 : out.length);
 }
 
 export async function updateApp(
@@ -184,6 +403,8 @@ export async function updateApp(
     filePath: patch.filePath === undefined ? existing.filePath : assertFilePath(patch.filePath),
     visibility: patch.visibility ?? existing.visibility,
     status: patch.status ?? existing.status,
+    accessMode: patch.accessMode ?? existing.accessMode,
+    pinned: patch.pinned === undefined ? existing.pinned : Boolean(patch.pinned),
   };
   if (!next.name) {
     throw workspaceValidationError([{ path: 'name', message: 'name cannot be empty' }]);
@@ -193,11 +414,20 @@ export async function updateApp(
       { path: 'visibility', message: 'visibility must be private, org, or link' },
     ]);
   }
+  if (!ACCESS_MODES.has(next.accessMode)) {
+    throw workspaceValidationError([
+      { path: 'accessMode', message: 'accessMode must be org or restricted' },
+    ]);
+  }
   const now = Date.now();
+  let pinnedAt = existing.pinnedAt;
+  if (patch.pinned !== undefined) {
+    pinnedAt = next.pinned ? (existing.pinned ? existing.pinnedAt : now) : null;
+  }
   await db.run(
     `UPDATE od_apps
         SET name = ?, description = ?, file_path = ?, visibility = ?, status = ?,
-            archived_at = ?, updated_at = ?
+            archived_at = ?, updated_at = ?, access_mode = ?, pinned = ?, pinned_at = ?
       WHERE id = ? AND workspace_id = ?`,
     [
       next.name,
@@ -207,6 +437,9 @@ export async function updateApp(
       next.status,
       next.status === 'archived' ? (existing.archivedAt ?? now) : null,
       now,
+      next.accessMode,
+      next.pinned ? 1 : 0,
+      pinnedAt,
       appId,
       orgId,
     ],

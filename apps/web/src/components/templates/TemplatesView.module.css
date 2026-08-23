@@ -1,0 +1,94 @@
+.grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+  background: var(--surface-1, transparent);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.cardBody {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+}
+
+.tableList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 0.78rem;
+}
+
+/* Present vs missing is carried by weight and opacity as well as color, so it
+ * survives a color-vision difference and a grayscale print. */
+.tablePresent {
+  font-weight: 600;
+}
+
+.tableMissing {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.recordCount {
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.requires {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+}
+
+.cardActions {
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.adminOnly {
+  font-size: 0.78rem;
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+}
+
+.footnote {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+}
+
+.error {
+  margin: 0 0 12px;
+  color: var(--danger, #c0392b);
+}
+
+.notice {
+  margin: 0 0 12px;
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+}

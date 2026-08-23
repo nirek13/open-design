@@ -4,6 +4,11 @@ This deployment ships Open Design as a single Alpine-based runtime image. The
 daemon serves both the API and the built Next.js static export, so there is no
 separate nginx container.
 
+Cloud / platform guides:
+
+- **AWS (ECS/Fargate + ALB):** [`aws/README.md`](./aws/README.md) — stack deploy, local→ECR redeploy, HTTPS when you have a domain
+- **Azure:** [`azure/README.md`](./azure/README.md)
+
 ## Local compose
 
 Before starting:

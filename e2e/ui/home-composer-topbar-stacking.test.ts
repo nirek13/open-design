@@ -7,10 +7,10 @@ import { T } from '@/timeouts';
 // slides under the sticky topbar strip, then open the composer's agent/model
 // switcher. Opening any composer popover elevated the whole input card to
 // z-index 1700 — far above the topbar's z-index 10 — so the card body painted
-// over the topbar chips (GitHub star, Teams, Discord, settings). The sticky
-// topbar is opaque chrome: content scrolling underneath must stay behind it
-// in every composer state, while the composer's popovers still need to paint
-// above the static home content below the card.
+// over the sticky chrome. The sticky topbar is opaque chrome: content
+// scrolling underneath must stay behind it in every composer state, while the
+// composer's popovers still need to paint above the static home content below
+// the card.
 
 test.describe.configure({ timeout: T.xlong });
 
@@ -92,7 +92,7 @@ test('[P1] sticky topbar chips stay above the composer card while its switcher p
   await page.setViewportSize({ width: 1120, height: 640 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByText('Loading Open Design…').waitFor({ state: 'hidden', timeout: 15_000 });
-  await expect(page.getByTestId('entry-star-badge')).toBeVisible();
+  await expect(page.locator('.entry-main__topbar')).toBeVisible();
   await expect(page.getByTestId('home-hero-input')).toBeVisible();
 
   // Reveal the community templates section (first-run gesture) so the scroll
@@ -111,10 +111,10 @@ test('[P1] sticky topbar chips stay above the composer card while its switcher p
   await expect(popover).toBeVisible();
 
   const probe = await page.evaluate(() => {
-    const badge = document.querySelector('[data-testid="entry-star-badge"]');
+    const topbar = document.querySelector('.entry-main__topbar');
     const card = document.querySelector('.home-hero__input-card');
-    if (!badge || !card) return { overlap: false, hits: [] as never[] };
-    const b = badge.getBoundingClientRect();
+    if (!topbar || !card) return { overlap: false, hits: [] as never[] };
+    const b = topbar.getBoundingClientRect();
     const c = card.getBoundingClientRect();
     const left = Math.max(b.left, c.left);
     const right = Math.min(b.right, c.right);
@@ -143,7 +143,7 @@ test('[P1] sticky topbar chips stay above the composer card while its switcher p
 
   expect(
     probe.overlap,
-    'test setup: the composer card should overlap the GitHub star chip after scrolling',
+    'test setup: the composer card should overlap the sticky topbar after scrolling',
   ).toBe(true);
   const covered = probe.hits.filter((h) => !h.inTopbar);
   expect(

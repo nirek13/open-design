@@ -1,7 +1,17 @@
 // @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
+import { findCssImportUrls, findStylesheetRefs } from "./css-links.js";
 import { harvestFonts, type FontFile } from "./fonts.js";
+import { extractThemeColors } from "./html-scan.js";
+import {
+  discoverLogoRefs,
+  extractInlineLogoSvgs,
+  findManifestHref,
+  parseManifestIcons,
+  toHarvestLogoKind,
+  wellKnownLogoRefs,
+} from "./logo-refs.js";
 import { fetchExternalBrandAsset } from "./safe-fetch.js";
 
 /**
@@ -22,8 +32,8 @@ const UA =
 
 const HTML_CAP = 6_000_000; // Large SSR payloads can put megabytes of JSON before <body>.
 const CSS_CAP = 400_000; // 400KB per file
-const MAX_CSS_FILES = 6;
-const MAX_LOGOS = 6;
+const MAX_CSS_FILES = 10;
+const MAX_LOGOS = 10;
 const MAX_EXTRA_PAGES = 2;
 const FETCH_TIMEOUT_MS = 8_000;
 
@@ -155,9 +165,12 @@ async function fetchBinary(
         signal: fetchDeadline(signal),
       });
       if (!res.ok) return null;
+      const contentType = res.headers.get("content-type") ?? "";
+      if (isNonImageContentType(contentType)) return null;
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length === 0 || buf.length > 5_000_000) return null;
-      return { buf, contentType: res.headers.get("content-type") ?? "" };
+      if (looksLikeHtml(buf)) return null;
+      return { buf, contentType };
     } catch {
       return null;
     }
@@ -298,7 +311,7 @@ function toHexPair(n: number): string {
 }
 
 /** Normalize a CSS color literal to #rrggbb. Returns null for unsupported
- *  syntaxes (oklch, var() refs, named colors) — those are counted raw. */
+ *  syntaxes (var() refs, named colors) — those are counted raw. */
 export function normalizeColor(raw: string): string | null {
   const v = raw.trim().toLowerCase();
   const hex = /^#([0-9a-f]{3,8})$/.exec(v);
@@ -333,7 +346,80 @@ export function normalizeColor(raw: string): string | null {
     };
     return `#${toHexPair(hue(h + 1 / 3) * 255)}${toHexPair(hue(h) * 255)}${toHexPair(hue(h - 1 / 3) * 255)}`;
   }
+  const oklchHex = oklchToHex(v);
+  if (oklchHex) return oklchHex;
   return null;
+}
+
+/** CSS Color 4 `oklch(L C H)` → sRGB hex. L is 0–1 or 0–100%; relative `from` syntax is skipped. */
+function oklchToHex(v: string): string | null {
+  if (v.includes("from ")) return null;
+  const m =
+    /^oklch\(\s*([0-9.]+%?|none)\s+([0-9.]+%?|none)\s+([0-9.]+(?:deg|rad|turn)?|none)(?:\s*\/\s*[^)]+)?\s*\)$/.exec(
+      v,
+    );
+  if (!m) return null;
+  const parseL = (raw: string): number | null => {
+    if (raw === "none") return null;
+    if (raw.endsWith("%")) return Number(raw.slice(0, -1)) / 100;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return n > 1 ? n / 100 : n;
+  };
+  const parseC = (raw: string): number | null => {
+    if (raw === "none") return 0;
+    if (raw.endsWith("%")) return (Number(raw.slice(0, -1)) / 100) * 0.4;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  const parseH = (raw: string): number | null => {
+    if (raw === "none") return 0;
+    if (raw.endsWith("turn")) return Number(raw.slice(0, -4)) * 360;
+    if (raw.endsWith("rad")) return (Number(raw.slice(0, -3)) * 180) / Math.PI;
+    if (raw.endsWith("deg")) return Number(raw.slice(0, -3));
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  const L = parseL(m[1] ?? "");
+  const C = parseC(m[2] ?? "");
+  const H = parseH(m[3] ?? "");
+  if (L == null || C == null || H == null) return null;
+  const a = C * Math.cos((H * Math.PI) / 180);
+  const b = C * Math.sin((H * Math.PI) / 180);
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+  const l = l_ * l_ * l_;
+  const mm = m_ * m_ * m_;
+  const s = s_ * s_ * s_;
+  const toSrgb = (c: number): number => {
+    const abs = Math.abs(c);
+    const encoded =
+      abs > 0.0031308 ? Math.sign(c) * (1.055 * abs ** (1 / 2.4) - 0.055) : 12.92 * c;
+    return encoded;
+  };
+  const r = toSrgb(+4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s);
+  const g = toSrgb(-1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s);
+  const bl = toSrgb(-0.0041960863 * l - 0.7034186147 * mm + 1.707614701 * s);
+  return `#${toHexPair(r * 255)}${toHexPair(g * 255)}${toHexPair(bl * 255)}`;
+}
+
+function isNonImageContentType(contentType: string): boolean {
+  const ct = contentType.toLowerCase();
+  if (!ct) return false;
+  if (ct.includes("image/") || ct.includes("svg") || ct.includes("icon")) return false;
+  return (
+    ct.includes("text/html") ||
+    ct.includes("text/plain") ||
+    ct.includes("application/json") ||
+    ct.includes("javascript") ||
+    ct.includes("text/css")
+  );
+}
+
+function looksLikeHtml(buf: Buffer): boolean {
+  const head = buf.subarray(0, 64).toString("utf8").trimStart();
+  return /^<!doctype html|<html[\s>]/i.test(head);
 }
 
 function luma(hex: string): number {
@@ -392,7 +478,16 @@ function mergeColorCandidates(...groups: ColorCandidate[][]): ColorCandidate[] {
 function hasHighSignalColorSource(candidate: ColorCandidate): boolean {
   const source = (candidate.sources ?? []).join(' ').toLowerCase();
   if (/logo-svg:/.test(source)) return true;
+  if (/meta:theme-color|meta:msapplication-tilecolor/.test(source)) return true;
   return /css-var:--(?!token-|framer-)[-\w]*(?:brand|primary|accent|coral|mustard|olive|cta|action|highlight|link)/i.test(source);
+}
+
+function extractHtmlThemeColorCandidates(html: string): ColorCandidate[] {
+  const counts = new Map<string, { count: number; sources: Set<string> }>();
+  for (const hit of extractThemeColors(html)) {
+    addColorCandidate(counts, hit.value, `meta:${hit.source}`, 24);
+  }
+  return sortColorCandidates(counts);
 }
 
 function sortColorCandidates(
@@ -591,51 +686,13 @@ async function fetchServiceFavicons(host: string, logosDir: string): Promise<Log
 type LogoRef = { url: string; kind: LogoCandidate["kind"] };
 
 export function findLogoRefs(html: string, baseUrl: string): LogoRef[] {
-  const refs: LogoRef[] = [];
-  const push = (href: string | undefined, kind: LogoCandidate["kind"]) => {
-    if (!href || href.startsWith("data:")) return;
-    try {
-      refs.push({ url: new URL(decodeEntities(href), baseUrl).href, kind });
-    } catch {
-      /* unresolvable */
-    }
-  };
-
-  for (const m of html.matchAll(/<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*>/gi)) {
-    const href = /href=["']([^"']+)["']/i.exec(m[0])?.[1];
-    const isApple = /apple-touch/i.test(m[0]);
-    push(href, isApple ? "apple-touch-icon" : "favicon");
-  }
-  const og = metaContent(html, "og:image") || metaContent(html, "twitter:image");
-  if (og) push(og, "og-image");
-
-  // <img> inside <header>/<nav>, or anywhere with "logo" in src/alt/class.
-  const headerHtml = (/<header[\s\S]{0,8000}?<\/header>/i.exec(html)?.[0] ?? "") +
-    (/<nav[\s\S]{0,8000}?<\/nav>/i.exec(html)?.[0] ?? "");
-  for (const m of (headerHtml + html).matchAll(/<img[^>]+>/gi)) {
-    const tag = m[0];
-    const src = /src=["']([^"']+)["']/i.exec(tag)?.[1];
-    if (!src) continue;
-    const inHeader = headerHtml.includes(tag);
-    const looksLogo = /logo/i.test(tag);
-    if (inHeader || looksLogo) push(src, "header-img");
-  }
-  // Dedupe by URL, preserve order (favicon → og → header imgs).
-  const seen = new Set<string>();
-  return refs.filter((r) => !seen.has(r.url) && (seen.add(r.url), true));
+  return discoverLogoRefs(html, baseUrl).map((r) => ({
+    url: r.url,
+    kind: toHarvestLogoKind(r.kind),
+  }));
 }
 
-/** First inline <svg> inside <header>/<nav> — very often the wordmark. */
-export function extractInlineHeaderSvg(html: string): string | null {
-  const header = /<header[\s\S]{0,12000}?<\/header>/i.exec(html)?.[0] ??
-    /<nav[\s\S]{0,12000}?<\/nav>/i.exec(html)?.[0];
-  if (!header) return null;
-  const svg = /<svg[\s\S]{0,20000}?<\/svg>/i.exec(header)?.[0];
-  if (!svg || svg.length < 80) return null;
-  return svg.includes("xmlns")
-    ? svg
-    : svg.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"');
-}
+export { extractInlineHeaderSvg } from "./logo-refs.js";
 
 function extractNavLinks(html: string, baseUrl: string): Array<{ label: string; url: string }> {
   const out: Array<{ label: string; url: string }> = [];
@@ -843,30 +900,57 @@ async function harvestFromHtml(
       cssChunks.push(`${inlineStyleSelector(m[1], m[2] ?? '')}{${m[3]};}`);
     }
 
+    const sheetRefs = findStylesheetRefs(html, baseUrl);
     const cssLinks: string[] = [];
-    for (const m of html.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]*>|<link[^>]+href=["'][^"']+["'][^>]+rel=["']stylesheet["'][^>]*>/gi)) {
-      const href = /href=["']([^"']+)["']/i.exec(m[0])?.[1];
-      if (!href) continue;
-      try {
-        const abs = new URL(decodeEntities(href), baseUrl).href;
-        if (/fonts\.googleapis\.com/.test(abs)) googleFontsUrls.push(abs);
-        else cssLinks.push(abs);
-      } catch {
-        /* skip */
+    for (const ref of sheetRefs) {
+      if (ref.googleFonts) googleFontsUrls.push(ref.url);
+      else cssLinks.push(ref.url);
+    }
+    for (const chunk of cssChunks) {
+      for (const imp of findCssImportUrls(chunk, baseUrl)) {
+        if (/fonts\.googleapis\.com/i.test(imp)) {
+          if (!googleFontsUrls.includes(imp)) googleFontsUrls.push(imp);
+        } else if (!cssLinks.includes(imp)) {
+          cssLinks.push(imp);
+        }
       }
     }
+    const fetchedUrls = new Set<string>();
     const cssResults = await Promise.all(
-      cssLinks.slice(0, MAX_CSS_FILES).map((u) => fetchText(u, CSS_CAP, { signal })),
+      cssLinks.slice(0, MAX_CSS_FILES).map(async (u) => {
+        fetchedUrls.add(u);
+        const r = await fetchText(u, CSS_CAP, { signal });
+        return r ? { text: r.text, url: u } : null;
+      }),
     );
-    for (const r of cssResults) if (r) cssChunks.push(r.text);
+    const nestedImports: string[] = [];
+    for (const r of cssResults) {
+      if (!r) continue;
+      cssChunks.push(r.text);
+      for (const imp of findCssImportUrls(r.text, r.url)) {
+        if (fetchedUrls.has(imp)) continue;
+        if (/fonts\.googleapis\.com/i.test(imp)) {
+          if (!googleFontsUrls.includes(imp)) googleFontsUrls.push(imp);
+        } else {
+          nestedImports.push(imp);
+        }
+      }
+    }
+    const remainingSlots = MAX_CSS_FILES - fetchedUrls.size;
+    if (remainingSlots > 0 && nestedImports.length > 0) {
+      const more = await Promise.all(
+        nestedImports.slice(0, remainingSlots).map((u) => fetchText(u, CSS_CAP, { signal })),
+      );
+      for (const r of more) if (r) cssChunks.push(r.text);
+    }
     // Google Fonts CSS carries the canonical family names — fetch those too.
     const gfResults = await Promise.all(
-      googleFontsUrls.slice(0, 2).map((u) => fetchText(u, CSS_CAP, { signal })),
+      googleFontsUrls.slice(0, 3).map((u) => fetchText(u, CSS_CAP, { signal })),
     );
     for (const r of gfResults) if (r) cssChunks.push(r.text);
     allCss = cssChunks.join("\n");
 
-    colors = extractColors(allCss);
+    colors = mergeColorCandidates(extractColors(allCss), extractHtmlThemeColorCandidates(html));
     ({ fonts, fontFaceFamilies } = extractFonts(allCss));
   }
   onProgress("styles", `${colors.length} colors, ${fonts.length} fonts`);
@@ -895,31 +979,68 @@ async function harvestFromHtml(
   const logos: LogoCandidate[] = [];
   // A challenge page's markup only references Cloudflare assets — never
   // harvest logo refs from it.
-  const inlineSvg = blocked ? null : extractInlineHeaderSvg(html);
-  if (inlineSvg) {
-    fs.writeFileSync(path.join(logosDir, "header-inline.svg"), inlineSvg);
+  const inlineSvgs = blocked ? [] : extractInlineLogoSvgs(html);
+  for (const [i, svg] of inlineSvgs.entries()) {
+    const file = i === 0 ? "header-inline.svg" : `header-inline-${i}.svg`;
+    fs.writeFileSync(path.join(logosDir, file), svg);
     logos.push({
-      file: "header-inline.svg",
+      file,
       sourceUrl: baseUrl,
       kind: "inline-svg",
-      bytes: Buffer.byteLength(inlineSvg),
+      bytes: Buffer.byteLength(svg),
       contentType: "image/svg+xml",
     });
   }
-  const refs = blocked ? [] : findLogoRefs(html, baseUrl);
+  const refs = blocked ? [] : [...discoverLogoRefs(html, baseUrl)];
+  if (!blocked) {
+    const manifestUrl = findManifestHref(html, baseUrl);
+    if (manifestUrl) {
+      const man = await fetchText(manifestUrl, 80_000, { signal });
+      if (man?.text) {
+        const seen = new Set(refs.map((r) => r.url));
+        for (const iconUrl of parseManifestIcons(man.text, manifestUrl)) {
+          if (seen.has(iconUrl)) continue;
+          seen.add(iconUrl);
+          refs.push({ url: iconUrl, kind: "manifest-icon", rank: 0 });
+        }
+      }
+    }
+    refs.sort((a, b) => a.rank - b.rank);
+  }
   for (const ref of refs) {
     if (logos.length >= MAX_LOGOS) break;
     const bin = await fetchBinary(ref.url, baseUrl, signal);
     if (!bin) continue;
-    const file = `${ref.kind}-${logos.length}${extFor(bin.contentType, ref.url)}`;
+    const kind = toHarvestLogoKind(ref.kind);
+    const file = `${kind}-${logos.length}${extFor(bin.contentType, ref.url)}`;
     fs.writeFileSync(path.join(logosDir, file), bin.buf);
     logos.push({
       file,
       sourceUrl: ref.url,
-      kind: ref.kind,
+      kind,
       bytes: bin.buf.length,
       contentType: bin.contentType,
     });
+  }
+  if (!blocked && logos.length === 0) {
+    const seen = new Set(refs.map((r) => r.url));
+    for (const extra of wellKnownLogoRefs(baseUrl)) {
+      if (logos.length >= MAX_LOGOS) break;
+      if (seen.has(extra.url)) continue;
+      seen.add(extra.url);
+      const bin = await fetchBinary(extra.url, baseUrl, signal);
+      if (!bin) continue;
+      const kind = toHarvestLogoKind(extra.kind);
+      const file = `${kind}-${logos.length}${extFor(bin.contentType, extra.url)}`;
+      fs.writeFileSync(path.join(logosDir, file), bin.buf);
+      logos.push({
+        file,
+        sourceUrl: extra.url,
+        kind,
+        bytes: bin.buf.length,
+        contentType: bin.contentType,
+      });
+    }
   }
   // Origin yielded nothing (challenge page, hotlink-protected CDN, no marks
   // in the markup) → public favicon services, keyed by hostname only.

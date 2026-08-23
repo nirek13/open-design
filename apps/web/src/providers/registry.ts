@@ -2857,6 +2857,8 @@ export async function fetchLibraryConnection(): Promise<LibraryConnectionStatus 
 // --- Organizations, apps, and the organization database --------------------
 
 import type {
+  AppGrant,
+  AppGrantRole,
   AppShareLink,
   AppShareLinkCreatedResponse,
   AuthContextResponse,
@@ -2865,9 +2867,12 @@ import type {
   CreateWorkspaceRecordRequest,
   CreateWorkspaceTableRequest,
   OrgApp,
+  OrgAppWithOrgName,
   OrgInvite,
   OrgInviteCreatedResponse,
   OrgInvitePreview,
+  OrgPendingInvite,
+  OrgPendingInvitesResponse,
   OrgMember,
   OrgRole,
   OrganizationMembershipView,
@@ -2997,12 +3002,37 @@ export async function acceptInvite(token: string): Promise<{ organization: { id:
   return workspaceDataJson(`/api/invites/${encodeURIComponent(token)}/accept`, { method: 'POST' });
 }
 
+export async function fetchPendingInvites(): Promise<OrgPendingInvite[]> {
+  const json = await workspaceDataJson<OrgPendingInvitesResponse>('/api/me/invites');
+  return json.invites;
+}
+
+export async function acceptPendingInvite(inviteId: string): Promise<{ organization: { id: string; name: string } }> {
+  return workspaceDataJson(`/api/me/invites/${encodeURIComponent(inviteId)}/accept`, { method: 'POST' });
+}
+
 // --- Apps -----------------------------------------------------------------
 
-export async function fetchOrgApps(orgId: string): Promise<OrgApp[]> {
+export async function fetchOrgApps(
+  orgId: string,
+  options: { pinnedOnly?: boolean } = {},
+): Promise<OrgApp[]> {
+  const suffix = options.pinnedOnly ? '?pinned=1' : '';
   const json = await workspaceDataJson<{ apps: OrgApp[] }>(
-    `/api/orgs/${encodeURIComponent(orgId)}/apps`,
+    `/api/orgs/${encodeURIComponent(orgId)}/apps${suffix}`,
   );
+  return json.apps;
+}
+
+/** Apps across every organization the signed-in person belongs to.
+ *
+ * The daemon bounds this by membership, so this is a wider view of your own
+ * work rather than a wider grant. */
+export async function fetchAllOrgApps(
+  options: { pinnedOnly?: boolean } = {},
+): Promise<OrgAppWithOrgName[]> {
+  const suffix = options.pinnedOnly ? '?pinned=1' : '';
+  const json = await workspaceDataJson<{ apps: OrgAppWithOrgName[] }>(`/api/apps${suffix}`);
   return json.apps;
 }
 
@@ -3024,6 +3054,25 @@ export async function updateOrgApp(
     { method: 'PATCH', ...jsonBody(request) },
   );
   return json.app;
+}
+
+export async function fetchAppGrants(orgId: string, appId: string): Promise<AppGrant[]> {
+  const json = await workspaceDataJson<{ grants: AppGrant[] }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/grants`,
+  );
+  return json.grants;
+}
+
+export async function setAppGrants(
+  orgId: string,
+  appId: string,
+  grants: Array<{ memberId: string; role: AppGrantRole }>,
+): Promise<AppGrant[]> {
+  const json = await workspaceDataJson<{ grants: AppGrant[] }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/grants`,
+    { method: 'PUT', ...jsonBody({ grants }) },
+  );
+  return json.grants;
 }
 
 export async function recordOrgAppOpen(orgId: string, appId: string): Promise<void> {
@@ -3174,3 +3223,800 @@ export async function fetchWorkspaceAuditEvents(
   const suffix = query.size > 0 ? `?${query.toString()}` : '';
   return workspaceDataJson(`/api/data/orgs/${encodeURIComponent(orgId)}/audit${suffix}`);
 }
+
+// --- The business layer (/api/orgs/:orgId/{hub,ledger,proposals,...}) ------
+
+import type {
+  ChatChannel,
+  CreateWorkspaceViewRequest,
+  DealStage,
+  ErpProjectsSummary,
+  ErpTemplateId,
+  HubStatus,
+  ImportPlan,
+  JournalEntry,
+  LedgerAccount,
+  LedgerPeriod,
+  OrgApp as _OrgAppUnused,
+  InterpretIntentResponse,
+  PayablesSummary,
+  ReceivablesSummary,
+  PipelineSummary,
+  Proposal,
+  ProposalOperation,
+  RecordDetail,
+  RecordVersionEntry,
+  StockSummary,
+  SavedQuestionAnswer,
+  TeamChatAttachment,
+  TeamChatMessage,
+  TemplateInstallResult,
+  TemplateStatus,
+  TrialBalance,
+  UpdateWorkspaceViewRequest,
+  ViewResultResponse,
+  WorkspaceView,
+  CreatePageRequest,
+  DuplicatePageRequest,
+  EmbedPageBlockRequest,
+  PageTreeNode,
+  ScaffoldPagesRequest,
+  SearchPagesHit,
+  SetPageBlocksRequest,
+  UpdatePageRequest,
+  WorkspacePageDetail,
+} from '@open-design/contracts';
+
+export interface SearchHit {
+  tableId: string;
+  tableName: string;
+  tableDisplayName: string;
+  recordId: string;
+  label: string;
+  secondary: string | null;
+  matchedField: string;
+  updatedAt: number;
+}
+
+export interface SearchResultGroup {
+  tableId: string;
+  tableName: string;
+  tableDisplayName: string;
+  hits: SearchHit[];
+  total: number;
+}
+
+const orgPath = (orgId: string, suffix: string) => `/api/orgs/${encodeURIComponent(orgId)}${suffix}`;
+
+export async function searchWorkspace(orgId: string, query: string): Promise<SearchResultGroup[]> {
+  const json = await workspaceDataJson<{ groups: SearchResultGroup[] }>(
+    orgPath(orgId, `/search?q=${encodeURIComponent(query)}`),
+  );
+  return json.groups;
+}
+
+export async function fetchRecentRecords(orgId: string, limit = 12): Promise<SearchHit[]> {
+  const json = await workspaceDataJson<{ records: SearchHit[] }>(
+    orgPath(orgId, `/recent?limit=${limit}`),
+  );
+  return json.records;
+}
+
+export async function fetchHubStatus(orgId: string): Promise<HubStatus> {
+  const json = await workspaceDataJson<{ status: HubStatus }>(orgPath(orgId, '/hub/status'));
+  return json.status;
+}
+
+export async function setUpHub(orgId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, '/hub/setup'), { method: 'POST' });
+}
+
+export async function fetchNextDocumentNumber(orgId: string, table: string): Promise<string> {
+  const json = await workspaceDataJson<{ number: string }>(
+    orgPath(orgId, `/hub/next-number/${encodeURIComponent(table)}`),
+  );
+  return json.number;
+}
+
+export async function postDocumentToLedger(
+  orgId: string,
+  table: string,
+  recordId: string,
+): Promise<{ entry: JournalEntry | null; skipped: string | null }> {
+  return workspaceDataJson(
+    orgPath(orgId, `/hub/post/${encodeURIComponent(table)}/${encodeURIComponent(recordId)}`),
+    { method: 'POST' },
+  );
+}
+
+// --- Template packs -------------------------------------------------------
+
+export async function fetchErpTemplates(orgId: string): Promise<TemplateStatus[]> {
+  const json = await workspaceDataJson<{ templates: TemplateStatus[] }>(
+    orgPath(orgId, '/templates'),
+  );
+  return json.templates;
+}
+
+/** Install a pack and anything it requires. Never overwrites an existing
+ * table, so the caller can offer this without a scary confirmation. */
+export async function installErpTemplate(
+  orgId: string,
+  templateId: ErpTemplateId,
+): Promise<TemplateInstallResult[]> {
+  const json = await workspaceDataJson<{ installed: TemplateInstallResult[] }>(
+    orgPath(orgId, `/templates/${encodeURIComponent(templateId)}/install`),
+    { method: 'POST' },
+  );
+  return json.installed;
+}
+
+// --- Saying what you want -------------------------------------------------
+
+/** Read a sentence. Pure — nothing is written by interpreting. */
+export async function interpretIntent(
+  orgId: string,
+  text: string,
+  tableRef?: string,
+): Promise<InterpretIntentResponse> {
+  return workspaceDataJson(orgPath(orgId, '/assist/interpret'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text, ...(tableRef ? { tableRef } : {}) }),
+  });
+}
+
+/** Apply an interpreted change. Routes through the proposal engine either
+ * way, so it stays undoable. */
+export async function applyIntent(
+  orgId: string,
+  text: string,
+  operations: ProposalOperation[],
+  applyNow = true,
+): Promise<{ proposal: Proposal; applied: boolean }> {
+  return workspaceDataJson(orgPath(orgId, '/assist/apply'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text, operations, applyNow }),
+  });
+}
+
+// --- Record pages ---------------------------------------------------------
+
+/** One record with its links, related lists, rollups, and valid actions. */
+export async function fetchRecordDetail(orgId: string, recordId: string): Promise<RecordDetail> {
+  const json = await workspaceDataJson<{ detail: RecordDetail }>(
+    orgPath(orgId, `/records/${encodeURIComponent(recordId)}/detail`),
+  );
+  return json.detail;
+}
+
+/** Draft the next document in a flow. Returns the prepared row rather than
+ * creating it — seeing it and choosing it are separate steps. */
+export async function convertDocument(
+  orgId: string,
+  from: string,
+  to: string,
+  recordId: string,
+): Promise<{ table: string; data: Record<string, unknown> }> {
+  return workspaceDataJson(orgPath(orgId, '/hub/convert'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ from, to, recordId }),
+  });
+}
+
+export async function fetchStock(orgId: string): Promise<StockSummary> {
+  const json = await workspaceDataJson<{ stock: StockSummary }>(orgPath(orgId, '/inventory/stock'));
+  return json.stock;
+}
+
+export async function fetchProjectsSummary(orgId: string): Promise<ErpProjectsSummary> {
+  const json = await workspaceDataJson<{ projects: ErpProjectsSummary }>(
+    orgPath(orgId, '/projects/summary'),
+  );
+  return json.projects;
+}
+
+/** Everything that ever happened to a record, newest first. */
+export async function fetchRecordHistory(
+  orgId: string,
+  recordId: string,
+): Promise<RecordVersionEntry[]> {
+  const json = await workspaceDataJson<{ history: RecordVersionEntry[] }>(
+    orgPath(orgId, `/records/${encodeURIComponent(recordId)}/history`),
+  );
+  return json.history;
+}
+
+/** Put a record back to an earlier version. Adds a version rather than
+ * rewinding, so this is itself undoable. */
+export async function restoreRecordVersion(
+  orgId: string,
+  recordId: string,
+  revision: number,
+): Promise<WorkspaceRecord> {
+  const json = await workspaceDataJson<{ record: WorkspaceRecord }>(
+    orgPath(orgId, `/records/${encodeURIComponent(recordId)}/restore-version`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ revision }),
+    },
+  );
+  return json.record;
+}
+
+// --- Saved views ----------------------------------------------------------
+
+export async function fetchViews(orgId: string, tableRef: string): Promise<WorkspaceView[]> {
+  const json = await workspaceDataJson<{ views: WorkspaceView[] }>(
+    orgPath(orgId, `/tables/${encodeURIComponent(tableRef)}/views`),
+  );
+  return json.views;
+}
+
+export async function createView(
+  orgId: string,
+  tableRef: string,
+  input: CreateWorkspaceViewRequest,
+): Promise<WorkspaceView> {
+  const json = await workspaceDataJson<{ view: WorkspaceView }>(
+    orgPath(orgId, `/tables/${encodeURIComponent(tableRef)}/views`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.view;
+}
+
+export async function updateView(
+  orgId: string,
+  viewId: string,
+  input: UpdateWorkspaceViewRequest,
+): Promise<WorkspaceView> {
+  const json = await workspaceDataJson<{ view: WorkspaceView }>(
+    orgPath(orgId, `/views/${encodeURIComponent(viewId)}`),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.view;
+}
+
+export async function deleteView(orgId: string, viewId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/views/${encodeURIComponent(viewId)}`), {
+    method: 'DELETE',
+  });
+}
+
+/** Run a view: filters, sorts, grouping, and formula fields already applied. */
+export async function fetchViewRecords(
+  orgId: string,
+  viewId: string,
+): Promise<ViewResultResponse> {
+  return workspaceDataJson(orgPath(orgId, `/views/${encodeURIComponent(viewId)}/records`));
+}
+
+// --- CRM ------------------------------------------------------------------
+
+export async function fetchPipeline(orgId: string): Promise<PipelineSummary> {
+  const json = await workspaceDataJson<{ pipeline: PipelineSummary }>(
+    orgPath(orgId, '/crm/pipeline'),
+  );
+  return json.pipeline;
+}
+
+export async function moveDealStage(
+  orgId: string,
+  recordId: string,
+  stage: DealStage,
+): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/crm/deals/${encodeURIComponent(recordId)}/stage`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ stage }),
+  });
+}
+
+/** Draft a quote from a won deal. Returns the prepared row; creating it is a
+ * separate, explicit step. */
+export async function dealToQuote(
+  orgId: string,
+  recordId: string,
+): Promise<{ table: string; data: Record<string, unknown> }> {
+  return workspaceDataJson(orgPath(orgId, `/crm/deals/${encodeURIComponent(recordId)}/to-quote`), {
+    method: 'POST',
+  });
+}
+
+// --- Purchasing -----------------------------------------------------------
+
+export async function fetchPayables(orgId: string): Promise<PayablesSummary> {
+  const json = await workspaceDataJson<{ payables: PayablesSummary }>(
+    orgPath(orgId, '/purchasing/payables'),
+  );
+  return json.payables;
+}
+
+export async function fetchReceivables(orgId: string): Promise<ReceivablesSummary> {
+  const json = await workspaceDataJson<{ receivables: ReceivablesSummary }>(
+    orgPath(orgId, '/sales/receivables'),
+  );
+  return json.receivables;
+}
+
+// --- Team chat ------------------------------------------------------------
+
+export async function fetchChatChannels(
+  orgId: string,
+): Promise<{ channels: ChatChannel[]; totalUnread: number }> {
+  return workspaceDataJson(orgPath(orgId, '/chat/channels'));
+}
+
+export async function setUpChatChannels(orgId: string): Promise<ChatChannel[]> {
+  const json = await workspaceDataJson<{ channels: ChatChannel[] }>(
+    orgPath(orgId, '/chat/setup'),
+    { method: 'POST' },
+  );
+  return json.channels;
+}
+
+export async function createChatChannel(
+  orgId: string,
+  input: { displayName: string; topic?: string; visibility?: 'public' | 'private' },
+): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(orgPath(orgId, '/chat/channels'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return json.channel;
+}
+
+export async function fetchChatMessages(
+  orgId: string,
+  channelRef: string,
+  options: { before?: string; parentMessageId?: string; limit?: number } = {},
+): Promise<{ messages: TeamChatMessage[]; nextBefore: string | null }> {
+  const query = new URLSearchParams();
+  if (options.before) query.set('before', options.before);
+  if (options.parentMessageId) query.set('parentMessageId', options.parentMessageId);
+  if (options.limit) query.set('limit', String(options.limit));
+  const suffix = query.toString() ? `?${query}` : '';
+  return workspaceDataJson(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/messages${suffix}`),
+  );
+}
+
+export async function postChatMessage(
+  orgId: string,
+  channelRef: string,
+  input: { body: string; attachments?: TeamChatAttachment[]; parentMessageId?: string },
+): Promise<TeamChatMessage> {
+  const json = await workspaceDataJson<{ message: TeamChatMessage }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/messages`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.message;
+}
+
+export async function joinChatChannel(orgId: string, channelRef: string): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/join`),
+    { method: 'POST' },
+  );
+  return json.channel;
+}
+
+/** Mark a channel read. Called when the channel is actually on screen —
+ * posting deliberately does not do this. */
+export async function markChatChannelRead(
+  orgId: string,
+  channelRef: string,
+): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/read`),
+    { method: 'POST' },
+  );
+  return json.channel;
+}
+
+// --- Organization pages ---------------------------------------------------
+
+export async function fetchPageTree(orgId: string): Promise<PageTreeNode[]> {
+  const json = await workspaceDataJson<{ tree: PageTreeNode[] }>(
+    `${orgPath(orgId, '/pages')}?tree=1`,
+  );
+  return json.tree;
+}
+
+export async function fetchWorkspacePage(orgId: string, pageId: string): Promise<WorkspacePageDetail> {
+  const json = await workspaceDataJson<{ page: WorkspacePageDetail }>(
+    orgPath(orgId, `/pages/${encodeURIComponent(pageId)}`),
+  );
+  return json.page;
+}
+
+export async function createWorkspacePage(
+  orgId: string,
+  input: CreatePageRequest,
+): Promise<WorkspacePageDetail> {
+  const json = await workspaceDataJson<{ page: WorkspacePageDetail }>(orgPath(orgId, '/pages'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return json.page;
+}
+
+export async function updateWorkspacePage(
+  orgId: string,
+  pageId: string,
+  input: UpdatePageRequest,
+): Promise<WorkspacePageDetail> {
+  const json = await workspaceDataJson<{ page: WorkspacePageDetail }>(
+    orgPath(orgId, `/pages/${encodeURIComponent(pageId)}`),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.page;
+}
+
+export async function setWorkspacePageBlocks(
+  orgId: string,
+  pageId: string,
+  input: SetPageBlocksRequest,
+): Promise<WorkspacePageDetail> {
+  const json = await workspaceDataJson<{ page: WorkspacePageDetail }>(
+    orgPath(orgId, `/pages/${encodeURIComponent(pageId)}/blocks`),
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.page;
+}
+
+export async function archiveWorkspacePage(
+  orgId: string,
+  pageId: string,
+): Promise<WorkspacePageDetail> {
+  const json = await workspaceDataJson<{ page: WorkspacePageDetail }>(
+    orgPath(orgId, `/pages/${encodeURIComponent(pageId)}/archive`),
+    { method: 'POST' },
+  );
+  return json.page;
+}
+
+export async function searchWorkspacePages(
+  orgId: string,
+  query: string,
+  limit = 25,
+): Promise<SearchPagesHit[]> {
+  const qs = new URLSearchParams({ q: query, limit: String(limit) });
+  const json = await workspaceDataJson<{ hits: SearchPagesHit[] }>(
+    `${orgPath(orgId, '/pages/search')}?${qs.toString()}`,
+  );
+  return json.hits;
+}
+
+export async function appendWorkspacePageBlocks(
+  orgId: string,
+  pageId: string,
+  input: SetPageBlocksRequest,
+): Promise<WorkspacePageDetail> {
+  const json = await workspaceDataJson<{ page: WorkspacePageDetail }>(
+    orgPath(orgId, `/pages/${encodeURIComponent(pageId)}/blocks/append`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.page;
+}
+
+export async function embedInWorkspacePage(
+  orgId: string,
+  pageId: string,
+  input: EmbedPageBlockRequest,
+): Promise<WorkspacePageDetail> {
+  const json = await workspaceDataJson<{ page: WorkspacePageDetail }>(
+    orgPath(orgId, `/pages/${encodeURIComponent(pageId)}/embed`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.page;
+}
+
+export async function duplicateWorkspacePage(
+  orgId: string,
+  pageId: string,
+  input: DuplicatePageRequest = {},
+): Promise<WorkspacePageDetail> {
+  const json = await workspaceDataJson<{ page: WorkspacePageDetail }>(
+    orgPath(orgId, `/pages/${encodeURIComponent(pageId)}/duplicate`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.page;
+}
+
+export async function scaffoldWorkspacePages(
+  orgId: string,
+  input: ScaffoldPagesRequest,
+): Promise<{ pages: WorkspacePageDetail[]; tree: PageTreeNode[] }> {
+  return workspaceDataJson<{ pages: WorkspacePageDetail[]; tree: PageTreeNode[] }>(
+    orgPath(orgId, '/pages/scaffold'),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+/** Open or create the notes page linked to an ERP record. */
+export async function ensurePageForRecord(
+  orgId: string,
+  input: { recordId: string; tableId: string; title: string; tableName?: string },
+): Promise<WorkspacePageDetail> {
+  const json = await workspaceDataJson<{ page: WorkspacePageDetail }>(
+    orgPath(orgId, '/pages/for-record'),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.page;
+}
+
+export async function fetchLedgerAccounts(orgId: string): Promise<LedgerAccount[]> {
+  const json = await workspaceDataJson<{ accounts: LedgerAccount[] }>(
+    orgPath(orgId, '/ledger/accounts'),
+  );
+  return json.accounts;
+}
+
+export async function fetchJournalEntries(orgId: string): Promise<JournalEntry[]> {
+  const json = await workspaceDataJson<{ entries: JournalEntry[] }>(orgPath(orgId, '/ledger/entries'));
+  return json.entries;
+}
+
+export async function fetchTrialBalance(orgId: string): Promise<TrialBalance> {
+  const json = await workspaceDataJson<{ trialBalance: TrialBalance }>(
+    orgPath(orgId, '/ledger/trial-balance'),
+  );
+  return json.trialBalance;
+}
+
+export async function fetchLedgerPeriods(orgId: string): Promise<LedgerPeriod[]> {
+  const json = await workspaceDataJson<{ periods: LedgerPeriod[] }>(orgPath(orgId, '/ledger/periods'));
+  return json.periods;
+}
+
+/** Closing a period freezes it: nothing may post into it afterwards. */
+export async function closeLedgerPeriod(
+  orgId: string,
+  startDate: string,
+  endDate: string,
+): Promise<LedgerPeriod> {
+  const json = await workspaceDataJson<{ period: LedgerPeriod }>(
+    orgPath(orgId, '/ledger/periods/close'),
+    { method: 'POST', body: JSON.stringify({ startDate, endDate }) },
+  );
+  return json.period;
+}
+
+/** A posted entry is never edited — correcting it means posting its mirror. */
+export async function reverseJournalEntry(
+  orgId: string,
+  entryId: string,
+  memo?: string,
+): Promise<JournalEntry> {
+  const json = await workspaceDataJson<{ entry: JournalEntry }>(
+    orgPath(orgId, `/ledger/entries/${encodeURIComponent(entryId)}/reverse`),
+    { method: 'POST', body: JSON.stringify(memo ? { memo } : {}) },
+  );
+  return json.entry;
+}
+
+export async function fetchProposals(orgId: string, status?: string): Promise<Proposal[]> {
+  const suffix = status ? `/proposals?status=${encodeURIComponent(status)}` : '/proposals';
+  const json = await workspaceDataJson<{ proposals: Proposal[] }>(orgPath(orgId, suffix));
+  return json.proposals;
+}
+
+export async function decideProposal(
+  orgId: string,
+  proposalId: string,
+  decision: 'approve' | 'reject' | 'undo',
+): Promise<Proposal> {
+  const json = await workspaceDataJson<{ proposal: Proposal }>(
+    orgPath(orgId, `/proposals/${encodeURIComponent(proposalId)}/${decision}`),
+    { method: 'POST' },
+  );
+  return json.proposal;
+}
+
+export async function fetchHomeWidgets(orgId: string): Promise<SavedQuestionAnswer[]> {
+  const json = await workspaceDataJson<{ widgets: SavedQuestionAnswer[] }>(
+    orgPath(orgId, '/home-widgets'),
+  );
+  return json.widgets;
+}
+
+export async function planImport(
+  orgId: string,
+  content: string,
+  fileName: string,
+): Promise<ImportPlan> {
+  const json = await workspaceDataJson<{ plan: ImportPlan }>(orgPath(orgId, '/import/plan'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ content, fileName }),
+  });
+  return json.plan;
+}
+
+export async function planImportFromUrl(
+  orgId: string,
+  url: string,
+  tableName?: string,
+): Promise<import('@open-design/contracts').ImportFromUrlResponse> {
+  return workspaceDataJson(orgPath(orgId, '/import/from-url'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url, ...(tableName ? { tableName } : {}), commit: false }),
+  });
+}
+
+export async function commitImportPlan(
+  orgId: string,
+  plan: ImportPlan,
+  content: string,
+): Promise<{ tableId: string; imported: number; skipped: number }> {
+  return workspaceDataJson(orgPath(orgId, '/import/commit'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ plan, content }),
+  });
+}
+
+
+// --- Calendar --------------------------------------------------------------
+
+export async function fetchOrgCalendarEvents(
+  orgId: string,
+  range?: { from?: string; to?: string },
+): Promise<{ events: import('@open-design/contracts').CalendarEvent[]; googleConnected: boolean; lastSyncedAt: number | null }> {
+  const params = new URLSearchParams();
+  if (range?.from) params.set('from', range.from);
+  if (range?.to) params.set('to', range.to);
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return workspaceDataJson(orgPath(orgId, `/calendar/events${suffix}`));
+}
+
+export async function createOrgCalendarEvent(
+  orgId: string,
+  body: import('@open-design/contracts').UpsertCalendarEventRequest,
+): Promise<import('@open-design/contracts').CalendarEvent> {
+  const json = await workspaceDataJson<{ event: import('@open-design/contracts').CalendarEvent }>(
+    orgPath(orgId, '/calendar/events'),
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+  );
+  return json.event;
+}
+
+export async function updateOrgCalendarEvent(
+  orgId: string,
+  eventId: string,
+  body: import('@open-design/contracts').UpsertCalendarEventRequest,
+): Promise<import('@open-design/contracts').CalendarEvent> {
+  const json = await workspaceDataJson<{ event: import('@open-design/contracts').CalendarEvent }>(
+    orgPath(orgId, `/calendar/events/${encodeURIComponent(eventId)}`),
+    { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+  );
+  return json.event;
+}
+
+export async function deleteOrgCalendarEvent(orgId: string, eventId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/calendar/events/${encodeURIComponent(eventId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function syncOrgGoogleCalendar(
+  orgId: string,
+): Promise<{ imported: number; events: import('@open-design/contracts').CalendarEvent[]; lastSyncedAt: number }> {
+  return workspaceDataJson(orgPath(orgId, '/calendar/google/sync'), { method: 'POST' });
+}
+
+
+// --- Mail (live Gmail) -----------------------------------------------------
+
+export async function fetchOrgMailStatus(orgId: string): Promise<import('@open-design/contracts').MailStatusResponse> {
+  return workspaceDataJson(orgPath(orgId, '/mail/status'));
+}
+
+export async function fetchOrgMailMessages(
+  orgId: string,
+  options?: { label?: string; query?: string; pageToken?: string; maxResults?: number },
+): Promise<import('@open-design/contracts').MailListResponse> {
+  const params = new URLSearchParams();
+  if (options?.label) params.set('label', options.label);
+  if (options?.query) params.set('q', options.query);
+  if (options?.pageToken) params.set('pageToken', options.pageToken);
+  if (options?.maxResults) params.set('maxResults', String(options.maxResults));
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return workspaceDataJson(orgPath(orgId, `/mail/messages${suffix}`));
+}
+
+export async function fetchOrgMailThread(
+  orgId: string,
+  threadId: string,
+): Promise<import('@open-design/contracts').MailThreadResponse> {
+  return workspaceDataJson(orgPath(orgId, `/mail/threads/${encodeURIComponent(threadId)}`));
+}
+
+export async function sendOrgMail(
+  orgId: string,
+  body: import('@open-design/contracts').SendMailRequest,
+): Promise<import('@open-design/contracts').SendMailResponse> {
+  return workspaceDataJson(orgPath(orgId, '/mail/send'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function replyOrgMail(
+  orgId: string,
+  threadId: string,
+  body: import('@open-design/contracts').ReplyMailRequest,
+): Promise<import('@open-design/contracts').SendMailResponse> {
+  return workspaceDataJson(orgPath(orgId, `/mail/threads/${encodeURIComponent(threadId)}/reply`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function modifyOrgMail(
+  orgId: string,
+  messageId: string,
+  body: import('@open-design/contracts').ModifyMailRequest,
+): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/mail/messages/${encodeURIComponent(messageId)}/modify`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function trashOrgMail(orgId: string, messageId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/mail/messages/${encodeURIComponent(messageId)}/trash`), {
+    method: 'POST',
+  });
+}
+

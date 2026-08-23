@@ -18,6 +18,7 @@ import type { RegisterRunRoutesDeps } from './routes/runs.js';
 import type { RegisterSocialShareRoutesDeps } from './routes/social-share.js';
 import type { RegisterStaticResourceRoutesDeps } from './routes/static-resource.js';
 import type { RegisterVelaRoutesDeps } from './routes/vela.js';
+import type { RegisterErpRoutesDeps } from './routes/erp.js';
 import type { RegisterOrganizationRoutesDeps } from './routes/organizations.js';
 import type { RegisterWorkspaceDataRoutesDeps } from './routes/workspace-data.js';
 import type { RegisterXaiRoutesDeps } from './routes/xai.js';
@@ -48,6 +49,7 @@ type AllRegisteredRouteDeps =
   & RegisterSocialShareRoutesDeps
   & RegisterStaticResourceRoutesDeps
   & RegisterVelaRoutesDeps
+  & RegisterErpRoutesDeps
   & RegisterOrganizationRoutesDeps
   & RegisterWorkspaceDataRoutesDeps
   & RegisterXaiRoutesDeps;

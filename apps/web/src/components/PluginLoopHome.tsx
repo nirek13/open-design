@@ -64,6 +64,8 @@ export interface PluginLoopSubmit {
   // into the created project's Design Files before the first auto-send.
   attachments?: File[];
   examplePromptContext?: { title: string; artifactType: string; brief: Record<string, string> };
+  /** Required on Home / New Project; PluginLoop defaults to private when omitted. */
+  visibility?: 'private' | 'public';
 }
 
 interface Props {

@@ -1,0 +1,45 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 44px 24px;
+  text-align: center;
+}
+
+.compact {
+  padding: 22px 16px;
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  color: var(--text-soft);
+  font-size: 18px;
+}
+
+.title {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.description {
+  margin: 0;
+  max-width: 42ch;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.action {
+  margin-top: 10px;
+}

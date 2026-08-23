@@ -179,6 +179,12 @@ export interface ProjectMetadata {
   // Batch/API-created projects can opt out of the initial discovery form so
   // the first agent turn builds immediately from the submitted brief.
   skipDiscoveryBrief?: boolean;
+  /** Who this project is for.
+   * - `private` — organization members only (no public web URL).
+   * - `public` — one-click hosting publishes a link anyone can open. */
+  visibility?: 'private' | 'public';
+  /** When visibility is public, keep republishing after the agent updates HTML. */
+  autoPublish?: boolean;
   // Set when the user submits an unmodified curated example prompt from the
   // gallery. Skips discovery AND requests full-quality direct generation,
   // treating the curated title/brief as the complete creative brief. Honored
@@ -211,6 +217,12 @@ export interface ProjectMetadata {
   // cohorts' retention/usage (tracking spec C15 / §6).
   enrichmentStatus?: 'programmatic' | 'ai_refined';
   enrichmentCompletedAt?: number;
+  /** Organization wiki page this project was launched from (Pages Ask AI). */
+  pageContext?: {
+    pageId: string;
+    title: string;
+    icon?: string | null;
+  };
 }
 
 export interface Project {

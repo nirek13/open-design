@@ -78,7 +78,8 @@ describe('BrandPreviewCard', () => {
 
     await waitFor(() => {
       expect(onApplyDesignSystem).toHaveBeenCalledWith('user:brand-ramp');
-      expect(window.location.pathname).toBe('/');
+      // Home is /home since the workspace became the front door.
+      expect(window.location.pathname).toBe('/home');
       expect((screen.getByTestId('brand-preview-use') as HTMLButtonElement).disabled).toBe(false);
       expect((screen.getByTestId('brand-preview-open-project') as HTMLButtonElement).disabled).toBe(false);
       expect((screen.getByTestId('brand-preview-delete') as HTMLButtonElement).disabled).toBe(false);

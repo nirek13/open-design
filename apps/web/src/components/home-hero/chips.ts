@@ -58,6 +58,7 @@ export type ChipAction =
     }
   | { kind: 'create-plugin' }
   | { kind: 'open-template-picker' }
+  | { kind: 'open-pages' }
   // Routes the user into the Brand Kit tab and opens its New Brand Kit modal,
   // reusing the same extraction flow as the tab's own "New Brand Kit" button.
   | { kind: 'create-brand-kit' };
@@ -237,6 +238,15 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
     },
   },
   {
+    id: 'wiki',
+    label: 'Wiki',
+    icon: 'blocks',
+    group: 'create',
+    description: 'Nested pages, like Notion',
+    hint: 'Ask the agent to build a nested wiki, or open the Pages editor.',
+    action: { kind: 'open-pages' },
+  },
+  {
     id: 'hyperframes',
     label: 'HyperFrames',
     icon: 'orbit',
@@ -395,6 +405,7 @@ export const CREATE_RAIL_ORDER = [
   'wireframe',
   'mobile',
   'document',
+  'wiki',
   'hyperframes',
   'webgl',
   'live-artifact',
@@ -409,7 +420,7 @@ export const CREATE_RAIL_ORDER = [
 // when keeping the teaser chips to a single tidy row. Website clone starts
 // from someone else's site rather than the user's design system, so it stays
 // off the design-system teaser too.
-const ONBOARDING_ARTIFACT_OMIT = new Set<string>(['web-clone', 'video', 'audio']);
+const ONBOARDING_ARTIFACT_OMIT = new Set<string>(['web-clone', 'video', 'audio', 'wiki']);
 
 // The artifact chips shown on the onboarding "build a design system" step — a
 // curated single-row subset of the create rail. Derived from CREATE_RAIL_ORDER

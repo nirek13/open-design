@@ -1,89 +1,343 @@
 # Open Design AWS Deployment
 
-This directory contains an AWS CloudFormation template (`template.yaml`) to deploy Open Design into your AWS environment using Amazon Elastic Container Service (ECS) with AWS Fargate.
+CloudFormation + ECS/Fargate runbook for hosting Open Design on AWS.
 
-## Architecture Overview
+| File | Purpose |
+| --- | --- |
+| [`template.yaml`](./template.yaml) | Stack: VPC, ALB, ECS, EFS, Secrets Manager, optional HTTPS |
+| [`redeploy-local.sh`](./redeploy-local.sh) | Build local checkout → ECR → roll ECS (keeps runtime fixes) |
 
-The template provisions a robust, fault-tolerant, and secure architecture for Open Design:
+For Docker Compose / GHCR images, see [`../README.md`](../README.md). For Azure, see [`../azure/README.md`](../azure/README.md).
 
-*   **Networking:** A new Virtual Private Cloud (VPC) spanning two Availability Zones, with both Public and Private subnets. Two independent NAT Gateways (one in each AZ) provide highly available outbound internet access.
-*   **Load Balancing:** An internet-facing Application Load Balancer (ALB) routes incoming traffic. It optionally supports HTTPS if a custom domain and ACM certificate are provided.
-*   **Compute:** AWS ECS running on serverless Fargate instances in the private subnets. To protect the file-based SQLite database from concurrent network write corruption, the service hard-codes a single-instance baseline (DesiredCount: 1). However, it leverages the multi-AZ networking primitives for Active-Passive fault tolerance: if a task or zone fails, ECS automatically reschedules the container in the healthy AZ. The task definition includes:
-    *   The **Open Design** app container.
-    *   An **Nginx Auth Proxy** sidecar container that securely attaches the Open Design API Token to incoming `/api/` requests.
-*   **Storage:** Amazon Elastic File System (EFS) is mounted to the Fargate containers for persistent daemon storage. Before documenting or changing the mount, you MUST read root [`AGENTS.md`](../../AGENTS.md) → **Daemon data directory contract**. This README MUST NOT restate it. EFS is configured with deletion protection (`Retain`) to prevent accidental data loss.
-*   **Security:**
-    *   **Secrets Manager:** Securely stores the Open Design API Token, preventing it from being exposed in plain text.
-    *   **Security Groups:** Restrict traffic flow. The ALB requires an explicitly configured CIDR — ensure this is your VPN or corporate range to avoid unintended public exposure. Fargate only accepts traffic from the ALB; EFS only accepts traffic from Fargate.
-*   **Logging:** Amazon CloudWatch Log Group captures container logs for easy debugging.
+---
+
+## Architecture
+
+```
+Internet (allowlisted CIDR only)
+        │
+        ▼
+   ALB (HTTP :80, optional HTTPS :443)
+        │
+        ▼
+   ECS Fargate task (private subnet)
+   ┌─────────────────────────────────────┐
+   │  auth-proxy (nginx)  →  app (daemon)│
+   │  injects Bearer token for /api/*    │
+   │  rewrites Host/Origin to loopback   │
+   └─────────────────────────────────────┘
+        │
+        ▼
+   EFS (persistent .od data) — DeletionPolicy: Retain
+```
+
+- **DesiredCount: 1** — SQLite under EFS must not be multi-writer.
+- **Two NAT gateways** — one per AZ for HA outbound. Expect ~\$60+/mo NATs alone, plus ALB, Fargate, EFS, data transfer.
+- **Auth model:** browser hits ALB; nginx adds `Authorization: Bearer <ApiToken>` for `/api/`. Token lives in Secrets Manager, not in the image.
+
+Daemon data paths follow root [`AGENTS.md`](../../AGENTS.md) → **Daemon data directory contract**. Do not invent alternate data roots in this doc.
+
+---
 
 ## Prerequisites
 
-*   An AWS Account.
-*   [AWS CLI](https://aws.amazon.com/cli/) installed and configured with appropriate permissions.
-*   (Optional) An ACM Certificate ARN if you want to use a custom domain with HTTPS.
+- AWS account + CLI configured (`aws sts get-caller-identity`)
+- Docker (builds must be `linux/amd64` for default `TaskCpuArchitecture=X86_64`)
+- Optional for HTTPS later: a domain you control + ACM in the **same region as the ALB**
+- Optional for watch redeploys: `brew install fswatch`
+
+### First-time KMS note
+
+Some accounts lack `alias/aws/efs`. If stack create fails on EFS encryption, create a CMK (e.g. `alias/open-design-efs`) and wire it in the template / console before retrying.
+
+---
 
 ## Parameters
 
-When deploying the CloudFormation stack, you can customize the following parameters:
+| Parameter | Required | Notes |
+| --- | --- | --- |
+| `AllowedSourceIp` | Yes | CIDR `/16`–`/32` allowlisted to the ALB (home/VPN IP, not `0.0.0.0/0`) |
+| `ApiToken` | Yes | Long random secret; stored in Secrets Manager |
+| `DockerImage` | Yes | Full URI+tag (ECR or GHCR). Initial seed only — local rolls use `redeploy-local.sh` |
+| `CustomDomainName` | No | e.g. `od.example.com`. Blank = HTTP on ALB DNS only |
+| `AcmCertificateArn` | If domain | ACM cert ARN in the ALB region |
+| `TaskSize` | No | `small` / `medium` / `large` |
+| `TaskCpuArchitecture` | No | Must match image (`X86_64` ↔ `linux/amd64`) |
+| `ProxyPort` | No | Nginx listen port (≥1024), default `8080` |
+| `AppStoragePath` | No | EFS mount in container; see daemon data contract |
 
-| Parameter | Description | Default |
-| :--- | :--- | :--- |
-| `AllowedSourceIp` | **(Required)** The specific IPv4 CIDR block allowlisted to access the Load Balancer. The ALB requires an explicitly configured CIDR — ensure this is your VPN or corporate range to avoid unintended public exposure. Accepts any valid IPv4 range with a subnet mask between /16 and /32. | *None* |
-| `ApiToken` | **(Required)** The secure API token used to authenticate requests to the Open Design backend. It is stored securely in AWS Secrets Manager. |  |
-| `DockerImage` | **(Required)** The full repository URI and tag for the Open Design Docker image. You must provide an explicit image as the public Docker Hub baseline is currently unmaintained. | *None* |
-| `VpcCidr` | The CIDR block for the VPC. | `10.42.0.0/16` |
-| `PublicSubnet1Cidr` | The CIDR block for Public Subnet 1 (AZ1). | `10.42.1.0/24` |
-| `PublicSubnet2Cidr` | The CIDR block for Public Subnet 2 (AZ2). | `10.42.3.0/24` |
-| `PrivateSubnet1Cidr` | The CIDR block for Private Subnet 1 (AZ1). | `10.42.2.0/24` |
-| `PrivateSubnet2Cidr` | The CIDR block for Private Subnet 2 (AZ2). | `10.42.4.0/24` |
-| `TaskSize` | The compute size for the Open Design application. Allowed values: `small` (256 CPU, 1024 MiB), `medium` (512 CPU, 2048 MiB), `large` (1024 CPU, 4096 MiB). | `small` |
-| `TaskCpuArchitecture` | The CPU architecture for the ECS task. Must match the architecture of your Docker image. Allowed values (available as a dropdown): `X86_64`, `ARM64`. | `X86_64` |
-| `CustomDomainName` | *(Optional)* Your custom domain name (e.g., `design.yourcompany.com`). If provided, you must manually create a DNS CNAME/Alias record pointing to the ALB after deployment. If blank, the default ALB DNS name is used over HTTP. | *None* |
-| `AcmCertificateArn` | *(Optional)* The ARN of your AWS Certificate Manager (ACM) certificate. **Required** if `CustomDomainName` is provided. | *None* |
-| `ProxyPort` | The dynamic port used by the Nginx proxy and exposed to the Load Balancer. Must be >= 1024 (unprivileged container). | `8080` |
-| `AppStoragePath` | Persistent daemon storage path. Before setting or documenting it, you MUST read root [`AGENTS.md`](../../AGENTS.md) → **Daemon data directory contract**. | See root contract |
+---
 
-## Deployment
+## Initial stack deploy
 
-You can deploy this stack via the AWS Management Console or the AWS CLI.
+### Console
 
-### Using AWS Management Console
+1. CloudFormation → Create stack → Upload `template.yaml`
+2. Stack name e.g. `open-design-stack`
+3. Set `ApiToken`, `AllowedSourceIp`, `DockerImage`
+4. Acknowledge IAM capabilities → Submit
+5. Outputs: `AppUrl`, `AlbDnsName`
 
-1.  Log in to the AWS Management Console and navigate to the **CloudFormation** service.
-2.  Click **Create stack** and select **With new resources (standard)**.
-3.  Under **Prerequisite - Prepare template**, select **Template is ready**.
-4.  Under **Specify template**, select **Upload a template file**, click **Choose file**, and select the `template.yaml` file from this directory.
-5.  Click **Next**.
-6.  Enter a **Stack name** (e.g., `open-design-stack`).
-7.  Fill in the **Parameters** according to your requirements. Note that `ApiToken`, `AllowedSourceIp`, and `DockerImage` are required.
-8.  Click **Next**. Configure any stack options if desired, then click **Next** again.
-9.  Scroll to the bottom of the review page, check the box that says **I acknowledge that AWS CloudFormation might create IAM resources**, and click **Submit**.
-
-### Using AWS CLI
-
-1.  Open your terminal and navigate to this directory.
-2.  Run the `aws cloudformation deploy` command, passing in the required parameters (`ApiToken`, `AllowedSourceIp`, and `DockerImage`):
+### CLI
 
 ```bash
+# Generate a token once; store it somewhere safe (password manager).
+openssl rand -hex 32
+
 aws cloudformation deploy \
-  --template-file template.yaml \
+  --template-file deploy/aws/template.yaml \
+  --stack-name open-design-stack \
+  --capabilities CAPABILITY_IAM \
+  --region us-east-1 \
+  --parameter-overrides \
+    ApiToken="PASTE_TOKEN_HERE" \
+    AllowedSourceIp="YOUR.PUBLIC.IP/32" \
+    DockerImage="ghcr.io/nexu-io/od:latest"
+```
+
+After create, prefer pushing **your** image (next section) rather than leaving mutable `latest` from GHCR.
+
+### Useful defaults for this repo’s reference deployment
+
+| Setting | Typical value |
+| --- | --- |
+| Stack | `open-design-stack` |
+| Region | `us-east-1` |
+| ECR repo | `open-design` (created by `redeploy-local.sh` if missing) |
+| Task family | `opendesign-app` |
+| Health | `GET /api/health` |
+
+---
+
+## Redeploy from local source (day-to-day)
+
+The CloudFormation `DockerImage` parameter is only the **initial** image. Day-to-day updates:
+
+```bash
+# From repo root
+./deploy/aws/redeploy-local.sh
+
+# Auto rebuild when apps/, packages/, or deploy/ change
+brew install fswatch   # once
+./deploy/aws/redeploy-local.sh --watch
+```
+
+What the script does:
+
+1. `docker build --platform linux/amd64 -f deploy/Dockerfile`
+2. Tag `ACCOUNT.dkr.ecr.REGION.amazonaws.com/open-design:local-<gitsha>-<utc>`
+3. Push to ECR
+4. Register a new ECS task definition that **preserves**:
+   - Auth-proxy Host/Origin rewrite to `127.0.0.1:${OD_WEB_PORT}` (required behind ALB)
+   - `OD_ALLOWED_ORIGINS` = lowercase ALB origin, or `https://<CustomDomain>` if stack AppUrl is HTTPS
+   - No AMR/Vela bootstrap on container start
+5. Force new deployment and wait for service stability
+6. Curl `/api/health`
+
+Overrides:
+
+```bash
+STACK=open-design-stack REGION=us-east-1 ECR_REPO=open-design ./deploy/aws/redeploy-local.sh
+```
+
+**zsh tip:** always quote ECR tags as `"${ECR}:tag"`. Unquoted `$ECR:tag` treats `:t` as a zsh modifier.
+
+Expect several minutes per rebuild (image build + push + ECS roll).
+
+---
+
+## Make it secure (HTTPS) when you have a domain
+
+Browsers **cannot** show a padlock for `*.elb.amazonaws.com`. You need your own hostname.
+
+### Checklist
+
+1. [ ] Domain you control (e.g. `od.example.com`)
+2. [ ] ACM certificate in **ALB region** (for `us-east-1` stacks, cert must be in `us-east-1`)
+3. [ ] DNS validation completed → cert **ISSUED**
+4. [ ] Stack updated with `CustomDomainName` + `AcmCertificateArn`
+5. [ ] DNS CNAME or Alias → stack output `AlbDnsName`
+6. [ ] `./deploy/aws/redeploy-local.sh` once so `OD_ALLOWED_ORIGINS` becomes `https://od.example.com`
+7. [ ] Open `https://od.example.com`, confirm padlock + `/api/health`
+
+### Request and validate a certificate
+
+```bash
+REGION=us-east-1
+DOMAIN=od.example.com
+
+aws acm request-certificate \
+  --region "$REGION" \
+  --domain-name "$DOMAIN" \
+  --validation-method DNS \
+  --query CertificateArn --output text
+# → arn:aws:acm:us-east-1:ACCOUNT:certificate/UUID
+
+# Show DNS records you must create at your DNS provider:
+aws acm describe-certificate \
+  --region "$REGION" \
+  --certificate-arn "ARN_FROM_ABOVE" \
+  --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
+```
+
+Add the CNAME ACM returns. Wait until:
+
+```bash
+aws acm describe-certificate --region "$REGION" --certificate-arn "ARN" \
+  --query 'Certificate.Status' --output text
+# ISSUED
+```
+
+### Update the stack for HTTPS
+
+Template behavior when `CustomDomainName` is set:
+
+- Listener **:443 HTTPS** terminates TLS with your ACM cert
+- Listener **:80** redirects to HTTPS
+- `OD_ALLOWED_ORIGINS` in the template becomes `https://${CustomDomainName}`
+
+```bash
+# Use your current ApiToken / AllowedSourceIp / latest ECR image tag.
+# CloudFormation deploy needs all required params you care about preserved.
+
+aws cloudformation deploy \
+  --template-file deploy/aws/template.yaml \
+  --stack-name open-design-stack \
+  --capabilities CAPABILITY_IAM \
+  --region us-east-1 \
+  --parameter-overrides \
+    CustomDomainName="od.example.com" \
+    AcmCertificateArn="arn:aws:acm:us-east-1:ACCOUNT:certificate/UUID" \
+    DockerImage="ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/open-design:YOUR_CURRENT_TAG" \
+    AllowedSourceIp="YOUR.PUBLIC.IP/32" \
+    ApiToken="YOUR_TOKEN"
+```
+
+Then at your DNS provider:
+
+| Type | Name | Target |
+| --- | --- | --- |
+| CNAME or Alias (A) | `od.example.com` | value of stack output `AlbDnsName` |
+
+Propagation can take minutes to hours. Then:
+
+```bash
+./deploy/aws/redeploy-local.sh
+curl -fsS "https://od.example.com/api/health"
+```
+
+### Why not HTTPS on the raw ALB name?
+
+ACM will not issue a publicly trusted cert for Amazon’s `*.elb.amazonaws.com` names. HTTP-only ALB DNS is fine for private IP-allowlisted testing; production should use a custom domain + ACM.
+
+---
+
+## Security model (what to keep tight)
+
+| Layer | What it does | Your job |
+| --- | --- | --- |
+| ALB security group | Only `AllowedSourceIp` can reach :80/:443 | Update CIDR when your IP/VPN changes |
+| Nginx auth-proxy | Injects API bearer for `/api/` | Rotate `ApiToken` via Secrets Manager + stack/param update |
+| `OD_ALLOWED_ORIGINS` | Browser Origin allowlist | Must match the exact URL users type (`http://` vs `https://`, **lowercase** host) |
+| Host/Origin rewrite | Daemon treats proxy as loopback for local-origin guards | Kept by `redeploy-local.sh` and current `template.yaml` |
+| EFS + private subnets | App not on a public IP | Don’t move tasks to public subnets without a plan |
+| Single task | Avoids SQLite corruption | Don’t raise DesiredCount without a different storage story |
+
+### Origin casing
+
+Browsers send `Origin` with a **lowercase** host. ALB DNS from CloudFormation can be mixed-case. Always allowlist the lowercase form (the redeploy script lowercases `AlbDnsName`).
+
+### Updating the allowlisted IP
+
+```bash
+# Get your current public IP, then:
+aws cloudformation deploy \
+  --template-file deploy/aws/template.yaml \
   --stack-name open-design-stack \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides \
-    ApiToken="YOUR_SECURE_API_TOKEN" \
-    AllowedSourceIp="YOUR_IP_ADDRESS/32" \
-    DockerImage="your-registry/open-design:latest"
+    AllowedSourceIp="NEW.IP.HERE/32" \
+    # …also pass DockerImage, ApiToken, and any CustomDomain/ACM params you already use
 ```
 
-*Note: If you want to use a custom domain with HTTPS, include the `CustomDomainName` and `AcmCertificateArn` parameters in the `--parameter-overrides` list.*
+Or edit the ALB security group inbound rule in the EC2 console for a quick temporary fix, then sync CFN later.
 
-## Accessing the Application
+### Rotating the API token
 
-Once the CloudFormation stack creation is complete, go to the **Outputs** tab of the stack in the AWS CloudFormation Console to find the `AlbDnsName` and `AppUrl`.
+1. Generate a new token (`openssl rand -hex 32`)
+2. Update Secrets Manager secret used by the stack (or redeploy stack with new `ApiToken` parameter)
+3. Force a new ECS deployment so tasks pick up the secret
+4. Update any local notes / password manager copies
 
-**If you did NOT use a custom domain:**
-Access Open Design directly using the HTTP URL provided in `AppUrl`.
+---
 
-**If you used a Custom Domain (HTTPS):**
-You must create a DNS record to route traffic to your new load balancer. Go to your DNS provider (e.g., AWS Route53, Cloudflare) and create a CNAME or Alias (A) record that points your `CustomDomainName` to the `AlbDnsName` output value. Once DNS propagates, you can access Open Design securely via your custom HTTPS domain.
+## Day-2 operations cheat sheet
+
+```bash
+REGION=us-east-1
+STACK=open-design-stack
+
+# App URL / ALB DNS
+aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
+  --query 'Stacks[0].Outputs' --output table
+
+# Service health
+CLUSTER=$(aws cloudformation describe-stack-resources --stack-name "$STACK" --region "$REGION" \
+  --logical-resource-id EcsCluster --query 'StackResources[0].PhysicalResourceId' --output text)
+SERVICE=$(aws cloudformation describe-stack-resources --stack-name "$STACK" --region "$REGION" \
+  --logical-resource-id EcsService --query 'StackResources[0].PhysicalResourceId' --output text)
+aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region "$REGION" \
+  --query 'services[0].{running:runningCount,desired:desiredCount,taskDef:taskDefinition}'
+
+# Logs
+aws logs tail "/ecs/${STACK}/opendesign-app" --region "$REGION" --follow
+
+# Health via ALB (HTTP) or custom domain (HTTPS)
+curl -fsS "http://$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='AlbDnsName'].OutputValue" --output text | tr '[:upper:]' '[:lower:]')/api/health"
+```
+
+Force a restart without rebuilding:
+
+```bash
+aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+  --force-new-deployment --region "$REGION"
+```
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Browser 403 on `/api/*` with Origin errors | `OD_ALLOWED_ORIGINS` missing/mismatched/cased wrong | Redeploy script or set origin to exact lowercase URL users use |
+| 403 / local-daemon guards fail behind ALB | Proxy forwarding public `Host`/`Origin` | Auth-proxy must rewrite to `127.0.0.1:${OD_WEB_PORT}` (current template + script) |
+| UI version ≠ your laptop | Stack still on GHCR `latest` | Run `./deploy/aws/redeploy-local.sh` |
+| Health timeout / can’t open ALB | IP not in `AllowedSourceIp` | Update SG / stack CIDR |
+| “Not Secure” in browser | HTTP ALB DNS | Add custom domain + ACM (section above) |
+| AMR / Vela sign-in 500 | Image lacks `vela`; not Clerk | Redeploy script disables AMR bootstrap; Clerk is separate (`OD_CLERK_ISSUER`) |
+| Stack update resets image to old GHCR tag | CFN `DockerImage` param still old | Pass current ECR tag in `--parameter-overrides`, or redeploy-local after stack update |
+| EFS create failed | Missing default EFS KMS alias | Create CMK / fix encryption key |
+
+---
+
+## Cost and teardown notes
+
+- **Ongoing:** 2× NAT Gateway, ALB, Fargate (`small` by default), EFS, CloudWatch logs, Secrets Manager.
+- **EFS** has `DeletionPolicy: Retain` — deleting the stack does **not** delete the filesystem. Delete the EFS volume manually in the console if you intend to destroy data.
+- To stop burn without deleting everything: set ECS desired count to `0`, or delete the stack (then clean retained EFS/KMS if needed).
+
+```bash
+aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+  --desired-count 0 --region "$REGION"
+```
+
+---
+
+## Template vs live task definition
+
+- First deploy: CloudFormation owns the task definition.
+- `redeploy-local.sh` registers **new revisions** of family `opendesign-app` and points the service at them (outside a CFN parameter bump).
+- A later `cloudformation deploy` that changes the task definition resource can create another revision from the template — always pass your **current ECR image** as `DockerImage`, and run `redeploy-local.sh` afterward if you need the script’s app entrypoint / origin fixes reapplied.
+
+The auth-proxy Host/Origin loopback rewrite is now in `template.yaml` so fresh stack creates/updates match production behavior.

@@ -197,6 +197,8 @@ describe('agent runtime tool environment', () => {
     expect(prompt).toContain('& $env:OD_NODE_BIN $env:OD_BIN tools ...');
     expect(prompt).toContain('`OD_TOOL_TOKEN` is available');
     expect(prompt).toContain('do not print, persist, or override it');
+    expect(prompt).toContain('tools pages');
+    expect(prompt).toContain('tools data');
     expect(prompt).not.toContain('secret-run-token');
   });
 
@@ -206,6 +208,7 @@ describe('agent runtime tool environment', () => {
     expect(prompt).toContain('Daemon URL: `http://127.0.0.1:7456`');
     expect(prompt).toContain('`OD_TOOL_TOKEN` is not available');
     expect(prompt).not.toContain('Bearer');
+    expect(prompt).not.toContain('tools pages');
   });
 });
 

@@ -107,6 +107,27 @@ describe('prefetchFromHtml (extract from already-rendered DOM)', () => {
     expect((result?.headings ?? []).join(' ')).toContain('Welcome to Acme');
   });
 
+  it('treats theme-color as high-signal palette evidence even without CSS literals', async () => {
+    const html = [
+      '<!doctype html><html><head>',
+      '<title>Acme Inc</title>',
+      '<meta name="theme-color" content="#e3120b">',
+      '<meta name="description" content="We build delightful developer tools.">',
+      '</head><body>',
+      `<header>${HEADER_SVG}</header>`,
+      '<h1>Welcome to Acme</h1><h2>Fast, friendly software</h2>',
+      `<p>${'Acme builds delightful developer tools teams enjoy using every day. '.repeat(2)}</p>`,
+      '</body></html>',
+    ].join('');
+
+    const result = await prefetchFromHtml(html, '', 'https://acme.test/', tmpBrandDir());
+
+    expect(result?.colors.some((c) => c.hex === '#e3120b')).toBe(true);
+    expect(result?.colors.find((c) => c.hex === '#e3120b')?.sources?.join(' ')).toMatch(
+      /theme-color/,
+    );
+  });
+
   it('flags an anti-bot challenge page as blocked and thin', async () => {
     const html =
       '<!doctype html><html><head><title>Just a moment...</title></head>' +

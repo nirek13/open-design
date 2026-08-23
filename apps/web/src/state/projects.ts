@@ -36,9 +36,24 @@ import type {
 export type { PluginInstallOutcome } from '@open-design/contracts';
 export type { PluginShareAction } from '@open-design/contracts';
 
-export async function listProjects(options?: { throwOnError?: boolean }): Promise<Project[]> {
+/** List projects.
+ *
+ * `allOrganizations` spans every organization the signed-in person belongs
+ * to, which is how people actually think about their own work — not as
+ * living inside whichever organization is currently selected. The daemon
+ * bounds it by membership, so the wider view is never a wider grant. */
+export async function listProjects(options?: {
+  throwOnError?: boolean;
+  allOrganizations?: boolean;
+}): Promise<Project[]> {
+  // Cross-organization by default. Every caller in the app is showing a
+  // person their own work, and hiding half of it behind whichever
+  // organization happens to be selected is a worse default than showing it
+  // all with its origin labelled. Pass `allOrganizations: false` for a view
+  // that genuinely means "this organization only".
+  const scoped = options?.allOrganizations === false;
   try {
-    const resp = await fetch('/api/projects');
+    const resp = await fetch(scoped ? '/api/projects' : '/api/projects?scope=all');
     if (!resp.ok) {
       if (options?.throwOnError) throw new Error(`projects ${resp.status}`);
       return [];

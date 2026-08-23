@@ -6,7 +6,7 @@
 
 import type { DaemonDbConfig } from './daemon-db.js';
 import { PostgresExecutor, type PgPoolLike } from './sql.js';
-import { migratePostgres } from './postgres-schema.js';
+import { migratePostgres, POSTGRES_SCHEMA } from './postgres-schema.js';
 
 export interface PostgresConnection {
   executor: PostgresExecutor;
@@ -28,6 +28,37 @@ function sslFor(config: DaemonDbConfig): false | { rejectUnauthorized: boolean }
   const mode = config.postgres?.sslMode ?? 'require';
   if (mode === 'disable') return false;
   return { rejectUnauthorized: mode === 'verify-full' };
+}
+
+/** Build the `pg` Pool options.
+ *
+ * The `options` field is load-bearing and easy to lose. `SET search_path` is
+ * per-connection state, and a pool hands out a different connection per query
+ * — so running it once after connecting works only until the pool rotates,
+ * after which every unqualified table name abruptly "does not exist". Passing
+ * the search path as a startup parameter makes the pool apply it to every
+ * connection it opens, including replacements. Exported so the shape can be
+ * asserted without a live database. */
+export function buildPoolConfig(config: DaemonDbConfig): Record<string, unknown> {
+  const settings = config.postgres;
+  if (!settings) throw new PostgresConnectionError('missing postgres configuration');
+  const shared = {
+    ssl: sslFor(config),
+    options: `-c search_path=${POSTGRES_SCHEMA}`,
+  };
+  if (settings.connectionString) {
+    return { connectionString: settings.connectionString, ...shared };
+  }
+  return {
+    host: settings.host,
+    port: settings.port,
+    database: settings.database,
+    user: settings.user,
+    // Password comes from the environment only in the discrete-field form;
+    // the connection-string form carries it inline.
+    password: process.env.OD_PG_PASSWORD,
+    ...shared,
+  };
 }
 
 export async function openPostgres(config: DaemonDbConfig): Promise<PostgresConnection> {
@@ -52,20 +83,7 @@ export async function openPostgres(config: DaemonDbConfig): Promise<PostgresConn
   }
 
   const settings = config.postgres;
-  const pool = new PoolCtor(
-    settings.connectionString
-      ? { connectionString: settings.connectionString, ssl: sslFor(config) }
-      : {
-          host: settings.host,
-          port: settings.port,
-          database: settings.database,
-          user: settings.user,
-          // Password comes from the environment only in the discrete-field
-          // form; the connection-string form carries it inline.
-          password: process.env.OD_PG_PASSWORD,
-          ssl: sslFor(config),
-        },
-  );
+  const pool = new PoolCtor(buildPoolConfig(config));
 
   const executor = new PostgresExecutor(pool, pool);
   try {

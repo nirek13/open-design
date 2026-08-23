@@ -21,6 +21,7 @@ export function homeHeroChipLabel(chipId: string, t: Translate): string {
     case 'live-artifact': return t('homeHero.chip.liveArtifact');
     case 'deck': return t('homeHero.chip.deck');
     case 'document': return t('homeHero.chip.document');
+    case 'wiki': return t('homeHero.chip.wiki');
     case 'image': return t('homeHero.chip.image');
     case 'video': return t('homeHero.chip.video');
     case 'hyperframes': return t('homeHero.chip.hyperframes');

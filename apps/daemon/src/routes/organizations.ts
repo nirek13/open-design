@@ -4,6 +4,8 @@
 //   GET  /api/auth/context          unauthenticated bootstrap for the client
 //   /api/orgs/*                     organizations, members, invites
 //   /api/orgs/:orgId/apps/*         publishing and sharing apps
+//   GET  /api/me/invites            targeted invites waiting on the caller
+//   POST /api/me/invites/:id/accept redeem a targeted invite without the token
 //   POST /api/invites/:token/accept  redeem an invite (needs a viewer)
 //   GET  /api/invites/:token         unauthenticated invite preview
 //   GET  /s/:token(/*)              unauthenticated shared-app viewer
@@ -19,18 +21,22 @@ import {
   createApiError,
   type CreateOrgInviteRequest,
   type CreateOrganizationRequest,
+  type OrgApp,
   type OrgRole,
   type PublishAppRequest,
+  type SetAppGrantsRequest,
   type UpdateAppRequest,
   type UpdateOrgMemberRequest,
 } from '@open-design/contracts';
 import { sendApiError } from '../http/response.js';
 import type { RouteDeps } from '../server-context.js';
 import type { IdentityService, Viewer } from '../auth/identity.js';
+import type { ConnectorService } from '../connectors/service.js';
 import type { WorkspaceDbManager } from '../storage/workspace-db.js';
 import { WorkspaceDataError } from '../workspace-data/errors.js';
 import {
   acceptOrgInvite,
+  acceptPendingInvite,
   assertMemberRole,
   createOrgInvite,
   createOrganization,
@@ -40,6 +46,7 @@ import {
   listOrgInvites,
   listOrgMembers,
   listOrganizationsForUser,
+  listPendingInvitesForUser,
   lookupInviteByToken,
   renameOrganization,
   revokeOrgInvite,
@@ -48,6 +55,7 @@ import {
 import {
   createAppShareLink,
   getApp,
+  listAppGrants,
   listAppShareLinks,
   listApps,
   publishApp,
@@ -56,8 +64,17 @@ import {
   resolveShareRoute,
   resolveShareToken,
   revokeAppShareLink,
+  setAppGrants,
   updateApp,
+  assertCanEditApp,
+  assertCanViewApp,
 } from '../workspace-data/apps.js';
+import {
+  composeOrgInviteEmail,
+  createGmailExecutor,
+  GMAIL_CONNECTOR_ID,
+  sendMail,
+} from '../workspace-data/mail.js';
 
 type Request = ExpressRequest<Record<string, string>>;
 
@@ -66,6 +83,8 @@ const param = (req: Request, name: string): string => req.params[name] ?? '';
 export interface OrganizationRouteServices {
   manager: WorkspaceDbManager;
   identity: IdentityService;
+  /** Optional: when Gmail is connected, email invites are sent through it. */
+  connectors?: ConnectorService;
   /** Serves an app's HTML file for the public share viewer. */
   serveAppFile: (
     req: Request,
@@ -79,7 +98,7 @@ export interface RegisterOrganizationRoutesDeps extends RouteDeps<'db'> {
 }
 
 export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizationRoutesDeps) {
-  const { manager, identity, serveAppFile } = ctx.organizations;
+  const { manager, identity, serveAppFile, connectors } = ctx.organizations;
   const directory = () => manager.directoryExecutor;
 
   function fail(res: Response, err: unknown): void {
@@ -238,18 +257,56 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
     const { orgId, member } = await scope(req, 'admin');
     const body = (req.body ?? {}) as CreateOrgInviteRequest;
     const created = await createOrgInvite(directory(), orgId, member.id, body);
+    const url = joinUrlFor(req, created.token);
     // The token is returned exactly here and never again; only its hash is
     // stored, so a lost link must be re-issued rather than recovered.
+    let emailed = false;
+    let emailError: string | undefined;
+    const shouldEmail = created.invite.kind === 'email' && body.sendEmail !== false;
+    if (shouldEmail && created.invite.targetEmail) {
+      const credentials = connectors?.getCredential(GMAIL_CONNECTOR_ID)?.credentials;
+      if (credentials) {
+        try {
+          const org = await getOrganization(directory(), orgId);
+          await sendMail(createGmailExecutor(credentials), {
+            to: [created.invite.targetEmail],
+            ...composeOrgInviteEmail({
+              orgName: org.name,
+              role: created.invite.role,
+              url,
+            }),
+          });
+          emailed = true;
+        } catch (err) {
+          emailError = err instanceof Error ? err.message : String(err);
+        }
+      }
+    }
     res.status(201).json({
       invite: created.invite,
       token: created.token,
-      url: joinUrlFor(req, created.token),
+      url,
+      ...(shouldEmail ? { emailed, ...(emailError ? { emailError } : {}) } : {}),
     });
   }));
 
   app.post('/api/orgs/:orgId/invites/:inviteId/revoke', handle(async (req, res) => {
     const { orgId } = await scope(req, 'admin');
     res.json({ invite: await revokeOrgInvite(directory(), orgId, param(req, 'inviteId')) });
+  }));
+
+  // Targeted invites waiting on the signed-in caller. Registered before the
+  // token routes so "pending" is never parsed as an invite token.
+  app.get('/api/me/invites', handle(async (req, res) => {
+    const viewer = await viewerFor(req);
+    res.json({ invites: await listPendingInvitesForUser(directory(), viewer.userId) });
+  }));
+
+  app.post('/api/me/invites/:inviteId/accept', handle(async (req, res) => {
+    const viewer = await viewerFor(req);
+    const accepted = await acceptPendingInvite(directory(), param(req, 'inviteId'), viewer.userId);
+    manager.workspaceExecutor(accepted.organization.id);
+    res.json({ organization: accepted.organization, member: accepted.member });
   }));
 
   // Unauthenticated: someone following a link needs to see what they are
@@ -264,6 +321,7 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
       valid: true,
       orgName: lookup.value.org.name,
       role: lookup.value.invite.role,
+      restricted: lookup.value.invite.kind !== 'link',
     });
   }));
 
@@ -276,12 +334,43 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
 
   // --- Apps ---------------------------------------------------------------
 
+  // Every app across every organization the caller belongs to.
+  //
+  // Membership is the boundary, exactly as it is for the single-org listing:
+  // this widens what you can see in one place, never what you may see. Each
+  // row carries its organization's name because a mixed list is unreadable
+  // without it.
+  app.get('/api/apps', handle(async (req, res) => {
+    const viewer = await viewerFor(req);
+    const memberships = await listOrganizationsForUser(directory(), viewer.userId);
+    const includeArchived = req.query.includeArchived === '1';
+    const pinnedOnly = req.query.pinned === '1';
+    const apps: Array<OrgApp & { orgName: string }> = [];
+    for (const org of memberships) {
+      const member = await getActiveMemberForUser(directory(), org.id, viewer.userId);
+      if (!member) continue;
+      const orgApps = await listApps(manager.workspaceExecutor(org.id), org.id, {
+        includeArchived,
+        pinnedOnly,
+        viewerMemberId: member.id,
+        viewerRole: member.role,
+        resolveMemberName: await memberNameResolver(org.id),
+      });
+      for (const orgApp of orgApps) apps.push({ ...orgApp, orgName: org.name });
+    }
+    // One list, newest first, regardless of which organization it came from.
+    apps.sort((a, b) => b.updatedAt - a.updatedAt);
+    res.json({ apps: pinnedOnly ? apps.slice(0, 8) : apps });
+  }));
+
   app.get('/api/orgs/:orgId/apps', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     res.json({
       apps: await listApps(db, orgId, {
         includeArchived: req.query.includeArchived === '1',
+        pinnedOnly: req.query.pinned === '1',
         viewerMemberId: member.id,
+        viewerRole: member.role,
         resolveMemberName: await memberNameResolver(orgId),
       }),
     });
@@ -294,35 +383,63 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
   }));
 
   app.get('/api/orgs/:orgId/apps/:appId', handle(async (req, res) => {
-    const { orgId, db } = await scope(req);
+    const { orgId, member, db } = await scope(req);
     const resolve = await memberNameResolver(orgId);
     const found = await getApp(db, orgId, param(req, 'appId'));
+    await assertCanViewApp(db, orgId, found, { memberId: member.id, role: member.role });
     res.json({ app: { ...found, createdByName: resolve(found.createdBy) } });
   }));
 
   app.patch('/api/orgs/:orgId/apps/:appId', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     const existing = await getApp(db, orgId, param(req, 'appId'));
-    // Anyone can adjust an app they published; changing someone else's is an
-    // administrative act.
-    if (existing.createdBy !== member.id) await scope(req, 'admin');
+    await assertCanEditApp(db, orgId, existing, { memberId: member.id, role: member.role });
     res.json({ app: await updateApp(db, orgId, param(req, 'appId'), (req.body ?? {}) as UpdateAppRequest) });
   }));
 
   app.post('/api/orgs/:orgId/apps/:appId/open', handle(async (req, res) => {
-    const { orgId, db } = await scope(req);
+    const { orgId, member, db } = await scope(req);
     const found = await getApp(db, orgId, param(req, 'appId'));
+    await assertCanViewApp(db, orgId, found, { memberId: member.id, role: member.role });
     await recordAppOpen(db, found.id);
     res.json({ app: await getApp(db, orgId, found.id) });
   }));
 
+  app.get('/api/orgs/:orgId/apps/:appId/grants', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    const found = await getApp(db, orgId, param(req, 'appId'));
+    await assertCanViewApp(db, orgId, found, { memberId: member.id, role: member.role });
+    res.json({
+      grants: await listAppGrants(db, orgId, found.id, await memberNameResolver(orgId)),
+    });
+  }));
+
+  app.put('/api/orgs/:orgId/apps/:appId/grants', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    const found = await getApp(db, orgId, param(req, 'appId'));
+    await assertCanEditApp(db, orgId, found, { memberId: member.id, role: member.role });
+    res.json({
+      grants: await setAppGrants(
+        db,
+        orgId,
+        found.id,
+        (req.body ?? {}) as SetAppGrantsRequest,
+        await memberNameResolver(orgId),
+      ),
+    });
+  }));
+
   app.get('/api/orgs/:orgId/apps/:appId/shares', handle(async (req, res) => {
-    const { orgId, db } = await scope(req);
+    const { orgId, member, db } = await scope(req);
+    const found = await getApp(db, orgId, param(req, 'appId'));
+    await assertCanViewApp(db, orgId, found, { memberId: member.id, role: member.role });
     res.json({ shares: await listAppShareLinks(db, orgId, param(req, 'appId')) });
   }));
 
   app.post('/api/orgs/:orgId/apps/:appId/shares', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
+    const found = await getApp(db, orgId, param(req, 'appId'));
+    await assertCanEditApp(db, orgId, found, { memberId: member.id, role: member.role });
     const created = await createAppShareLink(
       db,
       directory(),
@@ -339,7 +456,9 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
   }));
 
   app.post('/api/orgs/:orgId/apps/:appId/shares/:shareId/revoke', handle(async (req, res) => {
-    const { orgId, db } = await scope(req);
+    const { orgId, member, db } = await scope(req);
+    const found = await getApp(db, orgId, param(req, 'appId'));
+    await assertCanEditApp(db, orgId, found, { memberId: member.id, role: member.role });
     res.json({
       share: await revokeAppShareLink(db, directory(), orgId, param(req, 'appId'), param(req, 'shareId')),
     });

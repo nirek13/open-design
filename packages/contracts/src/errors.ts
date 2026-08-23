@@ -160,9 +160,52 @@ export const API_ERROR_CODES = [
   'ORG_INVITE_EXPIRED',
   // The invite hit its maximum number of uses.
   'ORG_INVITE_EXHAUSTED',
+  // Signed in as the wrong person for an email/username invite.
+  'ORG_INVITE_WRONG_RECIPIENT',
+  // A still-open email/username invite to the same person already exists.
+  'ORG_INVITE_DUPLICATE',
   'APP_NOT_FOUND',
   // The share link is unknown, revoked, or past its expiry.
   'APP_SHARE_INVALID',
+  // The caller is a member but may not view or edit this app (restricted ACL
+  // or private visibility).
+  'APP_FORBIDDEN',
+  // Ledger, business hub, proposals (api/ledger.ts, business-hub.ts,
+  // proposals.ts).
+  'LEDGER_ACCOUNT_NOT_FOUND',
+  'LEDGER_ENTRY_NOT_FOUND',
+  // Debits did not equal credits. details carries { debit, credit } so the
+  // UI can show the gap rather than a bare refusal.
+  'LEDGER_UNBALANCED',
+  // Someone tried to edit a posted entry. Post a reversing entry instead.
+  'LEDGER_ENTRY_IMMUTABLE',
+  // The accounting date falls in a closed period.
+  'LEDGER_PERIOD_CLOSED',
+  'PROPOSAL_NOT_FOUND',
+  // The proposal was already decided, applied, or undone; the requested
+  // transition is not available from its current state.
+  'PROPOSAL_STATE_INVALID',
+  // Applying failed partway and was rolled back; nothing was written.
+  'PROPOSAL_APPLY_FAILED',
+  'SAVED_QUESTION_NOT_FOUND',
+  // The uploaded spreadsheet could not be read as tabular data.
+  'IMPORT_UNREADABLE',
+  // ERP templates (api/erp-templates.ts).
+  'TEMPLATE_NOT_FOUND',
+  // The pack needs a table that another pack owns and that is not installed.
+  'TEMPLATE_REQUIREMENT_MISSING',
+  // Team chat (api/team-chat.ts).
+  'CHANNEL_NOT_FOUND',
+  // A channel with that slug already exists in this organization.
+  'CHANNEL_SLUG_TAKEN',
+  'CHAT_MESSAGE_NOT_FOUND',
+  // The caller is not in this channel. Returned for private channels the
+  // caller cannot see at all, so membership is not probeable.
+  'CHANNEL_ACCESS_DENIED',
+  // Organization pages (api/pages.ts).
+  'PAGE_NOT_FOUND',
+  'PAGE_BLOCK_INVALID',
+  'PAGE_PARENT_INVALID',
   'INTERNAL_ERROR',
 ] as const;
 

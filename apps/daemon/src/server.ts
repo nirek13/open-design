@@ -651,10 +651,16 @@ export { rewriteSkillAssetUrls } from './routes/static-resource.js';
 import { registerRoutineRoutes, routineDbRowToContract } from './routes/routine.js';
 import { registerWorkspaceDataRoutes } from './routes/workspace-data.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
+import { registerErpRoutes } from './routes/erp.js';
+import { registerTeamChatRoutes } from './routes/team-chat.js';
+import { registerPagesRoutes } from './routes/pages.js';
+import { registerCalendarRoutes } from './routes/calendar.js';
+import { registerMailRoutes } from './routes/mail.js';
 import { WorkspaceDbManager } from './storage/workspace-db.js';
 import { WorkspaceDataEvents } from './workspace-data/events.js';
 import { ensureDefaultOrganization } from './workspace-data/tenancy.js';
 import { IdentityService, readAuthConfig } from './auth/identity.js';
+import { authIsRequired, requireAuthMiddleware } from './auth/require-auth.js';
 import { resolveDaemonDbConfig } from './storage/daemon-db.js';
 import { openPostgres } from './storage/postgres-connection.js';
 import { resolveAmrModelProbe } from './runtimes/amr-model-probe.js';
@@ -1226,7 +1232,25 @@ export function createAgentRuntimeToolPrompt(
         '- Discover before inventing: `"$OD_NODE_BIN" "$OD_BIN" tools data list-tables`, then `tools data describe-table --table <name>`. Reuse existing tables and fields whenever they fit; never create a parallel table for data that already has a home.',
         '- Create schemas deliberately: `tools data create-table --input schema.json` with snake_case names, `required`/`unique` where the business rule demands it, `link` fields (config.targetTableId) for relations, and type `money` for amounts — money values are ALWAYS integer minor units (cents); never floats.',
         '- Read and write through `tools data query|insert|update` (see `tools data --help` for payload shapes). The daemon validates every write against the schema, enforces uniqueness and link integrity, soft-deletes only, and records full row history plus an audit trail attributed to this run — do not try to bypass it or batch-edit data through files.',
-        '- Records never truly delete and schema changes are owner-approved migrations; if a schema change seems needed, say so to the user instead of working around the schema.',
+        '- Records never truly delete. To add a column, rename a field, or create a table from a sentence, use `tools erp ask --text "..." --apply` (it is stored as an undoable proposal). Do not work around the schema with ad-hoc files.',
+        '',
+        '### ERP (`tools erp`)',
+        '',
+        '- You MAY change the organization ERP: import data, add tables/fields, define packs, and edit any wiki page that lives beside those tables.',
+        '- Magic-import a public Google Sheet, CSV, JSON array, or HTML table: `"$OD_NODE_BIN" "$OD_BIN" tools erp import-url --url <https://...>` (optional `--table <name>`; `--plan-only` to preview). Then `tools data query --table <name>` to read what landed.',
+        '- Say what to change: `"$OD_NODE_BIN" "$OD_BIN" tools erp ask --text "add a phone column to customers" --apply`. Queries (show/list/find) run without `--apply`. Low-confidence sentences should be turned into `tools data create-table` or a custom pack instead of guessed.',
+        '- Invent a new ERP module as a pack: `tools erp pack --input spec.json` then `tools erp pack-install --pack <slug>`. Spec shape: `{displayName, description?, tables:[{name, displayName, fields:[{name, type, required?}]}]}`.',
+        '- Put imported data on any page: `tools pages embed --page <id> --type database --table <table-id>` or `--type record --record <id>`. You may upsert, append, duplicate, or archive any wiki page in this organization — that is how you modify ERP pages and build new ones.',
+        '- Do NOT post journal entries or close ledger periods; those stay a person\'s action.',
+        '',
+        '### Pages wiki (`tools pages`)',
+        '',
+        '- The organization has a Notion-shaped wiki: nested pages with typed blocks. This is the durable file system for notes, handbooks, and docs — not project HTML files. Prefer `tools pages` over inventing markdown files when the user wants a wiki, knowledge base, handbook, or nested notes.',
+        '- Discover first: `"$OD_NODE_BIN" "$OD_BIN" tools pages list --tree`, then `tools pages search --query <text>` and `tools pages get --page <id>`. Reuse existing pages before creating parallel ones.',
+        '- Scaffold a whole tree in one call: `tools pages scaffold --input tree.json` with nested `{title, icon, blocks, children}`. Creating a child with `parentPageId` also embeds it on the parent (a page-in-a-page) unless `linkOnParent` is false.',
+        '- Write content with `tools pages upsert --input page.json` (create or replace) or `tools pages append --page <id> --input blocks.json`. Block types: paragraph, heading_1/2/3, bulleted_list_item, numbered_list_item, to_do, toggle, callout, quote, code, divider, bookmark, table, database, artifact, page, record.',
+        '- Embed inside a page with `tools pages embed --page <id> --type page|database|record|artifact|bookmark` plus `--target` (page id), `--table`, `--record`, `--path`, or `--url`. Nested pages (`type=page`) are how you put pages inside pages; `database` embeds a live workspace table; `artifact` points at a design file you built.',
+        '- Duplicate with `tools pages duplicate --page <id> [--recursive]`. Archive with `tools pages archive --page <id>`. See `tools pages --help` for payload shapes.',
       ].join('\n')
     : '';
 
@@ -2375,10 +2399,29 @@ export async function startServer({
   }
   const workspaceDbManager = new WorkspaceDbManager(RUNTIME_DATA_DIR, sharedOrgExecutor);
   const workspaceDataEvents = new WorkspaceDataEvents();
-  await ensureDefaultOrganization(workspaceDbManager.directoryExecutor);
-  // Identity: keyless local-owner unless OD_CLERK_ISSUER is configured. See
+  // Identity: sign-in is required unless OD_AUTH_MODE=local-owner. See
   // apps/daemon/src/auth/identity.ts for the security posture of each mode.
   const identityService = new IdentityService(readAuthConfig());
+  if (identityService.config.mode === 'local-owner') {
+    await ensureDefaultOrganization(workspaceDbManager.directoryExecutor);
+  } else if (!identityService.config.issuer) {
+    console.warn('[auth] sign-in is required but OD_CLERK_ISSUER is not set');
+  }
+  // Deny-by-default gate. Implied by clerk mode: configuring real identities
+  // means you want them enforced on every API route, not only the handful
+  // that happen to check membership. Mounted here so it runs before any
+  // route handler registered below.
+  const authRequired = authIsRequired(identityService.config);
+  app.use(
+    requireAuthMiddleware({
+      identity: identityService,
+      directory: () => workspaceDbManager.directoryExecutor,
+      required: authRequired,
+    }),
+  );
+  if (authRequired) {
+    console.log('[auth] sign-in required for /api routes (mode: %s)', identityService.config.mode);
+  }
   const workspaceDataDeps = {
     manager: workspaceDbManager,
     events: workspaceDataEvents,
@@ -2387,6 +2430,7 @@ export async function startServer({
   const organizationsDeps = {
     manager: workspaceDbManager,
     identity: identityService,
+    connectors: connectorService,
     // Serves one file of a shared app to an anonymous link visitor.
     //
     // The headers below are the security line for link sharing: the same
@@ -3304,6 +3348,39 @@ export async function startServer({
     workspaceData: workspaceDataDeps,
   });
   registerOrganizationRoutes(app, { db, organizations: organizationsDeps });
+  registerErpRoutes(app, {
+    db,
+    auth: authDeps,
+    erp: { manager: workspaceDbManager, identity: identityService },
+  });
+  registerTeamChatRoutes(app, {
+    db,
+    auth: authDeps,
+    chat: { manager: workspaceDbManager, identity: identityService },
+  });
+  registerPagesRoutes(app, {
+    db,
+    auth: authDeps,
+    pages: { manager: workspaceDbManager, identity: identityService },
+  });
+  registerCalendarRoutes(app, {
+    db,
+    auth: authDeps,
+    calendar: {
+      manager: workspaceDbManager,
+      identity: identityService,
+      connectors: connectorService,
+    },
+  });
+  registerMailRoutes(app, {
+    db,
+    auth: authDeps,
+    mail: {
+      manager: workspaceDbManager,
+      identity: identityService,
+      connectors: connectorService,
+    },
+  });
   registerDesignSystemToolRoutes(app, {
     auth: authDeps,
     http: httpDeps,
@@ -9185,6 +9262,7 @@ export async function startServer({
     critique: critiqueDeps,
     openDesignPublicMetadata,
     workspaceData: workspaceDataDeps,
+    erp: { manager: workspaceDbManager, identity: identityService },
     lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
   });
 
@@ -9211,6 +9289,7 @@ export async function startServer({
     agents: agentDeps,
     critique: critiqueDeps,
     appConfig: { readAppConfig },
+    byokCredentials: byokCredentialService,
     validation: validationDeps,
     lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
     telemetry: { reportFinalizedMessage, reportFeedback },

@@ -1,0 +1,14 @@
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.muted {
+  color: var(--text-3, rgba(127, 127, 127, 0.7));
+}
+
+.error {
+  margin: 0 0 12px;
+  color: var(--danger, #c0392b);
+}

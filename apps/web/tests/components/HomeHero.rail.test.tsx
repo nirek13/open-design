@@ -519,6 +519,7 @@ describe('HomeHero intent rail', () => {
     expect(findChip('figma')?.action).toMatchObject({ kind: 'apply-figma-migration' });
     expect(findChip('folder')).toBeUndefined();
     expect(findChip('template')?.action).toMatchObject({ kind: 'open-template-picker' });
+    expect(findChip('wiki')?.action).toMatchObject({ kind: 'open-pages' });
   });
 
   it('leads the create group with the Brand Kit chip and its own action discriminator', () => {

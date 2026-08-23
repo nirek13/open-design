@@ -26,7 +26,7 @@ import {
   restoreWorkspaceRecord,
   softDeleteWorkspaceRecord,
 } from '../../providers/registry';
-import { useOrg } from '../../org/OrgContext';
+import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import styles from './DatabaseView.module.css';
 
 interface Props {
@@ -49,7 +49,7 @@ export function DatabaseView({ active }: Props) {
   const t = useT();
   // The database belongs to the active organization — there is no separate
   // workspace to choose. Switching organizations swaps the whole database.
-  const { activeOrgId: workspaceId } = useOrg();
+  const { activeOrgId: workspaceId } = useOptionalOrg() ?? NO_ORG_CONTEXT;
   const [tables, setTables] = useState<WorkspaceTable[]>([]);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [records, setRecords] = useState<WorkspaceRecord[]>([]);

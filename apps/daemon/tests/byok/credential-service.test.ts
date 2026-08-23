@@ -72,6 +72,37 @@ describe('BYOK credential service', () => {
     expect(await service.resolve(profile.id)).toBeNull();
   });
 
+  it('exposes OPENAI_API_KEY as a virtual profile when OS secret storage is down', async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'od-byok-credentials-'));
+    roots.push(dataDir);
+    const backend = new MemorySecretBackend();
+    backend.available = async () => false;
+    const apiKey = 'sk-proj-env-test-secret-not-for-disk';
+    const service = new ByokCredentialService({
+      dataDir,
+      backend,
+      readEnvOpenAiApiKey: () => apiKey,
+    });
+
+    const status = await service.status();
+    expect(status.available).toBe(false);
+    expect(status.backend).toBe('env-openai');
+
+    const profiles = await service.list();
+    expect(profiles).toEqual([expect.objectContaining({
+      id: 'byok-env-openai',
+      protocol: 'openai',
+      configured: true,
+      keyTail: 'disk',
+    })]);
+    expect(JSON.stringify(profiles)).not.toContain(apiKey);
+
+    const resolved = await service.resolve('byok-env-openai');
+    expect(resolved?.apiKey).toBe(apiKey);
+    expect(await service.has('byok-env-openai')).toBe(true);
+    expect(await service.delete('byok-env-openai')).toBe(false);
+  });
+
   it('fails closed when no secure backend is available', async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), 'od-byok-credentials-'));
     roots.push(dataDir);
@@ -135,6 +166,7 @@ describe('BYOK credential service', () => {
     const service = new ByokCredentialService({
       dataDir,
       backend: new MemorySecretBackend(),
+      readEnvOpenAiApiKey: () => '',
     });
 
     await Promise.all([

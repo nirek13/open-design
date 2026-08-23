@@ -18,7 +18,9 @@ import {
   type Organization,
   type OrganizationMembershipView,
   type OrgInvite,
+  type OrgInviteKind,
   type OrgMember,
+  type OrgPendingInvite,
   type OrgRole,
 } from '@open-design/contracts';
 import { WorkspaceDataError } from './errors.js';
@@ -34,10 +36,15 @@ const MEMBER_COLS = `
 `;
 
 const INVITE_COLS = `
-  id, workspace_id AS "orgId", role, created_by AS "createdBy",
+  id, workspace_id AS "orgId", role, kind,
+  target_email AS "targetEmail", target_username AS "targetUsername",
+  target_user_id AS "targetUserId", created_by AS "createdBy",
   expires_at AS "expiresAt", max_uses AS "maxUses", use_count AS "useCount",
   revoked_at AS "revokedAt", created_at AS "createdAt"
 `;
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const TARGETED_INVITE_TTL_MS = 14 * 24 * 3600_000;
 
 const ROLES = new Set<OrgRole>(['owner', 'admin', 'member']);
 
@@ -68,15 +75,56 @@ function normalizeMember(row: Record<string, any>): OrgMember {
   };
 }
 
+function asInviteKind(value: unknown): OrgInviteKind {
+  return value === 'email' || value === 'username' ? value : 'link';
+}
+
 function normalizeInvite(row: Record<string, any>): OrgInvite {
   return {
-    ...(row as OrgInvite),
+    id: String(row.id),
+    orgId: String(row.orgId),
+    role: row.role as OrgRole,
+    kind: asInviteKind(row.kind),
+    targetEmail: row.targetEmail ?? null,
+    targetUsername: row.targetUsername ?? null,
+    targetUserId: row.targetUserId ?? null,
+    createdBy: String(row.createdBy),
     expiresAt: row.expiresAt === null || row.expiresAt === undefined ? null : num(row.expiresAt),
     maxUses: row.maxUses === null || row.maxUses === undefined ? null : num(row.maxUses),
     useCount: num(row.useCount),
     revokedAt: row.revokedAt === null || row.revokedAt === undefined ? null : num(row.revokedAt),
     createdAt: num(row.createdAt),
   };
+}
+
+function inviteIsOpen(invite: Pick<OrgInvite, 'revokedAt' | 'expiresAt' | 'maxUses' | 'useCount'>): boolean {
+  if (invite.revokedAt !== null) return false;
+  if (invite.expiresAt !== null && invite.expiresAt <= Date.now()) return false;
+  if (invite.maxUses !== null && invite.useCount >= invite.maxUses) return false;
+  return true;
+}
+
+function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+function assertEmail(raw: string): string {
+  const email = normalizeEmail(raw);
+  if (!EMAIL_RE.test(email)) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'email must be a valid address');
+  }
+  return email;
+}
+
+function assertUsername(raw: string): string {
+  const username = raw.trim();
+  if (username.length < 2 || username.length > 64) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'username must be between 2 and 64 characters');
+  }
+  if (username.includes('@')) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'username cannot be an email address');
+  }
+  return username;
 }
 
 export function hashInviteToken(token: string): string {
@@ -97,17 +145,50 @@ export interface DirectoryUser {
   id: string;
   displayName: string;
   email: string | null;
+  username: string | null;
+}
+
+const USER_COLS = 'id, display_name AS "displayName", email, username';
+
+function normalizeUser(row: DirectoryUser): DirectoryUser {
+  return {
+    id: row.id,
+    displayName: row.displayName,
+    email: row.email ?? null,
+    username: row.username ?? null,
+  };
+}
+
+async function usernameTakenByOther(
+  directory: SqlExecutor,
+  username: string,
+  exceptUserId: string,
+): Promise<boolean> {
+  const row = await directory.get<{ id: string }>(
+    'SELECT id FROM od_users WHERE lower(username) = lower(?) AND id != ?',
+    [username, exceptUserId],
+  );
+  return Boolean(row);
 }
 
 export async function ensureLocalOwnerUser(directory: SqlExecutor): Promise<string> {
-  const existing = await directory.get<{ id: string }>('SELECT id FROM od_users WHERE id = ?', [
-    LOCAL_OWNER_USER_ID,
-  ]);
-  if (existing) return existing.id;
+  const existing = await directory.get<{ id: string; username: string | null }>(
+    'SELECT id, username FROM od_users WHERE id = ?',
+    [LOCAL_OWNER_USER_ID],
+  );
+  if (existing) {
+    if (!existing.username) {
+      await directory.run('UPDATE od_users SET username = ? WHERE id = ? AND username IS NULL', [
+        'local-owner',
+        LOCAL_OWNER_USER_ID,
+      ]);
+    }
+    return existing.id;
+  }
   const now = Date.now();
   await directory.run(
-    'INSERT INTO od_users (id, display_name, email, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)',
-    [LOCAL_OWNER_USER_ID, 'Local Owner', now, now],
+    'INSERT INTO od_users (id, display_name, email, username, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?)',
+    [LOCAL_OWNER_USER_ID, 'Local Owner', 'local-owner', now, now],
   );
   return LOCAL_OWNER_USER_ID;
 }
@@ -116,40 +197,67 @@ export async function ensureLocalOwnerUser(directory: SqlExecutor): Promise<stri
  * every authenticated request, so it must stay idempotent and cheap. */
 export async function upsertExternalUser(
   directory: SqlExecutor,
-  input: { externalId: string; displayName: string; email: string | null },
+  input: { externalId: string; displayName: string; email: string | null; username?: string | null },
 ): Promise<DirectoryUser> {
   const existing = await directory.get<DirectoryUser>(
-    'SELECT id, display_name AS "displayName", email FROM od_users WHERE clerk_user_id = ?',
+    `SELECT ${USER_COLS} FROM od_users WHERE clerk_user_id = ?`,
     [input.externalId],
   );
   const now = Date.now();
+  const nextUsername = input.username?.trim() || null;
   if (existing) {
+    const username =
+      nextUsername && !(await usernameTakenByOther(directory, nextUsername, existing.id))
+        ? nextUsername
+        : existing.username;
     // Profile edits upstream should show up here without a separate sync.
-    if (existing.displayName !== input.displayName || (existing.email ?? null) !== input.email) {
-      await directory.run('UPDATE od_users SET display_name = ?, email = ?, updated_at = ? WHERE id = ?', [
-        input.displayName,
-        input.email,
-        now,
-        existing.id,
-      ]);
+    if (
+      existing.displayName !== input.displayName ||
+      (existing.email ?? null) !== input.email ||
+      (existing.username ?? null) !== (username ?? null)
+    ) {
+      await directory.run(
+        'UPDATE od_users SET display_name = ?, email = ?, username = ?, updated_at = ? WHERE id = ?',
+        [input.displayName, input.email, username, now, existing.id],
+      );
     }
-    return { id: existing.id, displayName: input.displayName, email: input.email };
+    return { id: existing.id, displayName: input.displayName, email: input.email, username };
   }
   const id = `user-${randomUUID()}`;
+  const username =
+    nextUsername && !(await usernameTakenByOther(directory, nextUsername, id)) ? nextUsername : null;
   await directory.run(
-    `INSERT INTO od_users (id, clerk_user_id, display_name, email, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, input.externalId, input.displayName, input.email, now, now],
+    `INSERT INTO od_users (id, clerk_user_id, display_name, email, username, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, input.externalId, input.displayName, input.email, username, now, now],
   );
-  return { id, displayName: input.displayName, email: input.email };
+  return { id, displayName: input.displayName, email: input.email, username };
 }
 
 export async function getUser(directory: SqlExecutor, userId: string): Promise<DirectoryUser | null> {
-  const row = await directory.get<DirectoryUser>(
-    'SELECT id, display_name AS "displayName", email FROM od_users WHERE id = ?',
-    [userId],
+  const row = await directory.get<DirectoryUser>(`SELECT ${USER_COLS} FROM od_users WHERE id = ?`, [userId]);
+  return row ? normalizeUser(row) : null;
+}
+
+async function findUsersByEmail(directory: SqlExecutor, email: string): Promise<DirectoryUser[]> {
+  const rows = await directory.all<DirectoryUser>(
+    `SELECT ${USER_COLS} FROM od_users WHERE email IS NOT NULL AND lower(email) = ?`,
+    [normalizeEmail(email)],
   );
-  return row ? { ...row, email: row.email ?? null } : null;
+  return rows.map(normalizeUser);
+}
+
+async function findUsersByUsername(directory: SqlExecutor, username: string): Promise<DirectoryUser[]> {
+  const needle = username.trim().toLowerCase();
+  const rows = await directory.all<DirectoryUser>(
+    `SELECT ${USER_COLS} FROM od_users
+     WHERE (username IS NOT NULL AND lower(username) = ?)
+        OR lower(display_name) = ?`,
+    [needle, needle],
+  );
+  const byId = new Map<string, DirectoryUser>();
+  for (const row of rows) byId.set(row.id, normalizeUser(row));
+  return [...byId.values()];
 }
 
 // --- Organizations --------------------------------------------------------
@@ -372,23 +480,105 @@ export async function createOrgInvite(
       throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'maxUses must be a positive integer');
     }
   }
+
+  const emailRaw = input.email?.trim() ?? '';
+  const usernameRaw = input.username?.trim() ?? '';
+  if (emailRaw && usernameRaw) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'invite by email or username, not both');
+  }
+
+  let kind: OrgInviteKind = 'link';
+  let targetEmail: string | null = null;
+  let targetUsername: string | null = null;
+  let targetUserId: string | null = null;
+
+  if (emailRaw) {
+    kind = 'email';
+    targetEmail = assertEmail(emailRaw);
+    const matches = await findUsersByEmail(directory, targetEmail);
+    if (matches.length === 1) {
+      const member = await getActiveMemberForUser(directory, orgId, matches[0]!.id);
+      if (member) {
+        throw new WorkspaceDataError(
+          'VALIDATION_FAILED',
+          409,
+          `${targetEmail} is already a member of this organization`,
+        );
+      }
+      targetUserId = matches[0]!.id;
+    }
+  } else if (usernameRaw) {
+    kind = 'username';
+    targetUsername = assertUsername(usernameRaw);
+    const matches = await findUsersByUsername(directory, targetUsername);
+    if (matches.length > 1) {
+      throw new WorkspaceDataError(
+        'VALIDATION_FAILED',
+        422,
+        'that username matches more than one person; invite by email instead',
+      );
+    }
+    if (matches.length === 1) {
+      const member = await getActiveMemberForUser(directory, orgId, matches[0]!.id);
+      if (member) {
+        throw new WorkspaceDataError(
+          'VALIDATION_FAILED',
+          409,
+          `${targetUsername} is already a member of this organization`,
+        );
+      }
+      targetUserId = matches[0]!.id;
+    }
+  }
+
+  const targeted = kind !== 'link';
+  if (targeted) {
+    const existing = (await listOrgInvites(directory, orgId)).find((invite) => {
+      if (!inviteIsOpen(invite) || invite.kind !== kind) return false;
+      if (kind === 'email') return invite.targetEmail === targetEmail;
+      return (
+        invite.targetUsername?.toLowerCase() === targetUsername?.toLowerCase() ||
+        (targetUserId !== null && invite.targetUserId === targetUserId)
+      );
+    });
+    if (existing) {
+      throw new WorkspaceDataError(
+        'ORG_INVITE_DUPLICATE',
+        409,
+        'an open invite to this person already exists',
+      );
+    }
+  }
+
   const now = Date.now();
   const id = `inv-${randomUUID()}`;
   // 32 random bytes: the link is the entire credential, so it must be far
   // beyond guessing even when a stale link circulates in a chat thread.
   const token = randomBytes(32).toString('base64url');
+  const expiresAt =
+    input.expiresInHours === undefined
+      ? targeted
+        ? now + TARGETED_INVITE_TTL_MS
+        : null
+      : now + input.expiresInHours * 3600_000;
+  const maxUses = input.maxUses ?? (targeted ? 1 : null);
   await directory.run(
     `INSERT INTO od_workspace_invites
-       (id, workspace_id, token_hash, role, created_by, expires_at, max_uses, use_count, revoked_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)`,
+       (id, workspace_id, token_hash, role, kind, target_email, target_username, target_user_id,
+        created_by, expires_at, max_uses, use_count, revoked_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)`,
     [
       id,
       orgId,
       hashInviteToken(token),
       role,
+      kind,
+      targetEmail,
+      targetUsername,
+      targetUserId,
       createdByMemberId,
-      input.expiresInHours === undefined ? null : now + input.expiresInHours * 3600_000,
-      input.maxUses ?? null,
+      expiresAt,
+      maxUses,
       now,
     ],
   );
@@ -467,26 +657,49 @@ export interface AcceptedInvite {
   member: OrgMember;
 }
 
-/** Redeem an invite for a user. Already-members are returned as-is rather than
- * erroring, so re-opening a link is harmless and does not burn a use. */
-export async function acceptOrgInvite(
+function throwInviteRejection(reason: InviteRejection): never {
+  if (reason === 'expired') {
+    throw new WorkspaceDataError('ORG_INVITE_EXPIRED', 410, 'this invite link has expired');
+  }
+  if (reason === 'exhausted') {
+    throw new WorkspaceDataError('ORG_INVITE_EXHAUSTED', 410, 'this invite link has reached its limit');
+  }
+  throw new WorkspaceDataError('ORG_INVITE_INVALID', 404, 'this invite link is not valid');
+}
+
+function inviteMatchesViewer(invite: OrgInvite, user: DirectoryUser): boolean {
+  if (invite.kind === 'link') return true;
+  if (invite.kind === 'email') {
+    return Boolean(user.email && invite.targetEmail && normalizeEmail(user.email) === invite.targetEmail);
+  }
+  if (invite.targetUserId && invite.targetUserId === user.id) return true;
+  const needle = (invite.targetUsername ?? '').trim().toLowerCase();
+  if (!needle) return false;
+  return user.username?.toLowerCase() === needle || user.displayName.toLowerCase() === needle;
+}
+
+async function assertInviteRecipient(directory: SqlExecutor, invite: OrgInvite, userId: string): Promise<void> {
+  if (invite.kind === 'link') return;
+  const user = await getUser(directory, userId);
+  if (!user || !inviteMatchesViewer(invite, user)) {
+    throw new WorkspaceDataError(
+      'ORG_INVITE_WRONG_RECIPIENT',
+      403,
+      'this invite was sent to someone else',
+    );
+  }
+}
+
+async function redeemInvite(
   directory: SqlExecutor,
-  token: string,
+  invite: OrgInvite,
+  org: Organization,
   userId: string,
 ): Promise<AcceptedInvite> {
-  const lookup = await lookupInviteByToken(directory, token);
-  if (!lookup.ok) {
-    if (lookup.reason === 'expired') {
-      throw new WorkspaceDataError('ORG_INVITE_EXPIRED', 410, 'this invite link has expired');
-    }
-    if (lookup.reason === 'exhausted') {
-      throw new WorkspaceDataError('ORG_INVITE_EXHAUSTED', 410, 'this invite link has reached its limit');
-    }
-    throw new WorkspaceDataError('ORG_INVITE_INVALID', 404, 'this invite link is not valid');
-  }
-  const { invite, org } = lookup.value;
   const existing = await getActiveMemberForUser(directory, org.id, userId);
   if (existing) return { organization: org, member: existing };
+
+  await assertInviteRecipient(directory, invite, userId);
 
   const now = Date.now();
   const memberId = `wsm-${randomUUID()}`;
@@ -514,6 +727,72 @@ export async function acceptOrgInvite(
   return { organization: org, member: await getOrgMember(directory, org.id, memberId) };
 }
 
+/** Redeem an invite for a user. Already-members are returned as-is rather than
+ * erroring, so re-opening a link is harmless and does not burn a use. */
+export async function acceptOrgInvite(
+  directory: SqlExecutor,
+  token: string,
+  userId: string,
+): Promise<AcceptedInvite> {
+  const lookup = await lookupInviteByToken(directory, token);
+  if (!lookup.ok) throwInviteRejection(lookup.reason);
+  return redeemInvite(directory, lookup.value.invite, lookup.value.org, userId);
+}
+
+/** Targeted invites the signed-in person can join without the raw token. */
+export async function listPendingInvitesForUser(
+  directory: SqlExecutor,
+  userId: string,
+): Promise<OrgPendingInvite[]> {
+  const user = await getUser(directory, userId);
+  if (!user) return [];
+  const rows = await directory.all<Record<string, any>>(
+    `SELECT
+       i.id, i.workspace_id AS "orgId", i.role, i.kind,
+       i.target_email AS "targetEmail", i.target_username AS "targetUsername",
+       i.target_user_id AS "targetUserId", i.created_by AS "createdBy",
+       i.expires_at AS "expiresAt", i.max_uses AS "maxUses", i.use_count AS "useCount",
+       i.revoked_at AS "revokedAt", i.created_at AS "createdAt",
+       w.name AS "orgName"
+     FROM od_workspace_invites i
+     JOIN od_workspaces w ON w.id = i.workspace_id
+     WHERE i.kind IN ('email', 'username')
+       AND i.revoked_at IS NULL
+     ORDER BY i.created_at DESC`,
+  );
+  const pending: OrgPendingInvite[] = [];
+  for (const row of rows) {
+    const invite = normalizeInvite(row);
+    if (!inviteIsOpen(invite)) continue;
+    if (!inviteMatchesViewer(invite, user)) continue;
+    if (await getActiveMemberForUser(directory, invite.orgId, userId)) continue;
+    pending.push({
+      id: invite.id,
+      orgId: invite.orgId,
+      orgName: String(row.orgName ?? ''),
+      role: invite.role,
+      kind: invite.kind === 'link' ? 'email' : invite.kind,
+      createdAt: invite.createdAt,
+    });
+  }
+  return pending;
+}
+
+/** Redeem a targeted invite by id. Link invites cannot use this path — the
+ * token is the credential, and invite ids are visible to admins. */
+export async function acceptPendingInvite(
+  directory: SqlExecutor,
+  inviteId: string,
+  userId: string,
+): Promise<AcceptedInvite> {
+  const invite = await getOrgInvite(directory, inviteId);
+  if (invite.kind === 'link' || !inviteIsOpen(invite)) {
+    throw new WorkspaceDataError('ORG_INVITE_INVALID', 404, 'this invite is not valid');
+  }
+  const org = await getOrganization(directory, invite.orgId);
+  return redeemInvite(directory, invite, org, userId);
+}
+
 /** Boot-time invariant: the daemon always has at least one organization owned
  * by the local owner, so keyless single-user mode works with zero setup. */
 export async function ensureDefaultOrganization(directory: SqlExecutor): Promise<Organization> {
@@ -521,4 +800,35 @@ export async function ensureDefaultOrganization(directory: SqlExecutor): Promise
   const first = (await listOrganizations(directory))[0];
   if (first) return first;
   return createOrganization(directory, { name: 'My Organization', ownerUserId });
+}
+
+/** Default name for the organization a new account lands in. */
+export function personalOrganizationName(displayName: string): string {
+  const name = displayName.trim();
+  if (!name || name.includes('@') || name.length > 48) return 'My Organization';
+  return `${name}'s Organization`;
+}
+
+/** Every signed-in person needs somewhere to stand. A new account, or one
+ * that has left every organization, gets a personal org they own — they can
+ * still join others from invites. Cheap and idempotent: a membership check
+ * then maybe one insert. */
+export async function ensurePersonalOrganization(
+  directory: SqlExecutor,
+  input: { userId: string; displayName: string },
+): Promise<Organization> {
+  const existing = await listOrganizationsForUser(directory, input.userId);
+  if (existing[0]) {
+    return {
+      id: existing[0].id,
+      name: existing[0].name,
+      createdBy: existing[0].createdBy,
+      createdAt: existing[0].createdAt,
+      updatedAt: existing[0].updatedAt,
+    };
+  }
+  return createOrganization(directory, {
+    name: personalOrganizationName(input.displayName),
+    ownerUserId: input.userId,
+  });
 }

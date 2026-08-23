@@ -95,29 +95,22 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('[P2] home topbar shows the new entry chips and links', async ({ page }) => {
+test('[P2] tab chrome hosts org, notifications, and settings', async ({ page }) => {
   await gotoEntryHome(page);
 
-  const topbar = page.locator('.entry-main__topbar');
-  await expect(topbar).toBeVisible();
+  const trailing = page.getByTestId('workspace-tabs-trailing');
+  await expect(trailing).toBeVisible();
+  await expect(trailing.getByTestId('org-switcher-trigger')).toBeVisible();
+  await expect(trailing.getByTestId('message-center-trigger')).toBeVisible();
+  await expect(trailing.getByTestId('entry-settings-menu-trigger')).toBeVisible();
 
-  const star = page.getByTestId('entry-star-badge');
-  await expect(star).toBeVisible();
-  await expect(star).toHaveAttribute('href', 'https://github.com/nexu-io/open-design');
-  await expect(star).toContainText('Star');
-  await expect(star).toContainText('51.6K');
-
-  const discord = page.getByTestId('entry-discord-badge');
-  await expect(discord).toBeVisible();
-  await expect(discord).toHaveAttribute('href', 'https://discord.gg/mHAjSMV6gz');
-  await expect(discord).toContainText('Join Discord');
-
+  await expect(page.getByTestId('entry-star-badge')).toHaveCount(0);
+  await expect(page.getByTestId('entry-discord-badge')).toHaveCount(0);
+  await expect(page.getByTestId('entry-use-everywhere-button')).toHaveCount(0);
   await expect(page.getByTestId('inline-model-switcher-chip')).toBeVisible();
-  await expect(page.getByTestId('entry-use-everywhere-button')).toBeVisible();
-  await expect(page.getByRole('button', { name: OPEN_SETTINGS_LABEL })).toBeVisible();
 });
 
-test('[P1] home topbar execution pill reflects the selected Local CLI agent and opens the switcher', async ({ page }) => {
+test('[P1] home composer execution pill reflects the selected Local CLI agent and opens the switcher', async ({ page }) => {
   await gotoEntryHome(page);
 
   const pill = page.getByTestId('inline-model-switcher-chip');
@@ -138,32 +131,20 @@ test('[P1] home topbar execution pill reflects the selected Local CLI agent and 
   await expect(popover.getByRole('radio', { name: /Codex CLI/i })).toBeVisible();
 });
 
-test('[P2] home topbar star and discord badges expose the current external-link contract', async ({ page }) => {
+test('[P2] Integrations Use everywhere tab is reachable from the nav rail', async ({ page }) => {
   await gotoEntryHome(page);
 
-  const star = page.getByTestId('entry-star-badge');
-  await expect(star).toHaveAttribute('target', '_blank');
-  await expect(star).toHaveAttribute('rel', /noreferrer/);
-  await expect(star).toHaveAttribute('rel', /noopener/);
-
-  const discord = page.getByTestId('entry-discord-badge');
-  await expect(discord).toHaveAttribute('href', 'https://discord.gg/mHAjSMV6gz');
-  await expect(discord).toHaveAttribute('aria-label', /Join the Open Design Discord/i);
-  await expect(discord).toHaveAttribute('data-tooltip', /Join the Open Design Discord/i);
-});
-
-test('[P2] home topbar Use everywhere navigates to Integrations with the tab selected', async ({ page }) => {
-  await gotoEntryHome(page);
-
-  await page.getByTestId('entry-use-everywhere-button').click();
+  await ensureRailOpen(page);
+  await page.getByTestId('entry-nav-integrations').click();
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
+  await page.getByTestId('integrations-tab-use-everywhere').click();
   await expect(page.getByTestId('integrations-tab-use-everywhere')).toHaveAttribute(
     'aria-selected',
     'true',
   );
 });
 
-test('[P1] home topbar settings menu opens settings and closes the execution popover', async ({ page }) => {
+test('[P1] tab chrome settings menu opens settings and closes the execution popover', async ({ page }) => {
   await gotoEntryHome(page);
 
   const pill = page.getByTestId('inline-model-switcher-chip');
@@ -186,7 +167,8 @@ test('[P1] home topbar settings menu opens settings and closes the execution pop
 test('[P2] returning from another entry view via the home nav reaches the home hero', async ({ page }) => {
   await gotoEntryHome(page);
 
-  await page.getByTestId('entry-use-everywhere-button').click();
+  await ensureRailOpen(page);
+  await page.getByTestId('entry-nav-integrations').click();
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
 
   // The logo doubles as a hover-to-collapse control now, so home is reached
@@ -196,5 +178,5 @@ test('[P2] returning from another entry view via the home nav reaches the home h
   await expect(page.getByTestId('home-hero')).toBeVisible();
   await expect(page.getByTestId('home-hero-input')).toBeVisible();
   await expect(page.getByTestId('home-hero-type-tabs')).toBeVisible();
-  await expect(page.getByTestId('entry-star-badge')).toBeVisible();
+  await expect(page.getByTestId('workspace-tabs-trailing')).toBeVisible();
 });

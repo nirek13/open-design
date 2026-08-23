@@ -56,9 +56,22 @@ export interface WorkspaceFieldConfig {
   /** number/integer: inclusive bounds. */
   min?: number;
   max?: number;
+  /** The part this field plays in automatic accounting and cross-document
+   * links (see api/business-hub.ts `HubFieldRole`). Preserved across schema
+   * edits so posting keeps working after someone adds their own columns; a
+   * field with no role is free-form. */
+  role?: string;
+  /** A computed field's expression, e.g. `{total} - {tax}`. Evaluated at read
+   * time and never stored, so it cannot go stale against the values it derives
+   * from. Parsed when the field is created, so a formula that cannot be read
+   * is refused rather than silently blanking a column on every read. See
+   * `workspace-data/formula.ts` for the grammar. */
+  formula?: string;
 }
 
-export type WorkspaceFieldStatus = 'active' | 'archived';
+/** `removed` is a field taken off a table by a schema edit. Its values stay in
+ * the record documents, which is what makes restoring it bring the data back. */
+export type WorkspaceFieldStatus = 'active' | 'archived' | 'removed';
 
 export interface WorkspaceField {
   id: string;

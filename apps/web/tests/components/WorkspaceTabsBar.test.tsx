@@ -123,6 +123,19 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     document.querySelector('[data-testid="blank-workspace-area"]')?.remove();
   });
 
+  it('renders trailing chrome on the tab row', () => {
+    render(
+      <WorkspaceTabsBar
+        route={{ kind: 'home', view: 'home' }}
+        projects={[]}
+        trailing={<button type="button" data-testid="trailing-probe">Org</button>}
+      />,
+    );
+
+    expect(screen.getByTestId('workspace-tabs-trailing')).toBeTruthy();
+    expect(screen.getByTestId('trailing-probe')).toBeTruthy();
+  });
+
   it('keeps Home tab as a singleton and avoids duplication', async () => {
     const { rerender } = render(
       <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
