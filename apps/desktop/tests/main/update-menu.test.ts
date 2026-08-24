@@ -73,7 +73,7 @@ describe("macOS update menu", () => {
       status: status("downloaded", {
         artifact: { type: "payload", url: "https://example.test/payload.zip" },
       }),
-    })).toMatchObject({ label: "Restart to Update Open Design…", enabled: true, action: "open-dialog" });
+    })).toMatchObject({ label: "Restart to Update Substrate…", enabled: true, action: "open-dialog" });
     expect(deriveDesktopUpdateMenuItem({
       labels: DEFAULT_DESKTOP_UPDATE_MENU_LABELS,
       platform: "darwin",

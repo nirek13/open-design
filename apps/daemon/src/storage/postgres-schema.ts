@@ -556,6 +556,102 @@ const MIGRATIONS: readonly PostgresMigration[] = [
         WHERE target_user_id IS NOT NULL;
     `,
   },
+  {
+    id: '0015-chat-dms-reactions',
+    sql: `
+      -- Direct messages, group DMs, and emoji reactions. Mirrors the next
+      -- WORKSPACE_MIGRATIONS step in storage/workspace-db.ts.
+      ALTER TABLE od_chat_channels ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'channel';
+      CREATE TABLE IF NOT EXISTS od_chat_reactions (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES od_chat_messages(id) ON DELETE CASCADE,
+        member_id TEXT NOT NULL,
+        emoji TEXT NOT NULL,
+        created_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_chat_reaction_unique
+        ON od_chat_reactions(message_id, member_id, emoji);
+      CREATE INDEX IF NOT EXISTS odx_chat_reaction_message
+        ON od_chat_reactions(message_id);
+    `,
+  },
+  {
+    id: '0016-app-web-url',
+    sql: `
+      ALTER TABLE od_apps ADD COLUMN IF NOT EXISTS web_url TEXT;
+    `,
+  },
+  {
+    id: '0017-user-profile',
+    sql: `
+      ALTER TABLE od_users ADD COLUMN IF NOT EXISTS bio TEXT;
+      ALTER TABLE od_users ADD COLUMN IF NOT EXISTS avatar_mime TEXT;
+    `,
+  },
+  {
+    id: '0018-org-teams-app-audience',
+    sql: `
+      CREATE TABLE IF NOT EXISTS od_org_teams (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES od_workspaces(id),
+        slug TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_org_teams_slug
+        ON od_org_teams(workspace_id, slug);
+      CREATE TABLE IF NOT EXISTS od_org_team_members (
+        team_id TEXT NOT NULL REFERENCES od_org_teams(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (team_id, member_id)
+      );
+      CREATE INDEX IF NOT EXISTS odx_org_team_members_member
+        ON od_org_team_members(workspace_id, member_id);
+
+      CREATE TABLE IF NOT EXISTS od_app_team_grants (
+        app_id TEXT NOT NULL REFERENCES od_apps(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        team_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (app_id, team_id)
+      );
+      CREATE INDEX IF NOT EXISTS odx_app_team_grants_team
+        ON od_app_team_grants(workspace_id, team_id);
+      CREATE TABLE IF NOT EXISTS od_app_denials (
+        app_id TEXT NOT NULL REFERENCES od_apps(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (app_id, member_id)
+      );
+      CREATE INDEX IF NOT EXISTS odx_app_denials_member
+        ON od_app_denials(workspace_id, member_id);
+    `,
+  },
+  {
+    id: '0019-org-branding',
+    sql: `
+      ALTER TABLE od_workspaces ADD COLUMN IF NOT EXISTS website_url TEXT;
+      ALTER TABLE od_workspaces ADD COLUMN IF NOT EXISTS default_design_system_id TEXT;
+      ALTER TABLE od_workspaces ADD COLUMN IF NOT EXISTS setup_completed_at BIGINT;
+      UPDATE od_workspaces SET setup_completed_at = created_at WHERE setup_completed_at IS NULL;
+    `,
+  },
+  {
+    id: '0020-member-reports-to',
+    sql: `
+      ALTER TABLE od_workspace_members ADD COLUMN IF NOT EXISTS reports_to TEXT;
+      CREATE INDEX IF NOT EXISTS odx_members_reports_to
+        ON od_workspace_members(workspace_id, reports_to)
+        WHERE reports_to IS NOT NULL;
+    `,
+  },
 ];
 
 /** Bring a Postgres database up to the current schema. Safe to call on every

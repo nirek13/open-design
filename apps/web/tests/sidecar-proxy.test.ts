@@ -23,6 +23,12 @@ describe('resolveDaemonProxyTarget', () => {
     expect(target?.href).toBe('http://127.0.0.1:7456/api/projects?limit=10');
   });
 
+  it('proxies public app share URLs to the daemon', () => {
+    const target = resolveDaemonProxyTarget('http://127.0.0.1:7456', '/s/share-token/logo.png');
+
+    expect(target?.href).toBe('http://127.0.0.1:7456/s/share-token/logo.png');
+  });
+
   it('does not let absolute request URLs replace the daemon origin', () => {
     const target = resolveDaemonProxyTarget(
       'http://127.0.0.1:7456',

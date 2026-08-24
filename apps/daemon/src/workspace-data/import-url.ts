@@ -9,6 +9,7 @@
 
 import { fetchExternalBrandAsset } from '../brands/safe-fetch.js';
 import { WorkspaceDataError } from './errors.js';
+import { extractTabularFromHtml } from './extract-tabular.js';
 
 const FETCH_TIMEOUT_MS = 12_000;
 const BODY_CAP = 2_000_000;
@@ -82,8 +83,10 @@ function looksDelimited(text: string): boolean {
   return [',', '\t', ';', '|'].some((d) => first.split(d).length > 1);
 }
 
-/** Flatten an array of objects (or `{data|records|items|rows: [...]}`) to CSV. */
+/** Flatten an array of objects (or a nested `{data|records|items|rows}` payload) to CSV. */
 export function jsonToCsv(raw: string): string | null {
+  const fromHtml = extractTabularFromHtml(`<script type="application/json">${raw}</script>`);
+  if (fromHtml) return fromHtml;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -167,7 +170,9 @@ function detectKind(
   if (ct.includes('csv') || ct.includes('tab-separated')) return 'csv';
   const trimmed = body.trimStart();
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) return 'json';
-  if (/<table\b/i.test(body)) return 'html-table';
+  if (/<table\b/i.test(body) || /<html\b/i.test(body) || /<dl\b/i.test(body) || /<ul\b/i.test(body)) {
+    return 'html-table';
+  }
   return 'csv';
 }
 
@@ -217,17 +222,17 @@ export async function fetchImportSource(
     }
     content = csv;
   } else if (kind === 'html-table') {
-    const csv = htmlTableToCsv(body);
+    const csv = extractTabularFromHtml(body) ?? htmlTableToCsv(body);
     if (!csv) {
       throw new WorkspaceDataError(
         'IMPORT_UNREADABLE',
         422,
-        'no HTML table with a header and rows was found on that page',
+        'no rows or columns could be read from that page',
       );
     }
     content = csv;
-  } else if (!looksDelimited(body) && htmlTableToCsv(body)) {
-    content = htmlTableToCsv(body)!;
+  } else if (!looksDelimited(body) && (extractTabularFromHtml(body) || htmlTableToCsv(body))) {
+    content = (extractTabularFromHtml(body) ?? htmlTableToCsv(body))!;
   } else if (!looksDelimited(body) && jsonToCsv(body)) {
     content = jsonToCsv(body)!;
   }

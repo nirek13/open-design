@@ -129,7 +129,7 @@ describe('derivePluginSourceLinks · url + local + bundled sources', () => {
     expect(out.sourceKindLabel).toBe('Local');
   });
 
-  it('routes bundled official sources to the Open Design repo', () => {
+  it('routes bundled official sources to the Substrate repo', () => {
     const out = derivePluginSourceLinks(
       makeRecord({
         sourceKind: 'bundled',
@@ -151,13 +151,26 @@ describe('derivePluginSourceLinks · author + contribute', () => {
         manifest: {
           name:    'p',
           version: '1.0.0',
+          author:  { name: 'Substrate', url: 'https://github.com/nexu-io' },
+        } as InstalledPluginRecord['manifest'],
+      }),
+    );
+    expect(out.authorName).toBe('Substrate');
+    expect(out.authorProfileUrl).toBe('https://github.com/nexu-io');
+    expect(out.authorAvatarUrl).toBe('https://github.com/nexu-io.png?size=80');
+  });
+
+  it('shows bundled Open Design authors as Substrate', () => {
+    const out = derivePluginSourceLinks(
+      makeRecord({
+        manifest: {
+          name:    'p',
+          version: '1.0.0',
           author:  { name: 'Open Design', url: 'https://github.com/nexu-io' },
         } as InstalledPluginRecord['manifest'],
       }),
     );
-    expect(out.authorName).toBe('Open Design');
-    expect(out.authorProfileUrl).toBe('https://github.com/nexu-io');
-    expect(out.authorAvatarUrl).toBe('https://github.com/nexu-io.png?size=80');
+    expect(out.authorName).toBe('Substrate');
   });
 
   it('extracts github avatar from a repo URL by using the owner', () => {
@@ -229,7 +242,7 @@ describe('derivePluginSourceLinks · author + contribute', () => {
 
 describe('authorInitials', () => {
   it('builds two-letter monograms', () => {
-    expect(authorInitials('Open Design')).toBe('OD');
+    expect(authorInitials('Substrate')).toBe('S');
     expect(authorInitials('jane')).toBe('J');
     expect(authorInitials('Long Multi Word Name')).toBe('LM');
   });

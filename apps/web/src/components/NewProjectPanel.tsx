@@ -62,6 +62,7 @@ import { Icon } from './Icon';
 import { Skeleton } from './Loading';
 import { Toast } from './Toast';
 import { useOpenFolderImport } from './useOpenFolderImport';
+import { isHiddenWireframeCreateSkill } from './plugins-home/curatedPriority';
 
 // Snapshot of a curated prompt template, captured at New Project time and
 // folded into ProjectMetadata.promptTemplate. The user may have edited the
@@ -347,9 +348,6 @@ export function NewProjectPanel({
 
   // Per-tab metadata. Tracked independently so switching tabs preserves
   // each tab's pick rather than resetting to defaults.
-  const [fidelity, setFidelity] = useState<'wireframe' | 'high-fidelity'>(
-    'high-fidelity',
-  );
   const [platformTargets, setPlatformTargets] = useState<NewProjectPlatform[]>(['responsive']);
   const [includeLandingPage, setIncludeLandingPage] = useState(false);
   const [includeOsWidgets, setIncludeOsWidgets] = useState(false);
@@ -545,7 +543,7 @@ export function NewProjectPanel({
       tab === 'prototype' ? 'prototype' : tab === 'deck' ? 'deck' : null;
     if (!mode) return [];
     return designTemplates
-      .filter((s) => s.mode === mode && !s.aggregatesExamples)
+      .filter((s) => s.mode === mode && !s.aggregatesExamples && !isHiddenWireframeCreateSkill(s))
       .sort(
         (a, b) =>
           (b.featured ?? 0) - (a.featured ?? 0) ||
@@ -728,7 +726,7 @@ export function NewProjectPanel({
     const metadata = buildMetadata({
       tab,
       mediaSurface,
-      fidelity,
+      fidelity: 'high-fidelity',
       platformTargets,
       includeLandingPage,
       includeOsWidgets,
@@ -795,7 +793,7 @@ export function NewProjectPanel({
         }
         if ('canceled' in result && result.canceled) return;
         setWorkingDirError({
-          message: `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update Open Design and try again.`,
+          message: `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update Substrate and try again.`,
         });
         return;
       }
@@ -1042,12 +1040,6 @@ export function NewProjectPanel({
             onIncludeLandingPage={setIncludeLandingPage}
             onIncludeOsWidgets={setIncludeOsWidgets}
           />
-        ) : null}
-
-        {/* Live artifact always renders at high fidelity — its whole point
-            is data-bound polished UI, so the wireframe option is hidden. */}
-        {tab === 'prototype' ? (
-          <FidelityPicker value={fidelity} onChange={setFidelity} />
         ) : null}
 
         {tab === 'live-artifact' ? (
@@ -1404,43 +1396,6 @@ function CompactToggle({
   );
 }
 
-function FidelityPicker({
-  value,
-  onChange,
-}: {
-  value: 'wireframe' | 'high-fidelity';
-  onChange: (v: 'wireframe' | 'high-fidelity') => void;
-}) {
-  const t = useT();
-  return (
-    <div className="newproj-section">
-      <label className="newproj-label">{t('newproj.fidelityLabel')}</label>
-      <div className="fidelity-grid">
-        <FidelityCard
-          active={value === 'wireframe'}
-          onClick={() => onChange('wireframe')}
-          label={t('newproj.fidelityWireframe')}
-          variant="wireframe"
-        />
-        <FidelityCard
-          active={value === 'high-fidelity'}
-          onClick={() => onChange('high-fidelity')}
-          label={t('newproj.fidelityHigh')}
-          variant="high-fidelity"
-        />
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   Connectors section (live-artifact only).
-   - Lists configured connectors as compact chips so the user can
-     see at a glance what data sources this artifact can pull from.
-   - When no connector is configured (or the list hasn't loaded yet
-     and ended up empty), shows a guidance card that, on click, opens
-     the Settings → Connectors surface (the new home of the catalog).
-   ============================================================ */
 function ConnectorsSection({
   connectors,
   loading,
@@ -1532,64 +1487,6 @@ function ConnectorsSection({
         </button>
       )}
     </div>
-  );
-}
-
-function FidelityCard({
-  active,
-  onClick,
-  label,
-  variant,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  variant: 'wireframe' | 'high-fidelity';
-}) {
-  return (
-    <button
-      type="button"
-      className={`fidelity-card${active ? ' active' : ''}`}
-      onClick={onClick}
-      aria-pressed={active}
-    >
-      <span className={`fidelity-thumb fidelity-thumb-${variant}`} aria-hidden>
-        {variant === 'wireframe' ? <WireframeArt /> : <HighFidelityArt />}
-      </span>
-      <span className="fidelity-label">{label}</span>
-    </button>
-  );
-}
-
-function WireframeArt() {
-  return (
-    <svg viewBox="0 0 120 70" width="100%" height="100%" aria-hidden>
-      <rect x="6" y="8" width="46" height="6" rx="2" fill="#d8d4cb" />
-      <rect x="6" y="20" width="34" height="4" rx="2" fill="#ebe8e1" />
-      <rect x="6" y="28" width="38" height="4" rx="2" fill="#ebe8e1" />
-      <rect x="6" y="36" width="30" height="4" rx="2" fill="#ebe8e1" />
-      <circle cx="22" cy="56" r="6" fill="none" stroke="#d8d4cb" strokeWidth="1.4" />
-      <rect x="64" y="8" width="50" height="54" rx="3" fill="none" stroke="#d8d4cb" strokeWidth="1.4" />
-      <rect x="70" y="14" width="38" height="4" rx="2" fill="#ebe8e1" />
-      <rect x="70" y="22" width="32" height="4" rx="2" fill="#ebe8e1" />
-      <rect x="70" y="30" width="38" height="4" rx="2" fill="#ebe8e1" />
-    </svg>
-  );
-}
-
-function HighFidelityArt() {
-  return (
-    <svg viewBox="0 0 120 70" width="100%" height="100%" aria-hidden>
-      <rect x="6" y="8" width="34" height="6" rx="2" fill="#1a1916" />
-      <rect x="6" y="20" width="46" height="4" rx="2" fill="#74716b" />
-      <rect x="6" y="28" width="42" height="4" rx="2" fill="#b3b0a8" />
-      <rect x="6" y="40" width="22" height="9" rx="2" fill="#c96442" />
-      <rect x="64" y="8" width="50" height="54" rx="4" fill="#fbeee5" />
-      <rect x="70" y="14" width="38" height="4" rx="2" fill="#c96442" />
-      <rect x="70" y="22" width="32" height="3" rx="1.5" fill="#74716b" />
-      <rect x="70" y="29" width="36" height="3" rx="1.5" fill="#b3b0a8" />
-      <rect x="70" y="36" width="20" height="6" rx="2" fill="#c96442" />
-    </svg>
   );
 }
 
@@ -3149,9 +3046,7 @@ function buildMetadata(input: {
     return {
       kind,
       ...base,
-      // Live artifact is locked to high fidelity (the picker is hidden in
-      // the panel) — wireframe live artifacts don't make sense.
-      fidelity: input.tab === 'live-artifact' ? 'high-fidelity' : input.fidelity,
+      fidelity: 'high-fidelity',
       ...(input.tab === 'live-artifact' ? { intent: 'live-artifact' as const } : {}),
       ...inspirations,
     };

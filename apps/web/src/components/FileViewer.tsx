@@ -6329,6 +6329,7 @@ function HtmlViewer({
   // needs nothing. See specs/current/one-click-hosting.md.
   const [publishPanelOpen, setPublishPanelOpen] = useState(false);
   const [createAppOpen, setCreateAppOpen] = useState(false);
+  const [createAppMode, setCreateAppMode] = useState<'choose' | 'workspace' | 'public'>('workspace');
   const runningApp = useOptionalRunningApp();
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   // False when closed; otherwise records which entry opened the modal so the
@@ -11522,7 +11523,7 @@ function HtmlViewer({
     await waitForAnimationFrame();
     // Prefer the daemon's off-screen render (desktop only): isolated from the
     // preview pane and, rendering the artifact alone in a hidden window, it can
-    // never capture Open Design's own UI. Page exports use the selected preview
+    // never capture Substrate's own UI. Page exports use the selected preview
     // preset; desktop pages and decks retain the renderer defaults. `wholeDeck`
     // (Export as image) stitches every slide
     // top-to-bottom into one long image — matching the slide count the viewer
@@ -13129,6 +13130,7 @@ function HtmlViewer({
                         role="menuitem"
                         onClick={() => {
                           setDeployMenuOpen(false);
+                          setCreateAppMode('workspace');
                           setCreateAppOpen(true);
                         }}
                         data-testid="file-create-app"
@@ -13137,6 +13139,23 @@ function HtmlViewer({
                         <span className="share-menu-text">
                           <span>{t('apps.create.menuItem')}</span>
                           <small>{t('apps.create.menuItemDetail')}</small>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="share-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          setDeployMenuOpen(false);
+                          setCreateAppMode('public');
+                          setCreateAppOpen(true);
+                        }}
+                        data-testid="file-publish-app-web"
+                      >
+                        <span className="share-menu-icon"><RemixIcon name="global-line" size={15} /></span>
+                        <span className="share-menu-text">
+                          <span>{t('apps.publishToWeb')}</span>
+                          <small>{t('apps.create.publishToWebHint')}</small>
                         </span>
                       </button>
                       <div className="share-menu-divider" />
@@ -13894,9 +13913,9 @@ function HtmlViewer({
               projectId={projectId}
               projectName={file.name.replace(/\.[^.]+$/, '')}
               filePath={file.name}
+              initialMode={createAppMode}
               onClose={() => setCreateAppOpen(false)}
               onCreated={(app) => {
-                setCreateAppOpen(false);
                 const orgId = activeOrgIdForRequests();
                 if (orgId && runningApp) {
                   void runningApp.openApp(orgId, app).catch(() => {});

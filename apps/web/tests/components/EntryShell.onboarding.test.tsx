@@ -284,11 +284,11 @@ async function clickCloudSignIn() {
 }
 
 async function findCloudSignInButton() {
-  return screen.findByRole('button', { name: /Sign in to Open Design/i });
+  return screen.findByRole('button', { name: /Sign in to Substrate/i });
 }
 
 function openLocalRuntimeSetup() {
-  expect(screen.getByRole('heading', { name: 'Sign in to Open Design' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Sign in to Substrate' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: /Local coding agent/i }));
   expect(screen.getByText('Local CLI')).toBeTruthy();
 }
@@ -331,6 +331,36 @@ describe('EntryShell design systems view', () => {
     renderHome({ onDesignSystemsRefresh }, '/design-systems');
 
     await waitFor(() => expect(onDesignSystemsRefresh).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('EntryShell team chat canvas', () => {
+  afterEach(() => {
+    window.localStorage.removeItem('od.entry.railOpen');
+  });
+
+  it('opens team chat fullscreen with the nav rail collapsed even if it was previously docked', async () => {
+    window.localStorage.setItem('od.entry.railOpen', 'true');
+    renderHome({}, '/team');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('entry-view-team').getAttribute('data-active')).toBe('true');
+    });
+    expect(document.querySelector('.entry')?.classList.contains('entry--rail-open')).toBe(false);
+    expect(document.querySelector('.entry-main__inner--fullscreen')).toBeTruthy();
+    expect(screen.getByTestId('entry-rail-toggle').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('lets the user dock the rail from team chat without leaving the view', async () => {
+    window.localStorage.setItem('od.entry.railOpen', 'true');
+    renderHome({}, '/team');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('entry-view-team').getAttribute('data-active')).toBe('true');
+    });
+    fireEvent.click(screen.getByTestId('entry-rail-toggle'));
+    expect(document.querySelector('.entry')?.classList.contains('entry--rail-open')).toBe(true);
+    expect(screen.getByTestId('entry-view-team').getAttribute('data-active')).toBe('true');
   });
 });
 
@@ -554,8 +584,8 @@ describe('EntryShell Home submit handoff', () => {
   });
 });
 
-describe('EntryShell onboarding Open Design AMR runtime', () => {
-  it('does not auto-select Open Design AMR when the AMR runtime is unavailable', async () => {
+describe('EntryShell onboarding Substrate AMR runtime', () => {
+  it('does not auto-select Substrate AMR when the AMR runtime is unavailable', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({ loggedIn: false, profile: 'prod', user: null, configPath: '/x' }),
     ) as typeof fetch;
@@ -564,10 +594,10 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
       onRefreshAgents: vi.fn(() => [cliAgent()]),
     });
 
-    expect(await screen.findByRole('heading', { name: 'Sign in to Open Design' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Sign in to Substrate' })).toBeTruthy();
     expect(await findCloudSignInButton()).toBeTruthy();
     openLocalRuntimeSetup();
-    expect(screen.queryByRole('button', { name: /Open Design AMR/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Substrate AMR/i })).toBeNull();
 
     await waitFor(() => {
       expect(props.onAgentChange).not.toHaveBeenCalledWith('amr');
@@ -576,23 +606,23 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
     expect(screen.queryByText('Sign in to continue')).toBeNull();
   });
 
-  it('shows Open Design Cloud as the default connect surface when AMR is available', async () => {
+  it('shows Substrate Cloud as the default connect surface when AMR is available', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({ loggedIn: false, profile: 'prod', user: null, configPath: '/x' }),
     ) as typeof fetch;
     renderOnboarding();
 
-    expect(screen.getByRole('heading', { name: 'Sign in to Open Design' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Sign in to Substrate' })).toBeTruthy();
     expect(await findCloudSignInButton()).toBeTruthy();
     // No runtime card, no AMR version text, no "Sign in to continue" CTA.
-    expect(screen.queryByRole('button', { name: /Open Design AMR/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Substrate AMR/i })).toBeNull();
     expect(screen.queryByText('AMR v0.1.0')).toBeNull();
     expect(screen.queryByRole('button', { name: /Sign in to continue/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /Authorize AMR/i })).toBeNull();
     // The secondary runtime links remain available on the landing.
     expect(screen.getByRole('button', { name: /Local coding agent/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Bring your own key/i })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Open Design AMR/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Substrate AMR/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /Authorize AMR/i })).toBeNull();
     expect(screen.queryByText('Not signed in')).toBeNull();
     expect(screen.queryByRole('button', { name: /^Sign in$/i })).toBeNull();
@@ -796,7 +826,7 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
     // The landing CTA returns to its signed-out copy and is enabled again,
     // and the secondary runtime links are available once more.
     const cloudButton = await screen.findByRole('button', {
-      name: /Sign in to Open Design/i,
+      name: /Sign in to Substrate/i,
     });
     expect(cloudButton.hasAttribute('disabled')).toBe(false);
     expect(screen.getByRole('button', { name: /Local coding agent/i })).toBeTruthy();
@@ -972,7 +1002,7 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
     expect(screen.queryByText('Signing in…')).toBeNull();
     expect(
       screen
-        .getByRole('button', { name: /Sign in to Open Design/i })
+        .getByRole('button', { name: /Sign in to Substrate/i })
         .hasAttribute('disabled'),
     ).toBe(false);
     expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
@@ -1056,7 +1086,7 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
     });
   });
 
-  it('continues normally when Open Design AMR is signed in', async () => {
+  it('continues normally when Substrate AMR is signed in', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({
         loggedIn: true,
@@ -1721,6 +1751,77 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
     });
   });
 
+  it('binds a host default OpenAI key during onboarding without showing the secret', async () => {
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        return jsonResponse({ loggedIn: false, profile: 'prod', user: null, configPath: '/x' });
+      }
+      if (url.endsWith('/api/byok/profiles') && (!init?.method || init.method === 'GET')) {
+        return jsonResponse({
+          available: false,
+          backend: 'env-openai',
+          profiles: [{
+            id: 'byok-env-openai',
+            label: 'Default OpenAI key',
+            protocol: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'gpt-4o-mini',
+            requiresApiKey: true,
+            configured: true,
+            keyTail: 'z9kQ',
+            createdAt: 0,
+            updatedAt: 0,
+          }],
+        });
+      }
+      if (url.endsWith('/api/byok/profiles/byok-env-openai/test') && init?.method === 'POST') {
+        return jsonResponse({
+          ok: true,
+          kind: 'success',
+          latencyMs: 14,
+          model: 'gpt-4o-mini',
+          sample: 'Connected',
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+    const props = renderOnboarding();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Use a default key' })).toBeTruthy();
+    });
+    expect(screen.getByRole('tab', { name: 'Use default key' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Use my own key instead' })).toBeTruthy();
+    expect(screen.queryByLabelText('API key')).toBeNull();
+    expect(document.body.textContent).not.toContain('z9kQ');
+    expect(document.body.textContent).not.toMatch(/sk-/);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Default OpenAI key is ready to use.').length).toBeGreaterThan(0);
+    }, { timeout: 4000 });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Continue$/i }));
+    await waitFor(() => {
+      expect(props.onCompleteOnboarding).toHaveBeenCalledTimes(1);
+    });
+    expect(props.onPersistByokCredential).not.toHaveBeenCalled();
+    expect(props.onModeChange).toHaveBeenCalledWith('api');
+    expect(props.onApiProtocolChange).toHaveBeenCalledWith('openai');
+    expect((props.onConfigPersist as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toMatchObject({
+      mode: 'api',
+      apiProtocol: 'openai',
+      apiKey: '',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      apiProviderBaseUrl: 'https://api.openai.com/v1',
+      agentId: null,
+      byokProfileId: 'byok-env-openai',
+      byokCredentialConfigured: true,
+      byokCredentialTail: 'z9kQ',
+    });
+  });
+
   it('lets Azure BYOK onboarding enter a custom deployment directly', async () => {
     globalThis.fetch = vi.fn(async (input, init) => {
       const url = String(input);
@@ -1796,13 +1897,13 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
       onRefreshAgents: vi.fn(() => [cliAgent()]),
     });
 
-    expect(screen.getByRole('heading', { name: 'Sign in to Open Design' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Sign in to Substrate' })).toBeTruthy();
     const primary = screen.getByRole('button', { name: /Loading/i });
     expect(primary).toBeTruthy();
     expect(primary.getAttribute('aria-busy')).toBe('true');
     expect((primary as HTMLButtonElement).disabled).toBe(true);
     expect(document.querySelector('.onboarding-view__card--skeleton')).toBeNull();
-    expect(screen.queryByRole('button', { name: /Open Design AMR/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Substrate AMR/i })).toBeNull();
     expect(screen.getByRole('button', { name: /Local coding agent/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Bring your own key/i })).toBeTruthy();
   });
@@ -1814,7 +1915,7 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
     renderOnboarding({ agentsLoading: false });
 
     expect(await findCloudSignInButton()).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Open Design AMR/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Substrate AMR/i })).toBeNull();
     expect(document.querySelector('.onboarding-view__card--skeleton')).toBeNull();
   });
 
@@ -1829,9 +1930,9 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
     });
 
     expect(
-      await screen.findByRole('button', { name: /Sign in to Open Design/i }),
+      await screen.findByRole('button', { name: /Sign in to Substrate/i }),
     ).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Open Design AMR/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Substrate AMR/i })).toBeNull();
     expect(document.querySelector('.onboarding-view__card--skeleton')).toBeNull();
   });
 

@@ -16,17 +16,22 @@
 // exercised — the same code path serves both modes.
 
 import type { Express, Request as ExpressRequest, Response } from 'express';
+import multer from 'multer';
 import {
   ORG_HEADER,
   createApiError,
   type CreateOrgInviteRequest,
   type CreateOrganizationRequest,
+  type CreateOrgTeamRequest,
   type OrgApp,
   type OrgRole,
   type PublishAppRequest,
   type SetAppGrantsRequest,
   type UpdateAppRequest,
+  type UpdateOrganizationRequest,
   type UpdateOrgMemberRequest,
+  type UpdateOrgTeamRequest,
+  type UpdateProfileRequest,
 } from '@open-design/contracts';
 import { sendApiError } from '../http/response.js';
 import type { RouteDeps } from '../server-context.js';
@@ -40,25 +45,41 @@ import {
   assertMemberRole,
   createOrgInvite,
   createOrganization,
+  createOrgTeam,
+  deleteOrgTeam,
   getActiveMemberForUser,
   getOrgMember,
+  getOrgTeam,
   getOrganization,
+  getUser,
+  getUserByUsername,
   listOrgInvites,
   listOrgMembers,
+  listOrgTeams,
   listOrganizationsForUser,
   listPendingInvitesForUser,
+  listTeamIdsForMember,
   lookupInviteByToken,
   renameOrganization,
+  updateOrganization,
   revokeOrgInvite,
+  setUserAvatarMime,
+  setUserUsername,
   updateOrgMember,
+  updateOrgTeam,
+  updateUserProfile,
+  profileAvatarUrl,
+  type DirectoryUser,
 } from '../workspace-data/tenancy.js';
 import {
   createAppShareLink,
+  deleteAppTeamGrants,
   getApp,
-  listAppGrants,
+  listAppAccess,
   listAppShareLinks,
   listApps,
   publishApp,
+  publishAppToWeb,
   recordAppOpen,
   recordShareView,
   resolveShareRoute,
@@ -75,6 +96,13 @@ import {
   GMAIL_CONNECTOR_ID,
   sendMail,
 } from '../workspace-data/mail.js';
+import { browserFacingOrigin, clerkFacingOrigin, requestOrigin } from '../origin-validation.js';
+import {
+  AVATAR_MAX_BYTES,
+  deleteAvatarFile,
+  readAvatarFile,
+  writeAvatarFile,
+} from '../workspace-data/avatars.js';
 
 type Request = ExpressRequest<Record<string, string>>;
 
@@ -83,6 +111,8 @@ const param = (req: Request, name: string): string => req.params[name] ?? '';
 export interface OrganizationRouteServices {
   manager: WorkspaceDbManager;
   identity: IdentityService;
+  /** Daemon data root. Profile photos are stored under `{dataDir}/avatars`. */
+  dataDir: string;
   /** Optional: when Gmail is connected, email invites are sent through it. */
   connectors?: ConnectorService;
   /** Serves an app's HTML file for the public share viewer. */
@@ -98,8 +128,23 @@ export interface RegisterOrganizationRoutesDeps extends RouteDeps<'db'> {
 }
 
 export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizationRoutesDeps) {
-  const { manager, identity, serveAppFile, connectors } = ctx.organizations;
+  const { manager, identity, serveAppFile, connectors, dataDir } = ctx.organizations;
   const directory = () => manager.directoryExecutor;
+  const avatarUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: AVATAR_MAX_BYTES, files: 1 },
+  });
+
+  function toProfile(user: DirectoryUser) {
+    return {
+      userId: user.id,
+      displayName: user.displayName,
+      email: user.email,
+      username: user.username,
+      bio: user.bio,
+      avatarUrl: profileAvatarUrl(user.id, user.avatarMime),
+    };
+  }
 
   function fail(res: Response, err: unknown): void {
     if (err instanceof WorkspaceDataError) {
@@ -157,25 +202,48 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
     return (memberId: string) => byId.get(memberId) ?? null;
   }
 
-  /** Base URL for links a human will paste into a browser.
-   *
-   * Invite and share links are useless if they point somewhere the recipient
-   * cannot reach, so they honor `OD_PUBLIC_BASE_URL` — the same env var the
-   * OAuth callback URL uses — before falling back to the request's own host.
-   * That fallback is right for the packaged app (one origin serves both the
-   * API and the SPA) but wrong behind a reverse proxy or a split dev setup,
-   * which is exactly what the env var is for. */
-  function publicBaseUrl(req: Request): string {
-    const configured = process.env.OD_PUBLIC_BASE_URL;
-    if (configured && /^https?:\/\//i.test(configured)) {
-      return configured.replace(/\/+$/u, '');
+  async function teamNameResolver(orgId: string): Promise<(teamId: string) => string | null> {
+    const teams = await listOrgTeams(directory(), orgId);
+    const byId = new Map(teams.map((team) => [team.id, team.name]));
+    return (teamId: string) => byId.get(teamId) ?? null;
+  }
+
+  async function accessResolvers(orgId: string) {
+    const [memberName, teamName] = await Promise.all([memberNameResolver(orgId), teamNameResolver(orgId)]);
+    return { memberName, teamName };
+  }
+
+  async function appViewerFor(orgId: string, member: { id: string; role: OrgRole }) {
+    return {
+      memberId: member.id,
+      role: member.role,
+      teamIds: await listTeamIdsForMember(directory(), orgId, member.id),
+    };
+  }
+
+  async function assertTeamsExist(
+    orgId: string,
+    teamGrants: Array<{ teamId: string }> | undefined,
+  ): Promise<void> {
+    if (!teamGrants?.length) return;
+    for (const grant of teamGrants) {
+      if (typeof grant.teamId !== 'string' || !grant.teamId.trim()) continue;
+      await getOrgTeam(directory(), orgId, grant.teamId.trim());
     }
-    const host = req.get('host') ?? '127.0.0.1';
-    return `${req.protocol || 'http'}://${host}`;
+  }
+
+  /** Origin for share links. `GET /s/:token` is served by the daemon, but
+   * browsers open the public/web origin (`/s/` is proxied there in split-port
+   * and reverse-proxy installs). Use the same origin join links use so a
+   * rewritten loopback `Host` cannot mint `http://127.0.0.1:7456/s/…`. */
+  function publicBaseUrl(req: Request): string {
+    return browserFacingOrigin(req);
   }
 
   const shareUrlFor = (req: Request, token: string) => `${publicBaseUrl(req)}/s/${token}`;
-  const joinUrlFor = (req: Request, token: string) => `${publicBaseUrl(req)}/join/${token}`;
+  /** Join landing is the web SPA. In split-port local runs that is not this
+   * daemon, so the URL follows `browserFacingOrigin`. */
+  const joinUrlFor = (req: Request, token: string) => `${browserFacingOrigin(req)}/join/${token}`;
 
   // --- Bootstrap ----------------------------------------------------------
 
@@ -186,8 +254,16 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
     res.json({
       mode: identity.config.mode,
       ...(identity.config.publishableKey ? { publishableKey: identity.config.publishableKey } : {}),
+      appOrigin: clerkFacingOrigin(req),
       viewer: viewer
-        ? { userId: viewer.userId, displayName: viewer.displayName, email: viewer.email }
+        ? {
+            userId: viewer.userId,
+            displayName: viewer.displayName,
+            email: viewer.email,
+            username: viewer.username,
+            bio: viewer.bio,
+            avatarUrl: viewer.avatarUrl,
+          }
         : null,
       organizations: viewer ? await listOrganizationsForUser(directory(), viewer.userId) : [],
     });
@@ -218,7 +294,25 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
 
   app.patch('/api/orgs/:orgId', handle(async (req, res) => {
     const { orgId } = await scope(req, 'admin');
-    const name = typeof req.body?.name === 'string' ? req.body.name : '';
+    const body = (req.body ?? {}) as UpdateOrganizationRequest;
+    const hasBrandingPatch =
+      body.websiteUrl !== undefined ||
+      body.defaultDesignSystemId !== undefined ||
+      body.setupCompleted !== undefined;
+    if (hasBrandingPatch || (typeof body.name === 'string' && body.name.trim())) {
+      res.json({
+        organization: await updateOrganization(directory(), orgId, {
+          ...(typeof body.name === 'string' ? { name: body.name } : {}),
+          ...(body.websiteUrl !== undefined ? { websiteUrl: body.websiteUrl } : {}),
+          ...(body.defaultDesignSystemId !== undefined
+            ? { defaultDesignSystemId: body.defaultDesignSystemId }
+            : {}),
+          ...(body.setupCompleted !== undefined ? { setupCompleted: body.setupCompleted } : {}),
+        }),
+      });
+      return;
+    }
+    const name = typeof body.name === 'string' ? body.name : '';
     res.json({ organization: await renameOrganization(directory(), orgId, name) });
   }));
 
@@ -230,11 +324,13 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
   }));
 
   app.patch('/api/orgs/:orgId/members/:memberId', handle(async (req, res) => {
-    const { orgId } = await scope(req, 'owner');
     const body = (req.body ?? {}) as UpdateOrgMemberRequest;
-    const patch: { role?: OrgRole; status?: 'active' | 'removed' } = {};
+    const changingStanding = body.role !== undefined || body.status !== undefined;
+    const { orgId } = await scope(req, changingStanding ? 'owner' : 'admin');
+    const patch: { role?: OrgRole; status?: 'active' | 'removed'; reportsTo?: string | null } = {};
     if (body.role !== undefined) patch.role = body.role;
     if (body.status !== undefined) patch.status = body.status;
+    if (body.reportsTo !== undefined) patch.reportsTo = body.reportsTo;
     res.json({ member: await updateOrgMember(directory(), orgId, param(req, 'memberId'), patch) });
   }));
 
@@ -244,6 +340,38 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
     res.json({
       member: await updateOrgMember(directory(), orgId, param(req, 'memberId'), { status: 'removed' }),
     });
+  }));
+
+  // --- Teams --------------------------------------------------------------
+
+  app.get('/api/orgs/:orgId/teams', handle(async (req, res) => {
+    const { orgId } = await scope(req);
+    res.json({ teams: await listOrgTeams(directory(), orgId) });
+  }));
+
+  app.post('/api/orgs/:orgId/teams', handle(async (req, res) => {
+    const { orgId, member } = await scope(req, 'admin');
+    const body = (req.body ?? {}) as CreateOrgTeamRequest;
+    res.status(201).json({ team: await createOrgTeam(directory(), orgId, member.id, body) });
+  }));
+
+  app.get('/api/orgs/:orgId/teams/:teamId', handle(async (req, res) => {
+    const { orgId } = await scope(req);
+    res.json({ team: await getOrgTeam(directory(), orgId, param(req, 'teamId')) });
+  }));
+
+  app.patch('/api/orgs/:orgId/teams/:teamId', handle(async (req, res) => {
+    const { orgId } = await scope(req, 'admin');
+    const body = (req.body ?? {}) as UpdateOrgTeamRequest;
+    res.json({ team: await updateOrgTeam(directory(), orgId, param(req, 'teamId'), body) });
+  }));
+
+  app.delete('/api/orgs/:orgId/teams/:teamId', handle(async (req, res) => {
+    const { orgId, db } = await scope(req, 'admin');
+    const teamId = param(req, 'teamId');
+    const team = await deleteOrgTeam(directory(), orgId, teamId);
+    await deleteAppTeamGrants(db, orgId, teamId);
+    res.json({ team });
   }));
 
   // --- Invites ------------------------------------------------------------
@@ -302,6 +430,79 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
     res.json({ invites: await listPendingInvitesForUser(directory(), viewer.userId) });
   }));
 
+  app.patch('/api/me', handle(async (req, res) => {
+    const viewer = await viewerFor(req);
+    const body = (req.body ?? {}) as UpdateProfileRequest;
+    const user = await updateUserProfile(directory(), viewer.userId, {
+      ...(typeof body.username === 'string' ? { username: body.username } : {}),
+      ...(typeof body.displayName === 'string' ? { displayName: body.displayName } : {}),
+      ...(typeof body.bio === 'string' ? { bio: body.bio } : {}),
+    });
+    res.json(toProfile(user));
+  }));
+
+  app.put('/api/me/avatar', handle(async (req, res) => {
+    const viewer = await viewerFor(req);
+    const file = await new Promise<Express.Multer.File>((resolve, reject) => {
+      avatarUpload.single('file')(req, res, (err: unknown) => {
+        if (err) {
+          if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+            reject(new WorkspaceDataError('PAYLOAD_TOO_LARGE', 413, 'photo must be under 2 MB'));
+            return;
+          }
+          reject(err);
+          return;
+        }
+        if (!req.file) {
+          reject(new WorkspaceDataError('VALIDATION_FAILED', 422, 'photo file is required'));
+          return;
+        }
+        resolve(req.file);
+      });
+    });
+    const mime = await writeAvatarFile(dataDir, viewer.userId, file.buffer);
+    const user = await setUserAvatarMime(directory(), viewer.userId, mime);
+    res.json(toProfile(user));
+  }));
+
+  app.delete('/api/me/avatar', handle(async (req, res) => {
+    const viewer = await viewerFor(req);
+    await deleteAvatarFile(dataDir, viewer.userId);
+    const user = await setUserAvatarMime(directory(), viewer.userId, null);
+    res.json(toProfile(user));
+  }));
+
+  app.get('/api/users/:userId/avatar', handle(async (req, res) => {
+    await viewerFor(req);
+    const userId = param(req, 'userId');
+    const user = await getUser(directory(), userId);
+    if (!user?.avatarMime) {
+      throw new WorkspaceDataError('NOT_FOUND', 404, 'photo not found');
+    }
+    const buf = await readAvatarFile(dataDir, userId);
+    if (!buf) {
+      throw new WorkspaceDataError('NOT_FOUND', 404, 'photo not found');
+    }
+    res.setHeader('Content-Type', user.avatarMime);
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.send(buf);
+  }));
+
+  app.get('/api/users/:username', handle(async (req, res) => {
+    await viewerFor(req);
+    const user = await getUserByUsername(directory(), param(req, 'username'));
+    if (!user || !user.username) {
+      throw new WorkspaceDataError('NOT_FOUND', 404, 'user not found');
+    }
+    res.json({
+      userId: user.id,
+      displayName: user.displayName,
+      username: user.username,
+      bio: user.bio,
+      avatarUrl: profileAvatarUrl(user.id, user.avatarMime),
+    });
+  }));
+
   app.post('/api/me/invites/:inviteId/accept', handle(async (req, res) => {
     const viewer = await viewerFor(req);
     const accepted = await acceptPendingInvite(directory(), param(req, 'inviteId'), viewer.userId);
@@ -354,6 +555,7 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
         pinnedOnly,
         viewerMemberId: member.id,
         viewerRole: member.role,
+        viewerTeamIds: await listTeamIdsForMember(directory(), org.id, member.id),
         resolveMemberName: await memberNameResolver(org.id),
       });
       for (const orgApp of orgApps) apps.push({ ...orgApp, orgName: org.name });
@@ -371,6 +573,7 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
         pinnedOnly: req.query.pinned === '1',
         viewerMemberId: member.id,
         viewerRole: member.role,
+        viewerTeamIds: await listTeamIdsForMember(directory(), orgId, member.id),
         resolveMemberName: await memberNameResolver(orgId),
       }),
     });
@@ -379,6 +582,7 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
   app.post('/api/orgs/:orgId/apps', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     const body = (req.body ?? {}) as PublishAppRequest;
+    await assertTeamsExist(orgId, body.teamGrants);
     res.status(201).json({ app: await publishApp(db, orgId, member.id, member.displayName, body) });
   }));
 
@@ -386,21 +590,21 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
     const { orgId, member, db } = await scope(req);
     const resolve = await memberNameResolver(orgId);
     const found = await getApp(db, orgId, param(req, 'appId'));
-    await assertCanViewApp(db, orgId, found, { memberId: member.id, role: member.role });
+    await assertCanViewApp(db, orgId, found, await appViewerFor(orgId, member));
     res.json({ app: { ...found, createdByName: resolve(found.createdBy) } });
   }));
 
   app.patch('/api/orgs/:orgId/apps/:appId', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     const existing = await getApp(db, orgId, param(req, 'appId'));
-    await assertCanEditApp(db, orgId, existing, { memberId: member.id, role: member.role });
+    await assertCanEditApp(db, orgId, existing, await appViewerFor(orgId, member));
     res.json({ app: await updateApp(db, orgId, param(req, 'appId'), (req.body ?? {}) as UpdateAppRequest) });
   }));
 
   app.post('/api/orgs/:orgId/apps/:appId/open', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     const found = await getApp(db, orgId, param(req, 'appId'));
-    await assertCanViewApp(db, orgId, found, { memberId: member.id, role: member.role });
+    await assertCanViewApp(db, orgId, found, await appViewerFor(orgId, member));
     await recordAppOpen(db, found.id);
     res.json({ app: await getApp(db, orgId, found.id) });
   }));
@@ -408,38 +612,30 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
   app.get('/api/orgs/:orgId/apps/:appId/grants', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     const found = await getApp(db, orgId, param(req, 'appId'));
-    await assertCanViewApp(db, orgId, found, { memberId: member.id, role: member.role });
-    res.json({
-      grants: await listAppGrants(db, orgId, found.id, await memberNameResolver(orgId)),
-    });
+    await assertCanViewApp(db, orgId, found, await appViewerFor(orgId, member));
+    res.json(await listAppAccess(db, orgId, found.id, await accessResolvers(orgId)));
   }));
 
   app.put('/api/orgs/:orgId/apps/:appId/grants', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     const found = await getApp(db, orgId, param(req, 'appId'));
-    await assertCanEditApp(db, orgId, found, { memberId: member.id, role: member.role });
-    res.json({
-      grants: await setAppGrants(
-        db,
-        orgId,
-        found.id,
-        (req.body ?? {}) as SetAppGrantsRequest,
-        await memberNameResolver(orgId),
-      ),
-    });
+    await assertCanEditApp(db, orgId, found, await appViewerFor(orgId, member));
+    const body = (req.body ?? {}) as SetAppGrantsRequest;
+    await assertTeamsExist(orgId, body.teamGrants);
+    res.json(await setAppGrants(db, orgId, found.id, body, await accessResolvers(orgId)));
   }));
 
   app.get('/api/orgs/:orgId/apps/:appId/shares', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     const found = await getApp(db, orgId, param(req, 'appId'));
-    await assertCanViewApp(db, orgId, found, { memberId: member.id, role: member.role });
+    await assertCanViewApp(db, orgId, found, await appViewerFor(orgId, member));
     res.json({ shares: await listAppShareLinks(db, orgId, param(req, 'appId')) });
   }));
 
   app.post('/api/orgs/:orgId/apps/:appId/shares', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     const found = await getApp(db, orgId, param(req, 'appId'));
-    await assertCanEditApp(db, orgId, found, { memberId: member.id, role: member.role });
+    await assertCanEditApp(db, orgId, found, await appViewerFor(orgId, member));
     const created = await createAppShareLink(
       db,
       directory(),
@@ -455,14 +651,46 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
     });
   }));
 
+  app.post('/api/orgs/:orgId/apps/:appId/publish-web', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    const found = await getApp(db, orgId, param(req, 'appId'));
+    await assertCanEditApp(db, orgId, found, await appViewerFor(orgId, member));
+    res.json(await publishAppToWeb(
+      db,
+      directory(),
+      orgId,
+      found.id,
+      member.id,
+      publicBaseUrl(req),
+    ));
+  }));
+
   app.post('/api/orgs/:orgId/apps/:appId/shares/:shareId/revoke', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req);
     const found = await getApp(db, orgId, param(req, 'appId'));
-    await assertCanEditApp(db, orgId, found, { memberId: member.id, role: member.role });
+    await assertCanEditApp(db, orgId, found, await appViewerFor(orgId, member));
     res.json({
       share: await revokeAppShareLink(db, directory(), orgId, param(req, 'appId'), param(req, 'shareId')),
     });
   }));
+
+  // Invite landing lives in the web SPA. In split-port tools-dev the daemon
+  // is not that origin, so send the browser there. Same-origin packaged /
+  // reverse-proxy installs fall through to the SPA fallback.
+  app.get('/join/:token', (req, res, next) => {
+    const token = param(req, 'token');
+    if (!token) {
+      next();
+      return;
+    }
+    const browser = browserFacingOrigin(req);
+    const here = requestOrigin(req);
+    if (browser !== here) {
+      res.redirect(302, `${browser}/join/${encodeURIComponent(token)}`);
+      return;
+    }
+    next();
+  });
 
   // --- Public shared-app viewer -------------------------------------------
 

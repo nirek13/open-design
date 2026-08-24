@@ -26,6 +26,8 @@ export const PAGE_BLOCK_TYPES = [
   'code',
   'divider',
   'bookmark',
+  /** Live iframe/media embed of any URL, slide, app, or design preview. */
+  'embed',
   /** Small inline grid owned by the page (not a workspace table). */
   'table',
   /** Live embed of an organization workspace table (+ optional saved view). */
@@ -60,9 +62,36 @@ export const PAGE_BLOCK_CATALOG: ReadonlyArray<{
   { type: 'code', label: 'Code', hint: 'Code snippet', keywords: ['code', 'pre'] },
   { type: 'divider', label: 'Divider', hint: 'Visual break', keywords: ['divider', 'hr', 'line'] },
   { type: 'bookmark', label: 'Bookmark', hint: 'Save a link with a preview card', keywords: ['bookmark', 'link', 'url'] },
+  {
+    type: 'embed',
+    label: 'Embed',
+    hint: 'Live YouTube, Figma, or anything you created — apps, pictures, videos, slides',
+    keywords: [
+      'embed',
+      'iframe',
+      'youtube',
+      'figma',
+      'notion',
+      'video',
+      'slides',
+      'docs',
+      'app',
+      'pdf',
+      'picture',
+      'photo',
+      'image',
+      'mp4',
+      'deck',
+    ],
+  },
   { type: 'table', label: 'Simple table', hint: 'Inline grid on this page', keywords: ['table', 'grid'] },
   { type: 'database', label: 'Database', hint: 'Embed an org workspace table', keywords: ['database', 'data', 'workspace'] },
-  { type: 'artifact', label: 'Design file', hint: 'Link a project HTML/app file', keywords: ['artifact', 'design', 'html', 'app'] },
+  {
+    type: 'artifact',
+    label: 'Design file',
+    hint: 'Embed an app, picture, video, or slides you created',
+    keywords: ['artifact', 'design', 'html', 'app', 'image', 'video', 'slides', 'deck', 'picture'],
+  },
   { type: 'page', label: 'Sub-page', hint: 'Create or embed a nested page', keywords: ['page', 'subpage', 'wiki', 'child'] },
   { type: 'record', label: 'ERP record', hint: 'Embed one business record', keywords: ['record', 'erp', 'invoice', 'deal'] },
 ];
@@ -175,7 +204,7 @@ export interface AppendPageBlocksRequest {
   blocks: PageBlockInput[];
 }
 
-export type PageEmbedKind = 'page' | 'database' | 'record' | 'artifact' | 'bookmark';
+export type PageEmbedKind = 'page' | 'database' | 'record' | 'artifact' | 'bookmark' | 'embed';
 
 export interface EmbedPageBlockRequest {
   type: PageEmbedKind;

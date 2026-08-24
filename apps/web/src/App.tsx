@@ -42,6 +42,11 @@ import { AccountMenu } from './components/account/AccountMenu';
 import { OrgSwitcher } from './components/org/OrgSwitcher';
 import { MessageCenter } from './components/MessageCenter';
 import { EntrySettingsMenu } from './components/EntrySettingsMenu';
+import { SearchPalette } from './components/search/SearchView';
+import {
+  TOGGLE_SEARCH_EVENT,
+  isToggleSearchHotkey,
+} from './components/search/search-hotkey';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -50,9 +55,10 @@ import {
   IframeKeepAliveProvider,
   useIframeKeepAlivePool,
 } from './components/IframeKeepAlivePool';
-import { OrgProvider } from './org/OrgContext';
+import { OrgProvider, useOptionalOrg } from './org/OrgContext';
 import { AuthGate } from './auth/AuthGate';
 import { JoinOrgView } from './components/org/JoinOrgView';
+import { WorkspaceSetupView } from './components/org/WorkspaceSetupView';
 import {
   SettingsDialog,
   switchApiProtocolConfig,
@@ -160,7 +166,7 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   initialRunContext?: RunContextSelection | null;
   conversationMode?: ChatSessionMode;
   autoSendFirstMessage?: boolean;
-  /** The home submit already ran the Open Design Cloud balance gate (and the
+  /** The home submit already ran the Substrate Cloud balance gate (and the
    *  user acknowledged any soft warning), so the project's first auto-send
    *  must not re-gate — re-prompting a decision the user just made. */
   amrGatePrechecked?: boolean;
@@ -426,6 +432,7 @@ export function App() {
 
 function AppInner() {
   const { t } = useI18n();
+  const org = useOptionalOrg();
   const iframeKeepAlivePool = useIframeKeepAlivePool();
   const clientType = useMemo(() => detectClientType(), []);
   const route = useRoute();
@@ -461,7 +468,7 @@ function AppInner() {
   // Observability marker. `apps/web/src/observability/white-screen.ts`
   // keys its "app actually mounted" success condition on this attribute
   // because the dynamic-import loading shell (`<div class="od-loading-shell">
-  // Loading Open Design…</div>`) is itself >MIN_VISIBLE_TEXT and would
+  // Loading Substrate…</div>`) is itself >MIN_VISIBLE_TEXT and would
   // otherwise be mistaken for a real mount. Survives subsequent render
   // crashes — once App has mounted at least once, it's no longer a white
   // screen (subsequent failures show up as `$exception`).
@@ -478,6 +485,7 @@ function AppInner() {
   latestPersistedConfigRef.current = config;
   const settingsDraftConfigRef = useRef<AppConfig | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
   const [amrArtifactUpgradeHomeMockConfig] = useState<AmrArtifactUpgradeHomeOffer | null>(
     () => process.env.NODE_ENV === 'development' && typeof window !== 'undefined'
       ? amrArtifactUpgradeHomeMockOffer(window.location.search)
@@ -1199,6 +1207,18 @@ function AppInner() {
   // config has merged so we never overwrite a daemon-stored selection.
   useEffect(() => {
     if (!daemonConfigLoaded || dsLoading) return;
+    const orgDefault = org?.activeOrg?.defaultDesignSystemId;
+    if (orgDefault && (!config.designSystemId || config.designSystemId === 'default')) {
+      if (config.designSystemId === orgDefault) return;
+      setConfig((prev) => {
+        if (prev.designSystemId && prev.designSystemId !== 'default') return prev;
+        const next: AppConfig = { ...prev, designSystemId: orgDefault };
+        saveConfig(next);
+        void syncConfigToDaemon(next);
+        return next;
+      });
+      return;
+    }
     if (config.designSystemId) return;
     if (designSystems.length === 0) return;
     const id =
@@ -1210,7 +1230,13 @@ function AppInner() {
       void syncConfigToDaemon(next);
       return next;
     });
-  }, [daemonConfigLoaded, dsLoading, designSystems, config.designSystemId]);
+  }, [
+    daemonConfigLoaded,
+    dsLoading,
+    designSystems,
+    config.designSystemId,
+    org?.activeOrg?.defaultDesignSystemId,
+  ]);
 
   // One-shot self-healing migration for pets adopted before the
   // overlay learned atlas-row switching. If the stored pet is a
@@ -2388,6 +2414,26 @@ function AppInner() {
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
   }, [openSettings]);
 
+  // Cmd+Space / Cmd+1 (mac) and Ctrl+Space / Ctrl+1 (win/linux) pull
+  // organization search up over whatever you are looking at. Electron
+  // also forwards these chords when the OS would otherwise hand them to
+  // Spotlight or the first-tab shortcut.
+  useEffect(() => {
+    const toggle = () => setSearchPaletteOpen((open) => !open);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isToggleSearchHotkey(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggle();
+    };
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    window.addEventListener(TOGGLE_SEARCH_EVENT, toggle);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, { capture: true });
+      window.removeEventListener(TOGGLE_SEARCH_EVENT, toggle);
+    };
+  }, []);
+
   // Explicit enabled toggle — true = wake, false = tuck. Persists to
   // localStorage so the overlay state survives across reloads. We keep
   // `adopted` untouched so the entry-view CTA does not regress to
@@ -2513,6 +2559,16 @@ function AppInner() {
     // Renders outside the app shell: whoever followed this link may not be a
     // member of any organization yet, so there is no workspace to frame it in.
     appMain = <JoinOrgView token={route.token} />;
+  } else if (
+    org &&
+    !org.loading &&
+    org.auth?.mode === 'clerk' &&
+    (org.organizations.length === 0 ||
+      (org.role === 'owner' && org.activeOrg && !org.activeOrg.setupCompletedAt))
+  ) {
+    appMain = (
+      <WorkspaceSetupView onApplyDesignSystem={handleChangeDefaultDesignSystem} />
+    );
   } else if (route.kind === 'marketplace') {
     appMain = <MarketplaceView />;
   } else if (route.kind === 'marketplace-detail') {
@@ -2652,7 +2708,7 @@ function AppInner() {
           setPendingDesignSystemCreateEntry('design_systems_page');
           navigate({ kind: 'design-system-create' });
         }}
-        onOpenDesignSystem={(id: string) => navigate({ kind: 'design-system-detail', designSystemId: id })}
+        onSubstrateSystem={(id: string) => navigate({ kind: 'design-system-detail', designSystemId: id })}
         onDesignSystemsRefresh={refreshDesignSystems}
         onPersistComposioKey={handleConfigPersistComposioKey}
         onOpenSettings={openSettings}
@@ -2740,6 +2796,7 @@ function AppInner() {
         />
       )}
       <TooltipLayer />
+      <SearchPalette open={searchPaletteOpen} onClose={() => setSearchPaletteOpen(false)} />
       <UpdateDialog />
       <AmrArtifactUpgradeGate
         homeVisible={route.kind === 'home' && route.view === 'home'}

@@ -6,6 +6,8 @@ import { resolveToolPackConfig, WORKSPACE_ROOT } from "../src/config.js";
 const savedTelemetryRelayUrl = process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
 const savedPosthogKey = process.env.POSTHOG_KEY;
 const savedPosthogHost = process.env.POSTHOG_HOST;
+const savedClerkIssuer = process.env.OD_CLERK_ISSUER;
+const savedClerkPublishableKey = process.env.OD_CLERK_PUBLISHABLE_KEY;
 const savedAmrProfile = process.env.OPEN_DESIGN_AMR_PROFILE;
 
 afterEach(() => {
@@ -23,6 +25,16 @@ afterEach(() => {
     delete process.env.POSTHOG_HOST;
   } else {
     process.env.POSTHOG_HOST = savedPosthogHost;
+  }
+  if (savedClerkIssuer == null) {
+    delete process.env.OD_CLERK_ISSUER;
+  } else {
+    process.env.OD_CLERK_ISSUER = savedClerkIssuer;
+  }
+  if (savedClerkPublishableKey == null) {
+    delete process.env.OD_CLERK_PUBLISHABLE_KEY;
+  } else {
+    process.env.OD_CLERK_PUBLISHABLE_KEY = savedClerkPublishableKey;
   }
   if (savedAmrProfile == null) {
     delete process.env.OPEN_DESIGN_AMR_PROFILE;
@@ -175,5 +187,30 @@ describe("resolveToolPackConfig PostHog analytics", () => {
     process.env.POSTHOG_HOST = "https://eu.i.posthog.com///";
     const config = resolveToolPackConfig("mac");
     expect(config.posthogHost).toBe("https://eu.i.posthog.com");
+  });
+});
+
+describe("resolveToolPackConfig Clerk identity", () => {
+  it("bakes OD_CLERK_ISSUER and OD_CLERK_PUBLISHABLE_KEY into packaged config when set at build time", () => {
+    process.env.OD_CLERK_ISSUER = "https://clean-jay-54.clerk.accounts.dev/";
+    process.env.OD_CLERK_PUBLISHABLE_KEY = "pk_test_Y2xlYW4tamF5LTU0LmNsZXJrLmFjY291bnRzLmRldiQ";
+    const config = resolveToolPackConfig("mac", { namespace: "clerk-test" });
+    expect(config.clerkIssuer).toBe("https://clean-jay-54.clerk.accounts.dev");
+    expect(config.clerkPublishableKey).toBe(
+      "pk_test_Y2xlYW4tamF5LTU0LmNsZXJrLmFjY291bnRzLmRldiQ",
+    );
+  });
+
+  it("omits Clerk config for packs that lack the env", () => {
+    delete process.env.OD_CLERK_ISSUER;
+    delete process.env.OD_CLERK_PUBLISHABLE_KEY;
+    const config = resolveToolPackConfig("mac", { namespace: "clerk-test" });
+    expect(config.clerkIssuer).toBeUndefined();
+    expect(config.clerkPublishableKey).toBeUndefined();
+  });
+
+  it("rejects a non-https Clerk issuer", () => {
+    process.env.OD_CLERK_ISSUER = "http://clean-jay-54.clerk.accounts.dev";
+    expect(() => resolveToolPackConfig("mac")).toThrow(/OD_CLERK_ISSUER must use https/);
   });
 });

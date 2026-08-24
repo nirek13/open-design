@@ -23,6 +23,7 @@ vi.mock('../src/components/workspace/useConversationChat', () => ({
 import { applyMarkdownShortcut, BlockEditor, emptyBlock, type DraftBlock } from '../src/components/pages/BlockEditor';
 import { PagesView } from '../src/components/pages/PagesView';
 import { composePagesWikiPrompt } from '../src/components/pages/wiki-prompt';
+import * as createdEmbed from '../src/runtime/created-embed';
 import { I18nProvider } from '../src/i18n';
 import { OrgProvider } from '../src/org/OrgContext';
 import * as registry from '../src/providers/registry';
@@ -107,6 +108,21 @@ describe('composePagesWikiPrompt', () => {
     expect(prompt).toContain('Employee handbook');
     expect(prompt).toContain('page-1');
     expect(prompt).toContain('Handbook');
+    expect(prompt).toContain('type embed');
+  });
+
+  it('tells the agent to create a unique file and embed it when making from a page', () => {
+    const prompt = composePagesWikiPrompt({
+      request: 'A hiring dashboard',
+      pageId: 'page-1',
+      pageTitle: 'Handbook',
+      make: { kind: 'app', prompt: 'A hiring dashboard' },
+    });
+    expect(prompt).toContain('unique interactive app');
+    expect(prompt).toContain('A hiring dashboard');
+    expect(prompt).toContain('tools pages embed');
+    expect(prompt).toContain('/raw/');
+    expect(prompt).toContain('Do not stop at a description');
   });
 
   it('includes the page excerpt when provided', () => {
@@ -126,7 +142,7 @@ describe('PagesView', () => {
   beforeEach(() => {
     vi.spyOn(registry, 'fetchAuthContext').mockResolvedValue({
       mode: 'local-owner',
-      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null },
+      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
       organizations: [ORG],
     });
     const detail = pageDetail();
@@ -210,6 +226,7 @@ describe('PagesView', () => {
 describe('BlockEditor', () => {
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
   });
 
   it('opens the slash menu when typing /', () => {
@@ -223,5 +240,95 @@ describe('BlockEditor', () => {
     fireEvent.input(textbox, { target: { textContent: '/' } });
     expect(screen.getByTestId('pages-slash')).toBeTruthy();
     expect(screen.getByText('Heading 1')).toBeTruthy();
+    expect(screen.getByText('Embed')).toBeTruthy();
+    expect(screen.getByText('Make app')).toBeTruthy();
+    expect(screen.getByText('Make picture')).toBeTruthy();
+    expect(screen.getByText('Make video')).toBeTruthy();
+    expect(screen.getByText('Make slides')).toBeTruthy();
+  });
+
+  it('turns a pasted URL on an empty paragraph into a live embed', () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([emptyBlock()]);
+      return <BlockEditor blocks={blocks} onChange={setBlocks} />;
+    }
+    render(<Harness />);
+    const textbox = screen.getByRole('textbox');
+    fireEvent.paste(textbox, {
+      clipboardData: {
+        getData: (type: string) => (type === 'text/plain' ? 'https://youtu.be/dQw4w9WgXcQ' : ''),
+      },
+    });
+    expect(screen.getByTestId('pages-rich-embed')).toHaveAttribute('data-provider', 'YouTube');
+  });
+
+  it('lets you embed a created app, picture, video, or slides from the picker', async () => {
+    vi.spyOn(createdEmbed, 'loadCreatedEmbedItems').mockResolvedValue([
+      {
+        id: 'app:1',
+        kind: 'app',
+        title: 'Expense form',
+        subtitle: 'expense-form.html',
+        url: '/api/projects/p1/raw/expense-form.html',
+      },
+      {
+        id: 'file:hero',
+        kind: 'image',
+        title: 'Hero',
+        subtitle: 'Campaign',
+        url: '/api/projects/p1/raw/hero.png',
+      },
+      {
+        id: 'file:clip',
+        kind: 'video',
+        title: 'Walkthrough',
+        subtitle: 'Campaign',
+        url: '/api/projects/p1/raw/walkthrough.mp4',
+      },
+      {
+        id: 'file:deck',
+        kind: 'slides',
+        title: 'Pitch deck',
+        subtitle: 'Campaign',
+        url: '/api/projects/p1/raw/pitch-deck.html',
+      },
+    ]);
+
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([emptyBlock('embed')]);
+      return <BlockEditor orgId="org-1" blocks={blocks} onChange={setBlocks} />;
+    }
+    render(<Harness />);
+
+    expect(await screen.findByTestId('pages-created-picker')).toBeTruthy();
+    expect(screen.getByText('Apps')).toBeTruthy();
+    expect(screen.getByText('Pictures')).toBeTruthy();
+    expect(screen.getByText('Videos')).toBeTruthy();
+    expect(screen.getByText('Slides')).toBeTruthy();
+    expect(screen.getByText('Hero')).toBeTruthy();
+    expect(screen.getByText('Walkthrough')).toBeTruthy();
+    expect(screen.getByText('Pitch deck')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /Expense form/ }));
+    expect(screen.getByTestId('pages-rich-embed')).toHaveAttribute('data-provider', 'App');
+  });
+
+  it('lets you make a unique app from the slash menu', () => {
+    const onMake = vi.fn();
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([emptyBlock()]);
+      return <BlockEditor blocks={blocks} onChange={setBlocks} onMake={onMake} />;
+    }
+    render(<Harness />);
+    const textbox = screen.getByRole('textbox');
+    fireEvent.focus(textbox);
+    fireEvent.input(textbox, { target: { textContent: '/' } });
+    fireEvent.mouseDown(screen.getByRole('option', { name: /Make app/ }));
+    expect(screen.getByTestId('pages-make-composer')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: /unique interactive app/i }), {
+      target: { value: 'A hiring tracker for this team' },
+    });
+    fireEvent.submit(screen.getByTestId('pages-make-composer'));
+    expect(onMake).toHaveBeenCalledWith('app', 'A hiring tracker for this team');
   });
 });

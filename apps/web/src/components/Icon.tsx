@@ -51,6 +51,7 @@ export type IconName =
   | 'link'
   | 'lock'
   | 'mail'
+  | 'hash'
   | 'log-out'
   | 'integrations-filled'
   | 'maximize'
@@ -533,6 +534,15 @@ export function Icon({ name, size = 14, strokeWidth = 1.6, ...rest }: Props) {
         <svg {...common}>
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+      );
+    case 'hash':
+      return (
+        <svg {...common}>
+          <path d="M4 9h16" />
+          <path d="M4 15h16" />
+          <path d="M10 3 8 21" />
+          <path d="M16 3l-2 18" />
         </svg>
       );
     case 'mail':

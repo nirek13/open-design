@@ -13,14 +13,18 @@
 //     count of messages newer than it, which stays correct when a message is
 //     deleted and needs no write on the message itself.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   CHANNEL_SLUG_PATTERN,
   CHAT_MESSAGE_MAX_LENGTH,
   DEFAULT_CHANNELS,
+  sanitizeTeamChatAttachments,
   slugifyChannelName,
   type ChannelMemberRole,
   type ChannelVisibility,
+  type ChatChannelKind,
+  type ChatReaction,
+  type ChatSearchHit,
   type TeamChatAttachment,
   type ChatChannel,
   type ChatChannelMember,
@@ -35,7 +39,7 @@ import type { SqlExecutor } from '../storage/sql.js';
 
 const CHANNEL_COLS = `
   id, workspace_id AS "orgId", slug, display_name AS "displayName", topic,
-  visibility, archived_at AS "archivedAt", created_by AS "createdBy",
+  kind, visibility, archived_at AS "archivedAt", created_by AS "createdBy",
   created_at AS "createdAt", updated_at AS "updatedAt"
 `;
 
@@ -96,6 +100,7 @@ interface ChannelRow {
   slug: string;
   displayName: string;
   topic: string | null;
+  kind: string | null;
   visibility: ChannelVisibility;
   archivedAt: number | string | null;
   createdBy: string;
@@ -164,6 +169,7 @@ async function decorateChannels(
     slug: row.slug,
     displayName: row.displayName,
     topic: row.topic,
+    kind: row.kind === 'dm' || row.kind === 'group_dm' ? row.kind : 'channel',
     visibility: row.visibility,
     archivedAt: nullableNum(row.archivedAt),
     createdBy: row.createdBy,
@@ -268,8 +274,8 @@ export async function createChannel(
   const visibility: ChannelVisibility = input.visibility === 'private' ? 'private' : 'public';
   await db.run(
     `INSERT INTO od_chat_channels
-       (id, workspace_id, slug, display_name, topic, visibility, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, workspace_id, slug, display_name, topic, kind, visibility, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'channel', ?, ?, ?, ?)`,
     [id, orgId, slug, displayName, input.topic?.trim() || null, visibility, createdBy, now, now],
   );
 
@@ -453,6 +459,66 @@ export async function markChannelRead(
 
 // --- Messages -------------------------------------------------------------
 
+async function loadReactions(
+  db: SqlExecutor,
+  messageIds: string[],
+  viewerMemberId: string,
+): Promise<Map<string, ChatReaction[]>> {
+  const map = new Map<string, ChatReaction[]>();
+  if (messageIds.length === 0) return map;
+  const placeholders = messageIds.map(() => '?').join(', ');
+  const rows = await db.all<{ messageId: string; emoji: string; memberId: string }>(
+    `SELECT message_id AS "messageId", emoji, member_id AS "memberId"
+       FROM od_chat_reactions
+      WHERE message_id IN (${placeholders})
+      ORDER BY created_at ASC`,
+    messageIds,
+  );
+  const grouped = new Map<string, Map<string, { memberIds: string[]; me: boolean }>>();
+  for (const row of rows) {
+    let byEmoji = grouped.get(row.messageId);
+    if (!byEmoji) {
+      byEmoji = new Map();
+      grouped.set(row.messageId, byEmoji);
+    }
+    let bucket = byEmoji.get(row.emoji);
+    if (!bucket) {
+      bucket = { memberIds: [], me: false };
+      byEmoji.set(row.emoji, bucket);
+    }
+    bucket.memberIds.push(row.memberId);
+    if (row.memberId === viewerMemberId) bucket.me = true;
+  }
+  for (const [messageId, byEmoji] of grouped) {
+    map.set(
+      messageId,
+      [...byEmoji.entries()].map(([emoji, bucket]) => ({
+        emoji,
+        count: bucket.memberIds.length,
+        me: bucket.me,
+        memberIds: bucket.memberIds,
+      })),
+    );
+  }
+  return map;
+}
+
+async function withReactions(
+  db: SqlExecutor,
+  messages: TeamChatMessage[],
+  viewerMemberId: string,
+): Promise<TeamChatMessage[]> {
+  const reactions = await loadReactions(
+    db,
+    messages.map((message) => message.id),
+    viewerMemberId,
+  );
+  return messages.map((message) => ({
+    ...message,
+    reactions: reactions.get(message.id) ?? [],
+  }));
+}
+
 function toMessage(row: Record<string, any>, resolveMemberName?: ResolveMemberName): TeamChatMessage {
   const authorMemberId = row.authorMemberId ?? null;
   return {
@@ -463,10 +529,11 @@ function toMessage(row: Record<string, any>, resolveMemberName?: ResolveMemberNa
     authorName: authorMemberId ? (resolveMemberName?.(authorMemberId) ?? null) : null,
     body: row.body,
     system: row.system === 1 || row.system === true,
-    attachments: parseJsonArray<TeamChatAttachment>(row.attachmentsJson),
+    attachments: sanitizeTeamChatAttachments(parseJsonArray<TeamChatAttachment>(row.attachmentsJson)),
     mentions: parseJsonArray<string>(row.mentionsJson),
     parentMessageId: row.parentMessageId ?? null,
     replyCount: num(row.replyCount ?? 0),
+    reactions: [],
     editedAt: nullableNum(row.editedAt),
     deletedAt: nullableNum(row.deletedAt),
     createdAt: num(row.createdAt),
@@ -522,8 +589,11 @@ export async function listMessages(
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
   return {
-    // Oldest first is how a transcript reads.
-    messages: page.map((row) => toMessage(row, resolveMemberName)).reverse(),
+    messages: await withReactions(
+      db,
+      page.map((row) => toMessage(row, resolveMemberName)).reverse(),
+      memberId,
+    ),
     nextBefore: hasMore ? (page[page.length - 1]?.id ?? null) : null,
   };
 }
@@ -532,6 +602,7 @@ export async function getMessage(
   db: SqlExecutor,
   messageId: string,
   resolveMemberName?: ResolveMemberName,
+  viewerMemberId?: string,
 ): Promise<TeamChatMessage> {
   const row = await db.get<Record<string, any>>(
     `SELECT ${MESSAGE_COLS},
@@ -543,7 +614,10 @@ export async function getMessage(
   if (!row) {
     throw new WorkspaceDataError('CHAT_MESSAGE_NOT_FOUND', 404, `no message ${messageId}`);
   }
-  return toMessage(row, resolveMemberName);
+  const message = toMessage(row, resolveMemberName);
+  if (!viewerMemberId) return message;
+  const [withReact] = await withReactions(db, [message], viewerMemberId);
+  return withReact ?? message;
 }
 
 export async function postMessage(
@@ -556,7 +630,8 @@ export async function postMessage(
 ): Promise<TeamChatMessage> {
   const channel = await assertChannelAccess(db, orgId, ref, memberId);
   const body = typeof input.body === 'string' ? input.body.trim() : '';
-  if (!body) {
+  const attachments = sanitizeTeamChatAttachments(input.attachments);
+  if (!body && attachments.length === 0) {
     throw workspaceValidationError([{ path: 'body', message: 'a message needs something in it' }]);
   }
   if (body.length > CHAT_MESSAGE_MAX_LENGTH) {
@@ -594,7 +669,7 @@ export async function postMessage(
       orgId,
       memberId,
       body,
-      JSON.stringify(input.attachments ?? []),
+      JSON.stringify(attachments),
       JSON.stringify(input.mentions ?? []),
       input.parentMessageId ?? null,
       now,
@@ -635,7 +710,7 @@ export async function postSystemMessage(
       row.id,
       orgId,
       body,
-      JSON.stringify(attachments),
+      JSON.stringify(sanitizeTeamChatAttachments(attachments)),
       await nextMessageTimestamp(db, row.id),
     ],
   );
@@ -684,6 +759,183 @@ export async function deleteMessage(
     throw new WorkspaceDataError('CHANNEL_ACCESS_DENIED', 403, 'you can only delete your own messages');
   }
   await db.run('UPDATE od_chat_messages SET deleted_at = ? WHERE id = ?', [Date.now(), messageId]);
+}
+
+function dmSlug(memberIds: string[]): { kind: ChatChannelKind; slug: string } {
+  const partners = [...new Set(memberIds.filter((id) => typeof id === 'string' && id.trim()))].sort();
+  const digest = createHash('sha256').update(partners.join(',')).digest('hex').slice(0, 16);
+  return {
+    kind: partners.length === 2 ? 'dm' : 'group_dm',
+    slug: `${partners.length === 2 ? 'dm' : 'gdm'}-${digest}`,
+  };
+}
+
+/** Open (or reuse) a direct message with the given people. The caller is always
+ * a member. Two people share one DM; adding a third person later turns it into
+ * a group DM rather than creating a parallel room. */
+export async function openDirectMessage(
+  db: SqlExecutor,
+  orgId: string,
+  callerId: string,
+  memberIds: string[],
+  resolveMemberName?: ResolveMemberName,
+): Promise<ChatChannel> {
+  const partners = [...new Set([callerId, ...memberIds.map((id) => id.trim()).filter(Boolean)])];
+  if (partners.length < 2) {
+    throw workspaceValidationError([
+      { path: 'memberIds', message: 'a direct message needs at least one other person' },
+    ]);
+  }
+  const { kind, slug } = dmSlug(partners);
+  const existing = await db.get<{ id: string }>(
+    'SELECT id FROM od_chat_channels WHERE workspace_id = ? AND slug = ? AND archived_at IS NULL',
+    [orgId, slug],
+  );
+  if (existing) {
+    await addMember(db, existing.id, callerId, 'member');
+    return getChannel(db, orgId, existing.id, callerId);
+  }
+
+  const others = partners.filter((id) => id !== callerId);
+  const displayName =
+    others
+      .map((id) => resolveMemberName?.(id) || id)
+      .filter(Boolean)
+      .join(', ') || 'Direct message';
+  const now = Date.now();
+  const id = `chn-${randomUUID()}`;
+  await db.run(
+    `INSERT INTO od_chat_channels
+       (id, workspace_id, slug, display_name, topic, kind, visibility, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, 'private', ?, ?, ?)`,
+    [id, orgId, slug, displayName, kind, callerId, now, now],
+  );
+  for (const memberId of partners) {
+    await addMember(db, id, memberId, memberId === callerId ? 'owner' : 'member');
+  }
+  return getChannel(db, orgId, id, callerId);
+}
+
+export async function inviteChannelMembers(
+  db: SqlExecutor,
+  orgId: string,
+  ref: string,
+  callerId: string,
+  memberIds: string[],
+): Promise<ChatChannel> {
+  const channel = await assertChannelAccess(db, orgId, ref, callerId);
+  if (!channel.joined) {
+    throw new WorkspaceDataError('CHANNEL_ACCESS_DENIED', 403, 'join this channel before inviting people');
+  }
+  const ids = [...new Set(memberIds.map((id) => id.trim()).filter(Boolean))];
+  if (ids.length === 0) {
+    throw workspaceValidationError([{ path: 'memberIds', message: 'name at least one person to invite' }]);
+  }
+  for (const memberId of ids) await addMember(db, channel.id, memberId, 'member');
+  if (channel.kind === 'dm') {
+    const count = await db.get<{ n: number | string }>(
+      'SELECT COUNT(*) AS n FROM od_chat_channel_members WHERE channel_id = ?',
+      [channel.id],
+    );
+    if (num(count?.n ?? 0) > 2) {
+      await db.run(`UPDATE od_chat_channels SET kind = 'group_dm', updated_at = ? WHERE id = ?`, [
+        Date.now(),
+        channel.id,
+      ]);
+    }
+  }
+  return getChannel(db, orgId, channel.id, callerId);
+}
+
+const REACTION_PATTERN = /^[\p{Emoji}\w+-]{1,32}$/u;
+
+export async function toggleReaction(
+  db: SqlExecutor,
+  orgId: string,
+  messageId: string,
+  memberId: string,
+  emoji: string,
+  resolveMemberName?: ResolveMemberName,
+): Promise<TeamChatMessage> {
+  const name = emoji.trim();
+  if (!name || name.length > 32) {
+    throw workspaceValidationError([{ path: 'emoji', message: 'pick a short emoji or name' }]);
+  }
+  if (!REACTION_PATTERN.test(name) && !/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+$/u.test(name)) {
+    // Allow any short non-whitespace token; the UI sends unicode emoji or :names:.
+    if (/\s/.test(name)) {
+      throw workspaceValidationError([{ path: 'emoji', message: 'an emoji cannot contain spaces' }]);
+    }
+  }
+  const message = await getMessage(db, messageId);
+  if (message.orgId !== orgId) {
+    throw new WorkspaceDataError('CHAT_MESSAGE_NOT_FOUND', 404, 'no such message');
+  }
+  await assertChannelAccess(db, orgId, message.channelId, memberId);
+  const existing = await db.get<{ id: string }>(
+    'SELECT id FROM od_chat_reactions WHERE message_id = ? AND member_id = ? AND emoji = ?',
+    [messageId, memberId, name],
+  );
+  if (existing) {
+    await db.run('DELETE FROM od_chat_reactions WHERE id = ?', [existing.id]);
+  } else {
+    await db.run(
+      `INSERT INTO od_chat_reactions (id, message_id, member_id, emoji, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [`rxn-${randomUUID()}`, messageId, memberId, name, Date.now()],
+    );
+  }
+  return getMessage(db, messageId, resolveMemberName, memberId);
+}
+
+export async function searchMessages(
+  db: SqlExecutor,
+  orgId: string,
+  memberId: string,
+  query: string,
+  resolveMemberName?: ResolveMemberName,
+): Promise<ChatSearchHit[]> {
+  const needle = query.trim();
+  if (!needle) return [];
+  const escaped = needle.replace(/[%_]/g, (ch) => `\\${ch}`);
+  const rows = await db.all<Record<string, unknown>>(
+    `SELECT ${MESSAGE_COLS_M},
+            c.id AS "hitChannelId", c.slug AS "hitSlug", c.display_name AS "hitName", c.kind AS "hitKind",
+            (SELECT COUNT(*) FROM od_chat_messages r
+              WHERE r.parent_message_id = m.id AND r.deleted_at IS NULL) AS "replyCount"
+       FROM od_chat_messages m
+       JOIN od_chat_channels c ON c.id = m.channel_id
+      WHERE m.workspace_id = ?
+        AND m.deleted_at IS NULL
+        AND c.archived_at IS NULL
+        AND m.body LIKE ? ESCAPE '\\'
+        AND (
+          c.visibility = 'public'
+          OR EXISTS (
+            SELECT 1 FROM od_chat_channel_members cm
+             WHERE cm.channel_id = c.id AND cm.member_id = ?
+          )
+        )
+      ORDER BY m.created_at DESC
+      LIMIT 40`,
+    [orgId, `%${escaped}%`, memberId],
+  );
+  const messages = await withReactions(
+    db,
+    rows.map((row) => toMessage(row, resolveMemberName)),
+    memberId,
+  );
+  return messages.map((message, index) => {
+    const row = rows[index]!;
+    const kind = row.hitKind === 'dm' || row.hitKind === 'group_dm' ? row.hitKind : 'channel';
+    return {
+      channelId: String(row.hitChannelId ?? message.channelId),
+      channelSlug: String(row.hitSlug ?? ''),
+      channelName: String(row.hitName ?? ''),
+      kind,
+      message,
+    };
+  });
 }
 
 // --- Setup ----------------------------------------------------------------

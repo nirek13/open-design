@@ -103,6 +103,11 @@ env:
   # leave the user's machine, /api/analytics/config returns enabled=false).
   POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
   POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+  # Clerk packaged sign-in. Issuer is the public Frontend API URL; publishable
+  # key is the public pk_ client token. Missing in fork builds → AuthGate
+  # shows the setup screen instead of sign-in.
+  OD_CLERK_ISSUER: ${{ vars.OD_CLERK_ISSUER }}
+  OD_CLERK_PUBLISHABLE_KEY: ${{ secrets.OD_CLERK_PUBLISHABLE_KEY }}
   # PostHog Error tracking sourcemap upload. Personal API key (phx_...) and
   # project ID let tools-pack's web-sourcemaps step ship browser sourcemaps
   # to PostHog after `next build` and before the .map files are stripped

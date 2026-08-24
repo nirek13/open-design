@@ -39,6 +39,7 @@ describe('static SPA fallback', () => {
     expect(resolveStaticSpaFallbackPath(request('/api/routines/nope'), tempDir)).toBeNull();
     expect(resolveStaticSpaFallbackPath(request('/artifacts/missing'), tempDir)).toBeNull();
     expect(resolveStaticSpaFallbackPath(request('/frames/missing'), tempDir)).toBeNull();
+    expect(resolveStaticSpaFallbackPath(request('/s/missing-token'), tempDir)).toBeNull();
     expect(resolveStaticSpaFallbackPath(request('/_next/static/missing.js'), tempDir)).toBeNull();
   });
 

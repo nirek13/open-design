@@ -4,8 +4,12 @@
 //
 //   clerk (default) — every person signs in. Requests carry a session JWT
 //     verified against OD_CLERK_ISSUER's JWKS; the subject is mapped to a
-//     directory user row. If the issuer is missing, the app still requires
-//     sign-in and shows a setup screen rather than silently becoming owner.
+//     directory user row. `fetch` sends it as `Authorization: Bearer`. Browser
+//     navigations (iframe `src`, `<img>`, CSS) cannot set that header, so the
+//     SPA also plants an `od_session` cookie and we accept it as a fallback —
+//     the same pattern the hosting serve function uses for `__session`. If the
+//     issuer is missing, the app still requires sign-in and shows a setup
+//     screen rather than silently becoming owner.
 //
 //   local-owner — opt-in via OD_AUTH_MODE=local-owner, and only when no
 //     issuer is set. Every interactive request is the machine's owner. This
@@ -20,13 +24,14 @@
 // Shared or production use must stay on clerk; see `isMultiUserMode`.
 
 import type { Request } from 'express';
-import { LOCAL_OWNER_USER_ID, type AuthMode } from '@open-design/contracts';
+import { LOCAL_OWNER_USER_ID, personLabel, type AuthMode } from '@open-design/contracts';
 import { JwksKeyStore, verifyJwt } from './jwt-verify.js';
 import type { SqlExecutor } from '../storage/sql.js';
 import {
   ensureLocalOwnerUser,
   ensurePersonalOrganization,
   getUser,
+  profileAvatarUrl,
   upsertExternalUser,
   type DirectoryUser,
 } from '../workspace-data/tenancy.js';
@@ -35,6 +40,9 @@ export interface Viewer {
   userId: string;
   displayName: string;
   email: string | null;
+  username: string | null;
+  bio: string | null;
+  avatarUrl: string | null;
   mode: AuthMode;
 }
 
@@ -62,11 +70,53 @@ export function isMultiUserMode(config: AuthConfig): boolean {
   return config.mode === 'clerk' && Boolean(config.issuer);
 }
 
+/** Cookie the signed-in SPA plants so browser navigations can authenticate.
+ *
+ * `fetch` can attach `Authorization: Bearer`, but an iframe `src`, `<img>`,
+ * or CSS/font request cannot. Those loads still have to reach `/api/projects/:id/raw/*`
+ * (and siblings) as ordinary same-origin GETs. */
+export const SESSION_COOKIE_NAME = 'od_session';
+
+/** Clerk's own session cookie, accepted as a fallback when the SPA did not
+ * plant `od_session`. Same rationale as the hosting serve function. */
+const CLERK_SESSION_COOKIE_NAME = '__session';
+
 function bearerToken(req: Request): string | null {
   const header = req.get('authorization');
   if (typeof header !== 'string') return null;
   const match = /^Bearer\s+(.+)$/i.exec(header.trim());
   return match?.[1] ?? null;
+}
+
+function cookieValue(header: string, name: string): string | null {
+  for (const part of header.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    if (trimmed.slice(0, eq) !== name) continue;
+    const raw = trimmed.slice(eq + 1);
+    if (!raw) return null;
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return null;
+}
+
+function cookieToken(req: Request): string | null {
+  const header = req.get('cookie');
+  if (typeof header !== 'string' || !header.trim()) return null;
+  return (
+    cookieValue(header, SESSION_COOKIE_NAME) ??
+    cookieValue(header, CLERK_SESSION_COOKIE_NAME)
+  );
+}
+
+/** Bearer wins so an explicit caller token is never shadowed by a leftover cookie. */
+export function sessionToken(req: Request): string | null {
+  return bearerToken(req) ?? cookieToken(req);
 }
 
 function displayNameFromClaims(claims: Record<string, unknown>, fallback: string): string {
@@ -115,13 +165,20 @@ export class IdentityService {
       const user = await getUser(directory, LOCAL_OWNER_USER_ID);
       return {
         userId: LOCAL_OWNER_USER_ID,
-        displayName: user?.displayName ?? 'Local Owner',
+        displayName: personLabel({
+          displayName: user?.displayName ?? 'Local Owner',
+          username: user?.username ?? null,
+          email: user?.email ?? null,
+        }),
         email: user?.email ?? null,
+        username: user?.username ?? 'local-owner',
+        bio: user?.bio ?? null,
+        avatarUrl: profileAvatarUrl(LOCAL_OWNER_USER_ID, user?.avatarMime),
         mode: 'local-owner',
       };
     }
 
-    const token = bearerToken(req);
+    const token = sessionToken(req);
     if (!token || !this.#keyStore || !this.config.issuer) return null;
     const verified = await verifyJwt(token, {
       keyStore: this.#keyStore,
@@ -130,17 +187,38 @@ export class IdentityService {
     if (!verified.ok) return null;
 
     const claims = verified.claims;
+    const email = emailFromClaims(claims);
+    const username = usernameFromClaims(claims);
     const user: DirectoryUser = await upsertExternalUser(directory, {
       externalId: claims.sub,
-      displayName: displayNameFromClaims(claims, claims.sub),
-      email: emailFromClaims(claims),
-      username: usernameFromClaims(claims),
+      // Pass Clerk's raw name so a chosen profile name is not replaced by
+      // the username we would otherwise derive from a "Member" placeholder.
+      displayName: displayNameFromClaims(claims, ''),
+      email,
+      username,
     });
-    // A new account must land in a workspace they own, not an empty shell.
+    // Existing personal orgs may still need a rename off a Clerk user id.
+    // New accounts are not auto-enrolled — they join or create after sign-up.
     await ensurePersonalOrganization(directory, {
       userId: user.id,
-      displayName: user.displayName,
+      displayName: personLabel({
+        displayName: user.displayName,
+        username: user.username,
+        email: user.email,
+      }),
     });
-    return { userId: user.id, displayName: user.displayName, email: user.email, mode: 'clerk' };
+    return {
+      userId: user.id,
+      displayName: personLabel({
+        displayName: user.displayName,
+        username: user.username,
+        email: user.email,
+      }),
+      email: user.email,
+      username: user.username,
+      bio: user.bio,
+      avatarUrl: profileAvatarUrl(user.id, user.avatarMime),
+      mode: 'clerk',
+    };
   }
 }

@@ -107,3 +107,26 @@ describe('homeHeroExamplePluginsForChip — audio chip', () => {
     expect(ids).not.toContain('od-media-generation');
   });
 });
+
+describe('homeHeroExamplePluginsForChip — hidden wireframe create plugins', () => {
+  const landing = make({
+    id: 'example-open-design-landing',
+        title: 'Substrate landing',
+    tags: ['example', 'prototype', 'landing'],
+    mode: 'prototype',
+    scenario: 'design',
+  });
+  const sketch = make({
+    id: 'example-wireframe-sketch',
+    title: 'Wireframe Sketch',
+    tags: ['example', 'prototype', 'wireframe', 'low-fidelity'],
+    mode: 'prototype',
+    scenario: 'design',
+  });
+
+  it('does not offer wireframe plugins under Prototype', () => {
+    const ids = homeHeroExamplePluginsForChip('prototype', [landing, sketch], 'en').map((p) => p.id);
+    expect(ids).toContain('example-open-design-landing');
+    expect(ids).not.toContain('example-wireframe-sketch');
+  });
+});

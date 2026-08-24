@@ -93,6 +93,26 @@
   --code-body-bg: #f9fafb;
   --code-font-size: 13px;
   --code-line-height: 1.65;
+
+  /* Compatibility aliases used by feature CSS modules. These track the
+     canonical tokens above so light/dark (and system) theme switches apply
+     even when a module still says --surface-1 or --od-surface-1. */
+  --surface-0: var(--bg);
+  --surface-1: var(--bg-elevated);
+  --surface-2: var(--bg-subtle);
+  --surface-3: var(--bg-muted);
+  --od-surface: var(--bg-panel);
+  --od-surface-1: var(--bg-elevated);
+  --od-surface-2: var(--bg-subtle);
+  --od-border: var(--border);
+  --od-accent: var(--accent);
+  --od-danger: var(--red);
+  --text-1: var(--text);
+  --text-2: var(--text-muted);
+  --text-3: var(--text-faint);
+  --danger: var(--red);
+  --warning: var(--amber);
+  --success: var(--green);
 }
 
 /* Dark theme variables — shared between explicit [data-theme="dark"] and the

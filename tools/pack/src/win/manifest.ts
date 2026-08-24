@@ -30,6 +30,8 @@ function createPackagedConfig(
     ...(config.updateMetadataUrl == null ? {} : { updateMetadataUrl: config.updateMetadataUrl }),
     ...(config.posthogKey == null ? {} : { posthogKey: config.posthogKey }),
     ...(config.posthogHost == null ? {} : { posthogHost: config.posthogHost }),
+    ...(config.clerkIssuer == null ? {} : { clerkIssuer: config.clerkIssuer }),
+    ...(config.clerkPublishableKey == null ? {} : { clerkPublishableKey: config.clerkPublishableKey }),
     webOutputMode: config.webOutputMode,
     ...(config.portable ? {} : { namespaceBaseRoot: config.roots.runtime.namespaceBaseRoot }),
   };

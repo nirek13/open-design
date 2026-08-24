@@ -20,7 +20,7 @@ import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
 import { requestJsonIpc } from '@open-design/sidecar';
 import { SIDECAR_ENV, SIDECAR_MESSAGES } from '@open-design/sidecar-proto';
-import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS } from '@open-design/contracts';
+import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS, parseJoinInput } from '@open-design/contracts';
 import { buildExportCliRequestBody, buildExportCliResultEnvelope, resolveExportCliDeckMode } from './export-cli-request.js';
 import { exportRoutePath } from './export-cli-routing.js';
 import {
@@ -348,10 +348,18 @@ const RECOVERABLE_EXIT_CODES = {
 // still be in TDZ.
 const ORG_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'name', 'role', 'expires-in', 'max-uses', 'email', 'username',
+  'description', 'member', 'to',
 ]);
 const ORG_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const SEARCH_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'query', 'q', 'prompt-file', 'limit',
+]);
+const SEARCH_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const ME_STRING_FLAGS = new Set(['daemon-url', 'username', 'name', 'bio', 'avatar']);
+const ME_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 const APP_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'name', 'description', 'project', 'file', 'visibility', 'access', 'grant', 'expires-in',
+  'channel', 'to', 'message', 'team', 'except',
 ]);
 const APP_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'include-archived', 'all-orgs', 'pin', 'unpin']);
 const DATA_STRING_FLAGS = new Set([
@@ -371,6 +379,7 @@ const ERP_BOOLEAN_FLAGS = new Set([
 ]);
 const TEAM_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'message', 'prompt-file', 'topic', 'limit', 'before',
+  'member', 'emoji', 'query', 'q', 'file',
 ]);
 const TEAM_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'private']);
 const PAGES_STRING_FLAGS = new Set([
@@ -385,6 +394,15 @@ const MAIL_STRING_FLAGS = new Set([
   'body', 'prompt-file', 'page-token', 'max',
 ]);
 const MAIL_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'html']);
+const SLACK_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'channel', 'text', 'query', 'q', 'cursor', 'limit',
+  'thread', 'emoji', 'prompt-file',
+]);
+const SLACK_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const GITHUB_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'query', 'q', 'title', 'body', 'prompt-file', 'method',
+]);
+const GITHUB_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 const PLUGIN_LIST_FILTER_FLAGS = new Set([
   ...PLUGIN_STRING_FLAGS,
   'task-kind', 'mode', 'tag', 'trust',
@@ -441,9 +459,15 @@ const SUBCOMMAND_MAP = {
   page: runPages,
   mail: runMail,
   gmail: runMail,
+  slack: runSlack,
+  github: runGithub,
+  dev: runGithub,
   calendar: runCalendar,
+  me: runMe,
   org: runOrg,
   orgs: runOrg,
+  search: runSearch,
+  find: runSearch,
   app: runApp,
   apps: runApp,
 };
@@ -767,6 +791,11 @@ function printRootHelp() {
 
   od research search --query <text> [--max-sources 5] [--daemon-url <url>]
       Run agent-callable Tavily research through the local daemon.
+
+  od search "<query>" [--org <id>] [--json]
+      Natural-language search across every organization surface you can
+      see (projects, files, pages, apps, chat, records, calendar). Scope
+      follows the reporting chain: you, people above you, people below you.
 
   od plugin <list|info|install|uninstall|apply|doctor|replay|trust> [args]
       Discover, install, and apply plugins through the local daemon.
@@ -12234,11 +12263,16 @@ Subcommands:
   create <name>                        Create a channel (--private, --topic)
   show <channel>                       Recent messages in a channel (--limit)
   post <channel> --message <text>      Post a message (or --prompt-file <path|->)
+                                       Attach a file with --file <path>
   reply <message-id> --message <text>  Reply in a thread
   thread <message-id>                  Replies to one message
   join <channel>                       Join a channel
   leave <channel>                      Leave a channel
   members <channel>                    Who is in a channel
+  invite <channel> --member <id>       Add people to a private channel or group DM
+  dm --member <id>                     Open a DM (repeat --member for a group)
+  search --query <text>                Search messages you can see
+  react <message-id> --emoji <name>    Toggle a reaction
   read <channel>                       Mark a channel read
   archive <channel>                    Archive a channel (admin)
 
@@ -12247,7 +12281,10 @@ Options:
   --message <text>      Message body
   --prompt-file <path|-> Message body from a file, or - for stdin
   --topic <text>        Channel topic
-  --limit <n>           How many messages to show
+  --member <id>         Organization member id (repeatable for group DMs)
+  --emoji <name>        Reaction name or emoji
+  --query, --q <text>   Search query
+  --file <path>         Attach a file (images, video, audio, PDFs, and more)
   --private             Create a private channel
   --json                Machine-readable output
   --daemon-url <url>    Daemon base URL
@@ -12296,11 +12333,12 @@ async function runTeam(args) {
 
   /** Message body from --message or --prompt-file, so long-form posts can come
    * from a heredoc or a pipe rather than being wrestled onto one line. */
-  async function readMessageBody() {
+  async function readMessageBody(optional = false) {
     if (typeof flags.message === 'string' && flags.message.trim()) return flags.message;
     const file = flags['prompt-file'];
     if (!file) {
-      console.error('provide --message <text> or --prompt-file <path|->');
+      if (optional) return '';
+      console.error('provide --message <text>, --prompt-file <path|->, or --file <path>');
       process.exit(2);
     }
     if (file === '-') {
@@ -12310,6 +12348,23 @@ async function runTeam(args) {
     }
     const { readFile } = await import('node:fs/promises');
     return (await readFile(file, 'utf8')).trim();
+  }
+
+  async function uploadChatFile(filePath) {
+    const { readFile } = await import('node:fs/promises');
+    const { basename } = await import('node:path');
+    const bytes = await readFile(filePath);
+    const form = new FormData();
+    form.append('file', new Blob([bytes]), basename(filePath));
+    let resp;
+    try {
+      resp = await fetch(`${base}${scope}/files`, { method: 'POST', body: form });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.json();
   }
 
   async function resolveOrgId() {
@@ -12334,7 +12389,7 @@ async function runTeam(args) {
       const edited = message.editedAt ? ' (edited)' : '';
       console.log(`${when(message.createdAt)}  ${who}: ${message.body}${edited}`);
       for (const attachment of message.attachments ?? []) {
-        console.log(`    ↳ ${attachment.kind} ${attachment.label}`);
+        console.log(`    ↳ ${attachment.kind} ${attachment.label}${attachment.url ? ` ${attachment.url}` : ''}`);
       }
       if (message.replyCount) console.log(`    ${message.replyCount} reply(s) — od team thread ${message.id}`);
     }
@@ -12393,11 +12448,23 @@ async function runTeam(args) {
   if (sub === 'post') {
     const ref = positionals[1];
     if (!ref) {
-      console.error('usage: od team post <channel> --message <text>');
+      console.error('usage: od team post <channel> --message <text> [--file <path>]');
       process.exit(2);
     }
-    const body = await readMessageBody();
-    const data = await request('POST', `${channelPath(ref)}/messages`, { body });
+    const attachments = [];
+    if (typeof flags.file === 'string' && flags.file.trim()) {
+      const uploaded = await uploadChatFile(flags.file);
+      if (uploaded?.attachment) attachments.push(uploaded.attachment);
+    }
+    const body = await readMessageBody(attachments.length > 0);
+    if (!body && attachments.length === 0) {
+      console.error('usage: od team post <channel> --message <text> [--file <path>]');
+      process.exit(2);
+    }
+    const data = await request('POST', `${channelPath(ref)}/messages`, {
+      body,
+      ...(attachments.length ? { attachments } : {}),
+    });
     if (flags.json) return writeJsonOut(data);
     console.log(`[team] posted to #${String(ref).replace(/^#/, '')}`);
     return;
@@ -12462,6 +12529,65 @@ async function runTeam(args) {
     for (const member of data.members ?? []) {
       console.log(`${member.displayName ?? member.memberId}\t${member.role}`);
     }
+    return;
+  }
+
+  if (sub === 'invite') {
+    const ref = positionals[1];
+    const memberId = flags.member;
+    if (!ref || !memberId) {
+      console.error('usage: od team invite <channel> --member <id>');
+      process.exit(2);
+    }
+    const ids = String(memberId).split(',').map((id) => id.trim()).filter(Boolean);
+    const data = await request('POST', `${channelPath(ref)}/members`, { memberIds: ids });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] invited ${ids.length} member(s) to #${String(ref).replace(/^#/, '')}`);
+    return;
+  }
+
+  if (sub === 'dm') {
+    const fromFlag = typeof flags.member === 'string' ? flags.member : '';
+    const ids = [...fromFlag.split(','), ...positionals.slice(1)]
+      .map((id) => String(id).trim())
+      .filter(Boolean);
+    if (ids.length === 0) {
+      console.error('usage: od team dm --member <id>[,id…]');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/dms`, { memberIds: ids });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] opened ${data.channel?.slug ?? 'dm'}`);
+    return;
+  }
+
+  if (sub === 'search') {
+    const query = flags.query || flags.q || positionals.slice(1).join(' ');
+    if (!query) {
+      console.error('usage: od team search --query <text>');
+      process.exit(2);
+    }
+    const data = await request('GET', `${scope}/search?q=${encodeURIComponent(query)}`);
+    if (flags.json) return writeJsonOut(data);
+    for (const hit of data.hits ?? []) {
+      console.log(`#${hit.channelSlug}\t${hit.message.authorName ?? ''}\t${hit.message.body}`);
+    }
+    if (!data.hits?.length) console.log('[team] no matches');
+    return;
+  }
+
+  if (sub === 'react') {
+    const messageId = positionals[1];
+    const emoji = flags.emoji || 'thumbsup';
+    if (!messageId) {
+      console.error('usage: od team react <message-id> --emoji thumbsup');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/messages/${encodeURIComponent(messageId)}/reactions`, {
+      emoji,
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log('[team] reacted');
     return;
   }
 
@@ -12785,6 +12911,451 @@ async function runMail(args) {
   process.exit(2);
 }
 
+// od slack — live Slack client (same HTTP as the Slack UI).
+
+function printSlackHelp() {
+  console.log(`Usage: od slack <subcommand> [options]
+
+Subcommands:
+  status                       Connection and workspace profile
+  channels                     List channels and DMs
+  messages <channel-id>        Channel history (--cursor, --limit)
+  send                         Post a message (--channel, --text or --prompt-file, --thread)
+  search                       Search messages (--query)
+  thread <channel-id> <ts>     Load a thread
+  react <channel-id> <ts>      Add a reaction (--emoji, default thumbsup)
+
+Options:
+  --org <id>                   Organization (defaults to the first membership)
+  --channel <id>               Channel or DM id
+  --text <text>                Message body
+  --prompt-file <path|->       Long-form body from a file or stdin
+  --query, --q <text>          Search query
+  --cursor <token>             Pagination cursor from a previous messages list
+  --limit <n>                  Page size
+  --thread <ts>                Thread timestamp for replies
+  --emoji <name>               Reaction name without colons
+  --json                       Machine-readable output
+  --daemon-url <url>           Daemon base URL
+
+Examples:
+  od slack channels --json
+  od slack messages C0123ABCD --json
+  od slack send --channel C0123ABCD --text "hello"
+  od slack search --query "launch" --json
+`);
+}
+
+async function runSlack(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printSlackHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: SLACK_STRING_FLAGS, boolean: SLACK_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, SLACK_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.status === 204 ? null : resp.json();
+  }
+
+  async function resolveOrgId() {
+    if (flags.org) return flags.org;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  const orgId = await resolveOrgId();
+  const scope = `/api/orgs/${encodeURIComponent(orgId)}/slack`;
+
+  async function readBodyText() {
+    const fromFile = await readMemoryPromptFile(flags);
+    if (typeof fromFile === 'string') return fromFile;
+    return typeof flags.text === 'string' ? flags.text : '';
+  }
+
+  if (sub === 'status') {
+    const data = await request('GET', `${scope}/status`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.connected) {
+      console.log('Slack is not connected. Open Integrations in the app, or connect the slack connector.');
+      return;
+    }
+    console.log(data.profile?.name || data.profile?.team || 'connected');
+    return;
+  }
+
+  if (sub === 'channels') {
+    const data = await request('GET', `${scope}/channels`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.connected) {
+      console.log('Slack is not connected.');
+      return;
+    }
+    for (const channel of data.channels ?? []) {
+      const kind = channel.isIm || channel.isMpim ? 'dm' : (channel.isPrivate ? 'private' : 'channel');
+      console.log(`${channel.id}\t${kind}\t${channel.name}`);
+    }
+    return;
+  }
+
+  if (sub === 'messages') {
+    const channelId = positionals[1] || flags.channel;
+    if (!channelId) {
+      console.error('usage: od slack messages <channel-id>');
+      process.exit(2);
+    }
+    const params = new URLSearchParams();
+    if (flags.cursor) params.set('cursor', flags.cursor);
+    if (flags.limit) params.set('limit', flags.limit);
+    const qs = params.size > 0 ? `?${params.toString()}` : '';
+    const data = await request('GET', `${scope}/channels/${encodeURIComponent(channelId)}/messages${qs}`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.connected) {
+      console.log('Slack is not connected.');
+      return;
+    }
+    for (const message of data.messages ?? []) {
+      console.log(`${message.ts}\t${message.userName || message.userId || ''}\t${message.text}`);
+    }
+    return;
+  }
+
+  if (sub === 'send') {
+    const channelId = flags.channel || positionals[1];
+    const text = await readBodyText();
+    if (!channelId || !text) {
+      console.error('usage: od slack send --channel <id> --text <text> [--thread <ts>]');
+      process.exit(2);
+    }
+    const result = await request('POST', `${scope}/messages`, {
+      channelId,
+      text,
+      ...(flags.thread ? { threadTs: flags.thread } : {}),
+    });
+    if (flags.json) return writeJsonOut(result);
+    console.log(`sent ${result.ts ?? ''}`.trim());
+    return;
+  }
+
+  if (sub === 'search') {
+    const query = flags.query || flags.q || positionals[1];
+    if (!query) {
+      console.error('usage: od slack search --query <text>');
+      process.exit(2);
+    }
+    const params = new URLSearchParams({ q: query });
+    const data = await request('GET', `${scope}/search?${params.toString()}`);
+    if (flags.json) return writeJsonOut(data);
+    for (const message of data.messages ?? []) {
+      console.log(`${message.channelId}\t${message.ts}\t${message.userName || ''}\t${message.text}`);
+    }
+    return;
+  }
+
+  if (sub === 'thread') {
+    const channelId = positionals[1] || flags.channel;
+    const threadTs = positionals[2] || flags.thread;
+    if (!channelId || !threadTs) {
+      console.error('usage: od slack thread <channel-id> <ts>');
+      process.exit(2);
+    }
+    const data = await request(
+      'GET',
+      `${scope}/channels/${encodeURIComponent(channelId)}/threads/${encodeURIComponent(threadTs)}`,
+    );
+    if (flags.json) return writeJsonOut(data);
+    for (const message of data.messages ?? []) {
+      console.log(`${message.ts}\t${message.userName || message.userId || ''}\t${message.text}`);
+    }
+    return;
+  }
+
+  if (sub === 'react') {
+    const channelId = positionals[1] || flags.channel;
+    const ts = positionals[2];
+    const emoji = flags.emoji || 'thumbsup';
+    if (!channelId || !ts) {
+      console.error('usage: od slack react <channel-id> <ts> [--emoji thumbsup]');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/reactions`, { channelId, ts, emoji });
+    if (flags.json) return writeJsonOut(data ?? { ok: true });
+    console.log('reacted');
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printSlackHelp();
+  process.exit(2);
+}
+
+function printGithubHelp() {
+  console.log(`Usage: od github <subcommand> [options]
+
+Subcommands:
+  status                       Connection and GitHub profile
+  repos                        List repositories (--query)
+  pulls <owner/repo>           Open pull requests
+  issues <owner/repo>          Open issues
+  issue <owner/repo> <n>       Issue or pull with comments
+  commits <owner/repo>         Recent commits
+  actions <owner/repo>         Workflow runs
+  notifications                Inbox notifications
+  create-issue <owner/repo>    Create an issue (--title, --body or --prompt-file)
+  comment <owner/repo> <n>     Comment on an issue or pull (--body or --prompt-file)
+  merge <owner/repo> <n>       Merge a pull request (--method merge|squash|rebase)
+
+Options:
+  --org <id>                   Organization (defaults to the first membership)
+  --query, --q <text>          Repository search
+  --title <text>               Issue title
+  --body <text>                Issue or comment body
+  --prompt-file <path|->       Long-form body from a file or stdin
+  --method <kind>              Merge method: merge, squash, or rebase
+  --json                       Machine-readable output
+  --daemon-url <url>           Daemon base URL
+
+Examples:
+  od github repos --json
+  od github pulls nexu-io/open-design --json
+  od github create-issue nexu-io/open-design --title "Bug" --body "Steps"
+  od github merge nexu-io/open-design 12 --method squash
+`);
+}
+
+function splitOwnerRepo(value) {
+  const [owner, repo] = String(value ?? '').split('/');
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
+async function runGithub(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printGithubHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: GITHUB_STRING_FLAGS, boolean: GITHUB_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, GITHUB_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.status === 204 ? null : resp.json();
+  }
+
+  async function resolveOrgId() {
+    if (flags.org) return flags.org;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  async function readBodyText() {
+    const fromFile = await readMemoryPromptFile(flags);
+    if (typeof fromFile === 'string') return fromFile;
+    return typeof flags.body === 'string' ? flags.body : '';
+  }
+
+  const orgId = await resolveOrgId();
+  const scope = `/api/orgs/${encodeURIComponent(orgId)}/github`;
+
+  if (sub === 'status') {
+    const data = await request('GET', `${scope}/status`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.connected) {
+      console.log('GitHub is not connected. Open Integrations in the app, or connect the github connector.');
+      return;
+    }
+    console.log(data.profile?.login || data.profile?.name || 'connected');
+    return;
+  }
+
+  if (sub === 'repos') {
+    const query = flags.query || flags.q;
+    const qs = query ? `?q=${encodeURIComponent(query)}` : '';
+    const data = await request('GET', `${scope}/repos${qs}`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.connected) {
+      console.log('GitHub is not connected.');
+      return;
+    }
+    for (const repo of data.repos ?? []) {
+      console.log(`${repo.fullName}\t${repo.private ? 'private' : 'public'}\t${repo.stars}\t${repo.description ?? ''}`);
+    }
+    return;
+  }
+
+  if (sub === 'notifications') {
+    const data = await request('GET', `${scope}/notifications`);
+    if (flags.json) return writeJsonOut(data);
+    for (const note of data.notifications ?? []) {
+      console.log(`${note.repository}\t${note.reason}\t${note.title}`);
+    }
+    return;
+  }
+
+  const target = splitOwnerRepo(positionals[1]);
+  if (['pulls', 'issues', 'issue', 'commits', 'actions', 'create-issue', 'comment', 'merge'].includes(sub) && !target) {
+    console.error(`usage: od github ${sub} <owner/repo>`);
+    process.exit(2);
+  }
+  const repoScope = target
+    ? `${scope}/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}`
+    : null;
+
+  if (sub === 'pulls') {
+    const data = await request('GET', repoScope);
+    if (flags.json) return writeJsonOut({ pulls: data.pulls ?? [] });
+    for (const pull of data.pulls ?? []) {
+      console.log(`#${pull.number}\t${pull.state}\t${pull.title}`);
+    }
+    return;
+  }
+
+  if (sub === 'issues') {
+    const data = await request('GET', repoScope);
+    if (flags.json) return writeJsonOut({ issues: data.issues ?? [] });
+    for (const issue of data.issues ?? []) {
+      console.log(`#${issue.number}\t${issue.state}\t${issue.title}`);
+    }
+    return;
+  }
+
+  if (sub === 'commits') {
+    const data = await request('GET', repoScope);
+    if (flags.json) return writeJsonOut({ commits: data.commits ?? [] });
+    for (const commit of data.commits ?? []) {
+      console.log(`${commit.sha.slice(0, 7)}\t${commit.author ?? ''}\t${commit.message.split('\n')[0]}`);
+    }
+    return;
+  }
+
+  if (sub === 'actions') {
+    const data = await request('GET', repoScope);
+    if (flags.json) return writeJsonOut({ workflowRuns: data.workflowRuns ?? [] });
+    for (const run of data.workflowRuns ?? []) {
+      console.log(`${run.name}\t${run.conclusion ?? run.status}\t${run.headBranch ?? ''}`);
+    }
+    return;
+  }
+
+  if (sub === 'issue') {
+    const number = positionals[2];
+    if (!number) {
+      console.error('usage: od github issue <owner/repo> <number>');
+      process.exit(2);
+    }
+    let data;
+    try {
+      data = await request('GET', `${repoScope}/pulls/${encodeURIComponent(number)}`);
+    } catch {
+      data = await request('GET', `${repoScope}/issues/${encodeURIComponent(number)}`);
+    }
+    if (flags.json) return writeJsonOut(data);
+    const item = data.pull ?? data.issue;
+    console.log(`#${item?.number ?? number}\t${item?.state ?? ''}\t${item?.title ?? ''}`);
+    for (const comment of data.comments ?? []) {
+      console.log(`${comment.user?.login ?? ''}\t${comment.body}`);
+    }
+    return;
+  }
+
+  if (sub === 'create-issue') {
+    const title = flags.title;
+    const body = await readBodyText();
+    if (!title) {
+      console.error('usage: od github create-issue <owner/repo> --title <text> [--body <text>]');
+      process.exit(2);
+    }
+    const result = await request('POST', `${repoScope}/issues`, { title, body });
+    if (flags.json) return writeJsonOut(result);
+    console.log(`#${result.issue?.number ?? ''} ${result.issue?.title ?? title}`.trim());
+    return;
+  }
+
+  if (sub === 'comment') {
+    const number = positionals[2];
+    const body = await readBodyText();
+    if (!number || !body) {
+      console.error('usage: od github comment <owner/repo> <number> --body <text>');
+      process.exit(2);
+    }
+    const result = await request('POST', `${repoScope}/issues/${encodeURIComponent(number)}/comments`, { body });
+    if (flags.json) return writeJsonOut(result);
+    console.log(result.comment?.id ?? 'commented');
+    return;
+  }
+
+  if (sub === 'merge') {
+    const number = positionals[2];
+    if (!number) {
+      console.error('usage: od github merge <owner/repo> <number> [--method squash]');
+      process.exit(2);
+    }
+    const result = await request('POST', `${repoScope}/pulls/${encodeURIComponent(number)}/merge`, {
+      method: flags.method || 'squash',
+    });
+    if (flags.json) return writeJsonOut(result);
+    console.log(`#${result.pull?.number ?? number}\t${result.pull?.state ?? 'merged'}`);
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printGithubHelp();
+  process.exit(2);
+}
+
 // od pages — Notion-shaped organization notes (blocks + table embeds).
 // Same /api/orgs/:orgId/pages endpoints the Pages UI and agent tools use.
 
@@ -12799,7 +13370,7 @@ Subcommands:
   update <page-id>             Update title/parent/icon (--title, --parent, --icon, --cover)
   set-blocks <page-id>         Replace block tree (--data-file <path|->)
   append <page-id>             Append blocks (--data-file <path|->)
-  embed <page-id>              Embed a page, table, record, artifact, or bookmark
+  embed <page-id>              Embed a page, table, record, artifact, bookmark, or live URL
   scaffold                     Create a nested wiki (--data-file tree JSON)
   duplicate <page-id>          Copy a page (--recursive for children)
   archive <page-id>            Soft-archive a page
@@ -12812,12 +13383,12 @@ Options:
   --cover <id-or-url>   Cover preset id or image URL
   --query <text>        Search query
   --limit <n>           Search hit cap
-  --type <kind>         Embed kind: page|database|record|artifact|bookmark
+  --type <kind>         Embed kind: page|database|record|artifact|bookmark|embed
   --target <page-id>    Page to embed
   --table <table-id>    Workspace table to embed
   --record <record-id>  Record to embed
   --path <file>         Design artifact path to embed
-  --url <url>           Bookmark URL
+  --url <url>           Bookmark or live embed URL
   --recursive           Duplicate nested children too
   --data-file <path|->  JSON body or { "blocks": [...] } from file/stdin
   --tree                Nested tree for list
@@ -12831,6 +13402,7 @@ Examples:
   {"pages":[{"title":"Handbook","icon":"📘","children":[{"title":"Onboarding"}]}]}
   JSON
   od pages embed PAGE_ID --type bookmark --url https://example.com --json
+  od pages embed PAGE_ID --type embed --url https://www.youtube.com/watch?v=dQw4w9WgXcQ --json
   od pages set-blocks PAGE_ID --data-file - <<'JSON'
   {"blocks":[{"type":"heading_1","content":"Goals"},{"type":"bulleted_list_item","content":"Ship MVP"}]}
   JSON
@@ -13038,7 +13610,7 @@ async function runPages(args) {
   if (sub === 'embed') {
     const id = positionals[1];
     if (!id || !flags.type) {
-      console.error('usage: od pages embed <page-id> --type <page|database|record|artifact|bookmark> [...]');
+      console.error('usage: od pages embed <page-id> --type <page|database|record|artifact|bookmark|embed> [...]');
       process.exit(2);
     }
     const body = {
@@ -13100,6 +13672,243 @@ async function runPages(args) {
 }
 
 // ---------------------------------------------------------------------------
+// od me — the signed-in person's public username (alias of their user id).
+// Teammates use this handle to invite, @mention, and address each other.
+
+function printMeHelp() {
+  console.log(`Usage: od me [lookup <username>] [options]
+
+Show who you are, claim a public username, or resolve someone else's handle
+to a user id. The directory user id stays the stable identifier; username is
+the alias people type.
+
+Subcommands:
+  lookup <username>   Resolve a public username to a user id
+
+Options:
+  --username <name>   Claim or change your public username
+  --name <name>       Set the name teammates see
+  --bio <text>        Set a short bio
+  --avatar <path>     Upload a profile photo (jpeg, png, gif, or webp)
+  --json              Machine-readable output
+  --daemon-url <url>  Daemon base URL
+
+Examples:
+  od me --json
+  od me --username jane
+  od me --name "Ada Lovelace" --bio "Builds things"
+  od me --avatar ./photo.png
+  od me lookup jane --json
+`);
+}
+
+async function runMe(args) {
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printMeHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: ME_STRING_FLAGS, boolean: ME_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, ME_STRING_FLAGS);
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        headers: {
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.json();
+  }
+
+  if (positionals[0] === 'lookup') {
+    const username = positionals[1];
+    if (!username) {
+      console.error('lookup requires a username');
+      process.exit(2);
+    }
+    const data = await request('GET', `/api/users/${encodeURIComponent(username)}`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`${data.displayName}\t@${data.username}\t${data.userId}`);
+    return;
+  }
+
+  if (flags.avatar) {
+    let bytes;
+    try {
+      bytes = readFileSync(flags.avatar);
+    } catch (err) {
+      console.error(`cannot read ${flags.avatar}: ${err?.message ?? err}`);
+      process.exit(2);
+    }
+    const form = new FormData();
+    form.append('file', new Blob([bytes]), basename(String(flags.avatar)));
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/me/avatar`, { method: 'PUT', body: form });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    const uploaded = await resp.json();
+    const patch = {};
+    if (flags.username) patch.username = flags.username;
+    if (flags.name) patch.displayName = flags.name;
+    if (flags.bio !== undefined) patch.bio = flags.bio;
+    const data = Object.keys(patch).length ? await request('PATCH', '/api/me', patch) : uploaded;
+    if (flags.json) return writeJsonOut(data);
+    const handle = data.username ? `@${data.username}` : '(no username)';
+    console.log(`${data.displayName}${data.email ? ` <${data.email}>` : ''}\t${handle}\t${data.userId}`);
+    return;
+  }
+
+  if (flags.username || flags.name || flags.bio !== undefined) {
+    const data = await request('PATCH', '/api/me', {
+      ...(flags.username ? { username: flags.username } : {}),
+      ...(flags.name ? { displayName: flags.name } : {}),
+      ...(flags.bio !== undefined ? { bio: flags.bio } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    const handle = data.username ? `@${data.username}` : '(no username)';
+    console.log(`${data.displayName}${data.email ? ` <${data.email}>` : ''}\t${handle}\t${data.userId}`);
+    return;
+  }
+
+  const data = await request('GET', '/api/auth/context');
+  if (flags.json) return writeJsonOut(data.viewer ?? data);
+  if (!data.viewer) {
+    console.log(`[me] not signed in (auth mode: ${data.mode})`);
+    return;
+  }
+  const handle = data.viewer.username ? `@${data.viewer.username}` : '(no username)';
+  console.log(`${data.viewer.displayName}${data.viewer.email ? ` <${data.viewer.email}>` : ''}\t${handle}\t${data.viewer.userId}`);
+}
+
+function printSearchHelp() {
+  console.log(`Usage: od search <query> [options]
+
+Natural-language search across every organization surface you can see:
+projects, files, pages, apps, team chat, records, and calendar.
+
+Scope follows the reporting chain. You see your own work, work from
+people you report to, and work from people who report to you.
+
+Options:
+  --org <id>         Organization (default: your first)
+  --query <text>     Query (same as the positional)
+  --prompt-file <p>  Long query from a file, or - for stdin
+  --limit <n>        Max hits (default 25)
+  --json             Machine-readable output
+  --daemon-url <url> Daemon base URL
+
+Examples:
+  od search "Jane's onboarding deck"
+  od search --query "Q3 invoice" --json
+  od search --prompt-file - <<'EOF'
+  the prototype we shipped last week
+  EOF
+`);
+}
+
+async function runSearch(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printSearchHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: SEARCH_STRING_FLAGS, boolean: SEARCH_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, SEARCH_STRING_FLAGS);
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        headers: {
+          ...(flags.org ? { 'x-od-org': flags.org } : {}),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.status === 204 ? null : resp.json();
+  }
+
+  async function resolveOrgId() {
+    if (flags.org) return flags.org;
+    const data = await request('GET', '/api/orgs');
+    const first = data?.organizations?.[0];
+    if (!first) {
+      console.error('you do not belong to any organization; create one with `od org create --name <name>`');
+      process.exit(2);
+    }
+    return first.id;
+  }
+
+  async function readQuery() {
+    const positional = positionals.filter((part) => part && part !== 'search' && part !== 'find').join(' ').trim();
+    if (positional) return positional;
+    if (typeof flags.query === 'string' && flags.query.trim()) return flags.query.trim();
+    if (typeof flags.q === 'string' && flags.q.trim()) return flags.q.trim();
+    const file = flags['prompt-file'];
+    if (!file) return '';
+    if (file === '-') {
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      return Buffer.concat(chunks).toString('utf8').trim();
+    }
+    const { readFile } = await import('node:fs/promises');
+    return (await readFile(file, 'utf8')).trim();
+  }
+
+  const query = await readQuery();
+  if (!query) {
+    console.error('usage: od search <query>');
+    process.exit(2);
+  }
+  const qs = new URLSearchParams({ q: query });
+  if (flags.limit) qs.set('limit', String(flags.limit));
+  const data = await request('GET', `/api/orgs/${encodeURIComponent(await resolveOrgId())}/find?${qs.toString()}`);
+  if (flags.json) return writeJsonOut(data);
+  const hits = data.hits ?? [];
+  if (hits.length === 0) {
+    console.log('[search] no matches');
+    return;
+  }
+  for (const hit of hits) {
+    const owner = hit.ownerName ? `\t${hit.ownerName}` : '';
+    const snippet = hit.snippet ? `\t${String(hit.snippet).slice(0, 80)}` : '';
+    console.log(`${hit.kind}\t${hit.title}\t${hit.href}${owner}${snippet}`);
+  }
+}
+
 // od org — organizations, members, and invite links.
 // Mirrors the Organization surfaces in the web UI against /api/orgs/*. The CLI
 // form is the embeddability contract: an external agent or a setup script can
@@ -13115,7 +13924,15 @@ Subcommands:
   rename --name <name>         Rename the active organization
   members                      List members and their roles
   role <member-id> --role <r>  Set a member's role (owner|admin|member)
+  reports <member-id> --to <id|none>
+                               Set who this person reports to (org chart)
   remove <member-id>           Remove a member from the organization
+  teams                        Named groups inside the organization
+  team create --name <n> [--description <d>] [--member <id>]…
+                               Create a team
+  team update <team-id> [--name <n>] [--description <d>] [--member <id>]…
+                               Rename a team or replace its members
+  team delete <team-id>        Delete a team
   invites                      List invite links and targeted invites
   invite [--role <r>] [--expires-in <hours>] [--max-uses <n>]
          [--email <addr> | --username <name>]
@@ -13139,6 +13956,9 @@ Examples:
   od org pending
   od org join https://…/join/<token>
   od org role wsm-1234 --role admin
+  od org reports wsm-2 --to wsm-1
+  od org team create --name Finance --member wsm-2 --member wsm-3
+  od org teams --json
 `);
 }
 
@@ -13196,7 +14016,8 @@ async function runOrg(args) {
       console.log(`[org] not signed in (auth mode: ${data.mode})`);
       return;
     }
-    console.log(`${data.viewer.displayName}${data.viewer.email ? ` <${data.viewer.email}>` : ''}\tauth: ${data.mode}`);
+    const handle = data.viewer.username ? `@${data.viewer.username}` : '(no username)';
+    console.log(`${data.viewer.displayName}${data.viewer.email ? ` <${data.viewer.email}>` : ''}\t${handle}\tauth: ${data.mode}`);
     for (const org of data.organizations) console.log(`  ${org.id}\t${org.name}\t${org.role}`);
     return;
   }
@@ -13243,8 +14064,28 @@ async function runOrg(args) {
     const data = await request('GET', `/api/orgs/${encodeURIComponent(await activeOrgId())}/members`);
     if (flags.json) return writeJsonOut(data);
     for (const member of data.members) {
-      console.log(`${member.id}\t${member.displayName}\t${member.email ?? '-'}\t${member.role}\t${member.status}`);
+      const reports = member.reportsTo ? `reports-to ${member.reportsTo}` : 'no manager';
+      console.log(`${member.id}\t${member.displayName}\t${member.email ?? '-'}\t${member.role}\t${member.status}\t${reports}`);
     }
+    return;
+  }
+
+  if (sub === 'reports' || sub === 'manager') {
+    const memberId = positionals[1];
+    const managerId = flags.to;
+    if (!memberId || managerId === undefined) {
+      console.error('usage: od org reports <member-id> --to <manager-id|none>');
+      process.exit(2);
+    }
+    const reportsTo = managerId === 'none' || managerId === '' ? null : managerId;
+    const data = await request(
+      'PATCH',
+      `/api/orgs/${encodeURIComponent(await activeOrgId())}/members/${encodeURIComponent(memberId)}`,
+      { reportsTo },
+    );
+    if (flags.json) return writeJsonOut(data);
+    const next = data.member.reportsTo ? `reports to ${data.member.reportsTo}` : 'has no manager';
+    console.log(`[org] ${data.member.displayName} ${next}`);
     return;
   }
 
@@ -13262,6 +14103,76 @@ async function runOrg(args) {
     if (flags.json) return writeJsonOut(data);
     console.log(`[org] ${data.member.displayName} is now ${data.member.role}`);
     return;
+  }
+
+  function repeatedFlag(flag) {
+    const out = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === `--${flag}` && typeof args[i + 1] === 'string') out.push(args[i + 1]);
+    }
+    return out;
+  }
+
+  if (sub === 'teams') {
+    const data = await request('GET', `/api/orgs/${encodeURIComponent(await activeOrgId())}/teams`);
+    if (flags.json) return writeJsonOut(data);
+    for (const team of data.teams) {
+      console.log(`${team.id}\t${team.name}\t${team.memberIds.length} member(s)\t${team.description ?? ''}`);
+    }
+    return;
+  }
+
+  if (sub === 'team') {
+    const action = positionals[1];
+    const teamId = positionals[2];
+    const members = repeatedFlag('member');
+    if (action === 'create') {
+      if (!flags.name) {
+        console.error('team create requires --name');
+        process.exit(2);
+      }
+      const data = await request('POST', `/api/orgs/${encodeURIComponent(await activeOrgId())}/teams`, {
+        name: flags.name,
+        ...(flags.description ? { description: flags.description } : {}),
+        ...(members.length ? { memberIds: members } : {}),
+      });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[org] created team ${data.team.id} (${data.team.name})`);
+      return;
+    }
+    if (action === 'update') {
+      if (!teamId) {
+        console.error('team update requires a team id');
+        process.exit(2);
+      }
+      const body = {};
+      if (flags.name) body.name = flags.name;
+      if (flags.description !== undefined) body.description = flags.description;
+      if (members.length) body.memberIds = members;
+      const data = await request(
+        'PATCH',
+        `/api/orgs/${encodeURIComponent(await activeOrgId())}/teams/${encodeURIComponent(teamId)}`,
+        body,
+      );
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[org] updated team ${data.team.id} (${data.team.name})`);
+      return;
+    }
+    if (action === 'delete') {
+      if (!teamId) {
+        console.error('team delete requires a team id');
+        process.exit(2);
+      }
+      const data = await request(
+        'DELETE',
+        `/api/orgs/${encodeURIComponent(await activeOrgId())}/teams/${encodeURIComponent(teamId)}`,
+      );
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[org] deleted team ${data.team.id}`);
+      return;
+    }
+    console.error('team requires create, update, or delete');
+    process.exit(2);
   }
 
   if (sub === 'remove') {
@@ -13347,7 +14258,7 @@ async function runOrg(args) {
       process.exit(2);
     }
     // Accept either the bare token or the whole link someone pasted.
-    const token = raw.includes('/join/') ? raw.split('/join/').pop().split(/[?#]/)[0] : raw;
+    const token = parseJoinInput(raw);
     const data = await request('POST', `/api/invites/${encodeURIComponent(token)}/accept`);
     if (flags.json) return writeJsonOut(data);
     console.log(`[org] joined ${data.organization.name} as ${data.member.role}`);
@@ -13403,9 +14314,15 @@ Subcommands:
   archive <app-id>              Hide an app from the gallery (nothing is deleted)
   grants <app-id>               List who can view/edit a restricted app
   set-grants <app-id> [--grant <memberId:view|edit>]…
-                                Replace the grant list
+                      [--team <teamId:view|edit>]… [--except <member-id>]…
+                                Replace who can open the app
   share <app-id> [--expires-in <hours>]
                                 Create a preview share link (daemon must be online)
+  publish-web <app-id>          Publish the app to a lasting public URL
+  send <app-id> [--channel <slug>] [--to <member-id>] [--team <team-id>]
+                                [--except <member-id>] [--message <text>]
+                                Post the app into a channel, a DM, or a team.
+                                --except alone withholds the app from a person.
   shares <app-id>               List an app's share links
   revoke-share <app-id> <share-id>
                                 Stop a share link from working
@@ -13416,8 +14333,8 @@ Visibility:
   link     additionally reachable by a preview share link
 
 Access (--access):
-  org         whole organization can view (default)
-  restricted  only listed --grant members (plus you and admins)
+  org         whole organization can view (default); --except hides named people
+  restricted  only listed --grant members and --team teams (plus you and admins)
 
 Options:
   --org <id>         Organization to act in (default: your first)
@@ -13428,6 +14345,7 @@ Examples:
   od app publish --project proj-1 --file expenses.html --name "Expense form" --pin
   od app publish --project proj-1 --file board.html --name "Board" --access restricted --grant mem-2:edit
   od app share app-1234 --expires-in 72
+  od app send app-1234 --channel general --message "try this"
 `);
 }
 
@@ -13461,6 +14379,54 @@ async function runApp(args) {
       if (seen.has(id)) continue;
       seen.add(id);
       out.push({ memberId: id, role });
+    }
+    return out;
+  }
+
+  function parseTeamGrantFlags() {
+    const parts = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--team' && typeof args[i + 1] === 'string' && String(args[i + 1]).includes(':')) {
+        parts.push(args[i + 1]);
+      }
+    }
+    const out = [];
+    const seen = new Set();
+    for (const part of parts) {
+      const [teamId, role] = String(part).split(':');
+      if (!teamId?.trim() || (role !== 'view' && role !== 'edit')) continue;
+      const id = teamId.trim();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ teamId: id, role });
+    }
+    return out;
+  }
+
+  function parseExceptFlags() {
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--except' && typeof args[i + 1] === 'string') {
+        const id = args[i + 1].trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push({ memberId: id });
+      }
+    }
+    return out;
+  }
+
+  function repeatedAppFlag(flag) {
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === `--${flag}` && typeof args[i + 1] === 'string') {
+        const value = args[i + 1].trim();
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        out.push(value);
+      }
     }
     return out;
   }
@@ -13522,6 +14488,8 @@ async function runApp(args) {
       process.exit(2);
     }
     const grants = parseGrantFlags(flags.grant);
+    const teamGrants = parseTeamGrantFlags();
+    const denials = parseExceptFlags();
     const data = await request('POST', await orgPath(''), {
       name: flags.name,
       projectId: flags.project,
@@ -13531,6 +14499,8 @@ async function runApp(args) {
       ...(flags.access ? { accessMode: flags.access } : {}),
       ...(flags.pin ? { pinned: true } : {}),
       ...(grants.length ? { grants } : {}),
+      ...(teamGrants.length ? { teamGrants } : {}),
+      ...(denials.length ? { denials } : {}),
     });
     if (flags.json) return writeJsonOut(data);
     console.log(`[app] published ${data.app.id} (${data.app.name}) — ${data.app.visibility}/${data.app.accessMode}${data.app.pinned ? ' pinned' : ''}`);
@@ -13547,6 +14517,86 @@ async function runApp(args) {
     const data = await request('GET', await orgPath(`/${encodeURIComponent(appId)}`));
     if (flags.json) return writeJsonOut(data);
     console.log(`${data.app.id}\t${data.app.name}\t${data.app.visibility}\t${data.app.accessMode}\t${data.app.pinned ? 'pinned' : ''}\t${data.app.projectId}/${data.app.filePath}`);
+    return;
+  }
+
+  if (sub === 'send') {
+    if (!appId) {
+      console.error('send requires an app id');
+      process.exit(2);
+    }
+    const destPeople = repeatedAppFlag('to');
+    const destTeams = repeatedAppFlag('team').filter((value) => !value.includes(':'));
+    const exceptIds = new Set(parseExceptFlags().map((row) => row.memberId));
+    if (!flags.channel && destPeople.length === 0 && destTeams.length === 0 && exceptIds.size === 0) {
+      console.error('send requires --channel <slug>, --to <member-id>, --team <team-id>, or --except <member-id>');
+      process.exit(2);
+    }
+    const orgId = await activeOrgId();
+    const shown = await request('GET', await orgPath(`/${encodeURIComponent(appId)}`));
+    const app = shown.app;
+    const body = typeof flags.message === 'string' && flags.message.trim()
+      ? flags.message.trim()
+      : `Shared ${app.name}`;
+    const attachments = [{ kind: 'app', id: app.id, label: app.name }];
+    const access = await request('GET', await orgPath(`/${encodeURIComponent(appId)}/grants`));
+    const grants = (access.grants ?? []).map((row) => ({ memberId: row.memberId, role: row.role }));
+    const teamGrants = (access.teamGrants ?? []).map((row) => ({ teamId: row.teamId, role: row.role }));
+    const denials = (access.denials ?? []).map((row) => ({ memberId: row.memberId }));
+    const memberIds = new Set(destPeople);
+    for (const teamId of destTeams) {
+      const team = await request('GET', `/api/orgs/${encodeURIComponent(orgId)}/teams/${encodeURIComponent(teamId)}`);
+      for (const memberId of team.team?.memberIds ?? []) memberIds.add(memberId);
+      if (app.accessMode === 'restricted' && !teamGrants.some((row) => row.teamId === teamId)) {
+        teamGrants.push({ teamId, role: 'view' });
+      }
+    }
+    for (const id of exceptIds) memberIds.delete(id);
+    const grantByMember = new Map(grants.map((row) => [row.memberId, row]));
+    const denialSet = new Set(denials.map((row) => row.memberId));
+    for (const memberId of memberIds) {
+      denialSet.delete(memberId);
+      if (!grantByMember.has(memberId) && app.accessMode === 'restricted') {
+        grantByMember.set(memberId, { memberId, role: 'view' });
+      }
+    }
+    for (const memberId of exceptIds) {
+      grantByMember.delete(memberId);
+      denialSet.add(memberId);
+    }
+    await request('PUT', await orgPath(`/${encodeURIComponent(appId)}/grants`), {
+      grants: [...grantByMember.values()],
+      teamGrants,
+      denials: [...denialSet].map((memberId) => ({ memberId })),
+    });
+
+    const posted = [];
+    for (const memberId of memberIds) {
+      const dm = await request('POST', `/api/orgs/${encodeURIComponent(orgId)}/chat/dms`, {
+        memberIds: [memberId],
+      });
+      const ref = dm.channel.slug;
+      const data = await request(
+        'POST',
+        `/api/orgs/${encodeURIComponent(orgId)}/chat/channels/${encodeURIComponent(ref)}/messages`,
+        { body, attachments },
+      );
+      posted.push({ channel: ref, message: data.message });
+    }
+    if (flags.channel) {
+      const ref = String(flags.channel).replace(/^#/, '');
+      const data = await request(
+        'POST',
+        `/api/orgs/${encodeURIComponent(orgId)}/chat/channels/${encodeURIComponent(ref)}/messages`,
+        { body, attachments },
+      );
+      posted.push({ channel: ref, message: data.message });
+    }
+    if (flags.json) return writeJsonOut({ app, posted, except: [...exceptIds] });
+    for (const item of posted) {
+      console.log(`[app] sent ${app.id} to ${item.channel}`);
+    }
+    if (exceptIds.size) console.log(`[app] withheld from ${exceptIds.size} person(s)`);
     return;
   }
 
@@ -13578,8 +14628,14 @@ async function runApp(args) {
     }
     const data = await request('GET', await orgPath(`/${encodeURIComponent(appId)}/grants`));
     if (flags.json) return writeJsonOut(data);
-    for (const grant of data.grants) {
-      console.log(`${grant.memberId}\t${grant.role}\t${grant.memberName ?? ''}`);
+    for (const grant of data.grants ?? []) {
+      console.log(`person\t${grant.memberId}\t${grant.role}\t${grant.memberName ?? ''}`);
+    }
+    for (const grant of data.teamGrants ?? []) {
+      console.log(`team\t${grant.teamId}\t${grant.role}\t${grant.teamName ?? ''}`);
+    }
+    for (const denial of data.denials ?? []) {
+      console.log(`except\t${denial.memberId}\t\t${denial.memberName ?? ''}`);
     }
     return;
   }
@@ -13590,9 +14646,28 @@ async function runApp(args) {
       process.exit(2);
     }
     const grants = parseGrantFlags(flags.grant);
-    const data = await request('PUT', await orgPath(`/${encodeURIComponent(appId)}/grants`), { grants });
+    const teamGrants = parseTeamGrantFlags();
+    const denials = parseExceptFlags();
+    const data = await request('PUT', await orgPath(`/${encodeURIComponent(appId)}/grants`), {
+      grants,
+      ...(args.includes('--team') ? { teamGrants } : {}),
+      ...(args.includes('--except') ? { denials } : {}),
+    });
     if (flags.json) return writeJsonOut(data);
-    console.log(`[app] set ${data.grants.length} grant(s) on ${appId}`);
+    console.log(
+      `[app] set ${data.grants.length} grant(s), ${data.teamGrants?.length ?? 0} team grant(s), ${data.denials?.length ?? 0} exception(s) on ${appId}`,
+    );
+    return;
+  }
+
+  if (sub === 'publish-web') {
+    if (!appId) {
+      console.error('publish-web requires an app id');
+      process.exit(2);
+    }
+    const data = await request('POST', await orgPath(`/${encodeURIComponent(appId)}/publish-web`));
+    if (flags.json) return writeJsonOut(data);
+    console.log(data.url);
     return;
   }
 

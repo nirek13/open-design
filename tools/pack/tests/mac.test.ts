@@ -270,6 +270,29 @@ describe("renderMacPackagedConfig", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  it("bakes Clerk issuer and publishable key into packaged mac config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
+    try {
+      const config = makeConfig(root, {
+        clerkIssuer: "https://clean-jay-54.clerk.accounts.dev",
+        clerkPublishableKey: "pk_test_packaged",
+      });
+
+      const packagedConfig = JSON.parse(
+        renderMacPackagedConfig({
+          appVersion: "1.2.3",
+          config,
+          usePrebundledStandaloneWeb: true,
+        }),
+      ) as Record<string, unknown>;
+
+      expect(packagedConfig.clerkIssuer).toBe("https://clean-jay-54.clerk.accounts.dev");
+      expect(packagedConfig.clerkPublishableKey).toBe("pk_test_packaged");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
 });
 
 describe("runElectronBuilder", () => {

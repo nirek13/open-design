@@ -11,7 +11,11 @@
 //
 // Access mode (orthogonal to visibility for org-visible apps):
 //   org         — every member can view; creator + admins (+ edit grants) can edit
-//   restricted  — only listed Viewers/Editors (plus creator + admins) can see it
+//   restricted  — only listed Viewers/Editors/teams (plus creator + admins) can see it
+//
+// Denials are a subtractive list that applies on top of either mode: a named
+// person cannot open the app even if the rest of the org (or their team) can.
+// Creator and admins still can. There is no way to hide an app from an admin.
 //
 // Link-shared apps are served WITHOUT access to the organization's database.
 // Data-connected apps require a signed-in member, so an anonymous link can
@@ -34,6 +38,26 @@ export interface AppGrant {
   /** Display name when the daemon can resolve it. */
   memberName: string | null;
   role: AppGrantRole;
+}
+
+/** A whole named team granted view or edit, expanded at read time. */
+export interface AppTeamGrant {
+  teamId: string;
+  teamName: string | null;
+  role: AppGrantRole;
+}
+
+/** A person who must not open the app, even under org-wide or team access. */
+export interface AppDenial {
+  memberId: string;
+  memberName: string | null;
+}
+
+/** Full audience policy: who is included, which teams, and who is excluded. */
+export interface AppAccessPolicy {
+  grants: AppGrant[];
+  teamGrants: AppTeamGrant[];
+  denials: AppDenial[];
 }
 
 export interface OrgApp {
@@ -64,6 +88,8 @@ export interface OrgApp {
   /** Tables this app declared it needs, checked on every bridge request and
    * shown to a person before they run it. Empty means it touches no data. */
   dataScopes: AppDataScope[];
+  /** Lasting public URL after one-click publish. Null until published to the web. */
+  webUrl: string | null;
 }
 
 export interface PublishAppRequest {
@@ -79,6 +105,10 @@ export interface PublishAppRequest {
   pinned?: boolean;
   /** Initial grants when accessMode is restricted (or to give edit beyond default). */
   grants?: Array<{ memberId: string; role: AppGrantRole }>;
+  /** Grant a named org team rather than listing every member. */
+  teamGrants?: Array<{ teamId: string; role: AppGrantRole }>;
+  /** People who must not open the app, even if the rest of the org can. */
+  denials?: Array<{ memberId: string }>;
 }
 
 export interface UpdateAppRequest {
@@ -94,11 +124,13 @@ export interface UpdateAppRequest {
 
 export interface SetAppGrantsRequest {
   grants: Array<{ memberId: string; role: AppGrantRole }>;
+  /** Omit to leave existing team grants unchanged. Pass [] to clear. */
+  teamGrants?: Array<{ teamId: string; role: AppGrantRole }>;
+  /** Omit to leave existing denials unchanged. Pass [] to clear. */
+  denials?: Array<{ memberId: string }>;
 }
 
-export interface AppGrantsResponse {
-  grants: AppGrant[];
-}
+export interface AppGrantsResponse extends AppAccessPolicy {}
 
 /** A link-share on an app. The token is returned once, at creation. */
 export interface AppShareLink {
@@ -145,4 +177,10 @@ export interface AllOrgAppsResponse {
 
 export interface AppShareLinksResponse {
   shares: AppShareLink[];
+}
+
+/** One-click publish of an app-builder app onto the public web. */
+export interface PublishAppToWebResponse {
+  app: OrgApp;
+  url: string;
 }

@@ -68,7 +68,7 @@ vi.mock('../../src/providers/registry', async () => {
     ...actual,
     fetchAuthContext: vi.fn().mockResolvedValue({
       mode: 'local-owner',
-      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null },
+      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
       organizations: [],
     }),
     daemonIsLive: vi.fn(),

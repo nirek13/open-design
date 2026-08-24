@@ -6,17 +6,23 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, Select } from '@open-design/components';
-import type { OrgInvite, OrgMember, OrgRole } from '@open-design/contracts';
+import { personLabel, type OrgInvite, type OrgMember, type OrgRole, type OrgTeam } from '@open-design/contracts';
+import { PersonAvatar } from '../account/PersonAvatar';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
   createOrgInvite,
+  createOrgTeam,
+  deleteOrgTeam,
   fetchOrgInvites,
   fetchOrgMembers,
+  fetchOrgTeams,
   removeOrgMember,
   renameOrganization,
   revokeOrgInvite,
   updateOrgMemberRole,
+  updateOrgMemberReportsTo,
+  updateOrgTeam,
 } from '../../providers/registry';
 import styles from './OrgMembersView.module.css';
 
@@ -40,9 +46,11 @@ export function OrgMembersView({ active }: { active: boolean }) {
   const t = useT();
   const { activeOrg, activeOrgId, can, refresh } = useOptionalOrg() ?? NO_ORG_CONTEXT;
   const [members, setMembers] = useState<OrgMember[]>([]);
+  const [teams, setTeams] = useState<OrgTeam[]>([]);
   const [invites, setInvites] = useState<OrgInvite[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [freshLink, setFreshLink] = useState<string | null>(null);
+  const [freshCode, setFreshCode] = useState<string | null>(null);
   const [freshTarget, setFreshTarget] = useState<string | null>(null);
   const [emailed, setEmailed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -50,6 +58,8 @@ export function OrgMembersView({ active }: { active: boolean }) {
   const [inviteTarget, setInviteTarget] = useState('');
   const [orgName, setOrgName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [teamName, setTeamName] = useState('');
+  const [teamDescription, setTeamDescription] = useState('');
 
   const isAdmin = can('admin');
   const isOwner = can('owner');
@@ -58,6 +68,7 @@ export function OrgMembersView({ active }: { active: boolean }) {
     if (!activeOrgId) return;
     try {
       setMembers(await fetchOrgMembers(activeOrgId));
+      setTeams(await fetchOrgTeams(activeOrgId));
       // Invites are admin-only; a plain member seeing an empty list is
       // correct, not an error worth shouting about.
       if (isAdmin) setInvites(await fetchOrgInvites(activeOrgId));
@@ -79,6 +90,7 @@ export function OrgMembersView({ active }: { active: boolean }) {
     try {
       const created = await createOrgInvite(activeOrgId, { role: inviteRole, ...request });
       setFreshLink(created.url);
+      setFreshCode(created.token);
       setEmailed(Boolean(created.emailed));
       if (created.emailError) setError(created.emailError);
       setFreshTarget(
@@ -129,6 +141,16 @@ export function OrgMembersView({ active }: { active: boolean }) {
     }
   }
 
+  async function handleReportsToChange(member: OrgMember, reportsTo: string) {
+    if (!activeOrgId) return;
+    try {
+      await updateOrgMemberReportsTo(activeOrgId, member.id, reportsTo ? reportsTo : null);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   async function handleRemove(member: OrgMember) {
     if (!activeOrgId) return;
     try {
@@ -144,6 +166,50 @@ export function OrgMembersView({ active }: { active: boolean }) {
     try {
       await renameOrganization(activeOrgId, orgName.trim());
       await refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleCreateTeam() {
+    if (!activeOrgId || !teamName.trim()) {
+      setError(t('org.teamNeedName'));
+      return;
+    }
+    setBusy(true);
+    try {
+      await createOrgTeam(activeOrgId, {
+        name: teamName.trim(),
+        description: teamDescription.trim() || undefined,
+      });
+      setTeamName('');
+      setTeamDescription('');
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleToggleTeamMember(team: OrgTeam, memberId: string) {
+    if (!activeOrgId) return;
+    const memberIds = team.memberIds.includes(memberId)
+      ? team.memberIds.filter((id) => id !== memberId)
+      : [...team.memberIds, memberId];
+    try {
+      await updateOrgTeam(activeOrgId, team.id, { memberIds });
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleDeleteTeam(team: OrgTeam) {
+    if (!activeOrgId) return;
+    try {
+      await deleteOrgTeam(activeOrgId, team.id);
+      await load();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -227,6 +293,7 @@ export function OrgMembersView({ active }: { active: boolean }) {
                   variant="ghost"
                   onClick={() => {
                     setFreshLink(null);
+                    setFreshCode(null);
                     setFreshTarget(null);
                     setEmailed(false);
                   }}
@@ -241,6 +308,25 @@ export function OrgMembersView({ active }: { active: boolean }) {
                     : t('org.inviteSentTo', { target: freshTarget })
                   : t('org.linkShownOnce')}
               </p>
+              {freshCode ? (
+                <p className={styles.joinCode} data-testid="org-join-code">
+                  <span>{t('org.joinCode')}</span>
+                  <code>{freshCode}</code>
+                  <Button
+                    variant="ghost"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(freshCode);
+                        setCopied(true);
+                      } catch {
+                        setCopied(false);
+                      }
+                    }}
+                  >
+                    {copied ? t('org.copied') : t('org.copyCode')}
+                  </Button>
+                </p>
+              ) : null}
             </div>
           ) : null}
         </section>
@@ -248,12 +334,21 @@ export function OrgMembersView({ active }: { active: boolean }) {
 
       <section className={styles.panel}>
         <h2 className={styles.panelTitle}>{t('org.members')}</h2>
+        <ul className={styles.roleLegend} data-testid="org-role-legend">
+          {ROLES.map((role) => (
+            <li key={role}>
+              <strong>{t(`org.role.${role}` as never)}</strong>
+              <span>{t(`org.role.${role}Hint` as never)}</span>
+            </li>
+          ))}
+        </ul>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
               <tr>
                 <th scope="col">{t('org.person')}</th>
                 <th scope="col">{t('org.role')}</th>
+                <th scope="col">{t('org.reportsTo')}</th>
                 <th scope="col">{t('org.status')}</th>
                 <th scope="col" />
               </tr>
@@ -263,8 +358,18 @@ export function OrgMembersView({ active }: { active: boolean }) {
                 <tr key={member.id}>
                   <td>
                     <div className={styles.person}>
-                      <span className={styles.personName}>{member.displayName}</span>
-                      {member.email ? <span className={styles.personEmail}>{member.email}</span> : null}
+                      <PersonAvatar
+                        name={personLabel(member)}
+                        avatarUrl={member.avatarUrl}
+                        className={styles.personAvatar}
+                      />
+                      <div className={styles.personText}>
+                        <span className={styles.personName}>{personLabel(member)}</span>
+                        {member.username ? (
+                          <span className={styles.personEmail}>@{member.username}</span>
+                        ) : null}
+                        {member.email ? <span className={styles.personEmail}>{member.email}</span> : null}
+                      </div>
                     </div>
                   </td>
                   <td>
@@ -284,6 +389,33 @@ export function OrgMembersView({ active }: { active: boolean }) {
                       t(`org.role.${member.role}` as never)
                     )}
                   </td>
+                  <td>
+                    {isAdmin ? (
+                      <Select
+                        value={member.reportsTo ?? ''}
+                        aria-label={t('org.reportsTo')}
+                        onChange={(event) => void handleReportsToChange(member, event.target.value)}
+                        data-testid={`org-member-reports-${member.id}`}
+                      >
+                        <option value="">{t('org.noManager')}</option>
+                        {members
+                          .filter((other) => other.id !== member.id && other.status === 'active')
+                          .map((other) => (
+                            <option key={other.id} value={other.id}>
+                              {personLabel(other)}
+                            </option>
+                          ))}
+                      </Select>
+                    ) : member.reportsTo ? (
+                      personLabel(members.find((other) => other.id === member.reportsTo) ?? {
+                        displayName: member.reportsTo,
+                        username: null,
+                        email: null,
+                      })
+                    ) : (
+                      t('org.noManager')
+                    )}
+                  </td>
                   <td>{member.status === 'active' ? t('org.active') : t('org.removed')}</td>
                   <td>
                     {isOwner && member.status === 'active' ? (
@@ -297,6 +429,81 @@ export function OrgMembersView({ active }: { active: boolean }) {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className={styles.panel} data-testid="org-teams">
+        <h2 className={styles.panelTitle}>{t('org.teamsTitle')}</h2>
+        <p className={styles.panelHint}>{t('org.teamsHint')}</p>
+        {isAdmin ? (
+          <div className={styles.row}>
+            <Input
+              type="text"
+              value={teamName}
+              onChange={(event) => setTeamName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleCreateTeam();
+              }}
+              placeholder={t('org.teamNamePlaceholder')}
+              aria-label={t('org.teamNamePlaceholder')}
+              data-testid="org-team-name"
+            />
+            <Input
+              type="text"
+              value={teamDescription}
+              onChange={(event) => setTeamDescription(event.target.value)}
+              placeholder={t('org.teamDescriptionPlaceholder')}
+              aria-label={t('org.teamDescriptionPlaceholder')}
+            />
+            <Button
+              onClick={() => void handleCreateTeam()}
+              disabled={busy}
+              data-testid="org-create-team"
+            >
+              {t('org.createTeam')}
+            </Button>
+          </div>
+        ) : null}
+        {teams.length === 0 ? (
+          <p className={styles.panelHint}>{t('org.teamsEmpty')}</p>
+        ) : (
+          <ul className={styles.teamList}>
+            {teams.map((team) => (
+              <li key={team.id} className={styles.teamCard} data-testid={`org-team-${team.id}`}>
+                <div className={styles.teamHead}>
+                  <div>
+                    <strong>{team.name}</strong>
+                    {team.description ? <p className={styles.panelHint}>{team.description}</p> : null}
+                  </div>
+                  {isAdmin ? (
+                    <Button variant="ghost" onClick={() => void handleDeleteTeam(team)}>
+                      {t('org.deleteTeam')}
+                    </Button>
+                  ) : null}
+                </div>
+                <div className={styles.teamPeople}>
+                  {members
+                    .filter((member) => member.status === 'active')
+                    .map((member) => {
+                      const on = team.memberIds.includes(member.id);
+                      return (
+                        <button
+                          key={member.id}
+                          type="button"
+                          className={on ? styles.chipOn : styles.chip}
+                          aria-pressed={on}
+                          disabled={!isAdmin}
+                          data-testid={`org-team-${team.id}-member-${member.id}`}
+                          onClick={() => void handleToggleTeamMember(team, member.id)}
+                        >
+                          {personLabel(member)}
+                        </button>
+                      );
+                    })}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {isAdmin && invites.length > 0 ? (

@@ -13,6 +13,7 @@ import { DATABASE_UI_VISIBLE } from './features/databaseUi';
 // state isn't trapped behind a `useState` boundary.
 export type EntryHomeView =
   | 'home'
+  | 'search'
   | 'onboarding'
   | 'projects'
   | 'tasks'
@@ -34,6 +35,8 @@ export type EntryHomeView =
   | 'pages'
   | 'calendar'
   | 'mail'
+  | 'slack'
+  | 'dev'
   | 'templates'
   | 'tables'
   | 'inventory'
@@ -56,6 +59,11 @@ export type Route =
       pageId?: string;
       /** Deep-link into a mail thread (`/mail/:threadId`). */
       threadId?: string;
+      /** Deep-link into a Slack channel (`/slack/:channelId`). */
+      channelId?: string;
+      /** Deep-link into a GitHub repo (`/dev/:owner/:repo`). */
+      owner?: string;
+      repo?: string;
     }
   | { kind: 'design-system-create' }
   | { kind: 'design-system-detail'; designSystemId: string }
@@ -85,6 +93,9 @@ export function parseRoute(pathname: string): Route {
   // hero, which is why it has an explicit path of its own.
   if (parts.length === 0) return { kind: 'home', view: 'workspace' };
   if (parts[0] === 'home' && !parts[1]) return { kind: 'home', view: 'home' };
+  if (parts[0] === 'search' && !parts[1]) {
+    return { kind: 'home', view: 'search' };
+  }
   if (parts[0] === 'onboarding') {
     return { kind: 'home', view: 'onboarding' };
   }
@@ -170,7 +181,10 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'purchasing' && !parts[1]) {
     return { kind: 'home', view: 'purchasing' };
   }
-  if (parts[0] === 'team' && !parts[1]) {
+  if (parts[0] === 'team') {
+    if (parts[1]) {
+      return { kind: 'home', view: 'team', channelId: decodeURIComponent(parts[1]) };
+    }
     return { kind: 'home', view: 'team' };
   }
   if (parts[0] === 'pages') {
@@ -187,6 +201,23 @@ export function parseRoute(pathname: string): Route {
       return { kind: 'home', view: 'mail', threadId: decodeURIComponent(parts[1]) };
     }
     return { kind: 'home', view: 'mail' };
+  }
+  if (parts[0] === 'slack') {
+    if (parts[1]) {
+      return { kind: 'home', view: 'slack', channelId: decodeURIComponent(parts[1]) };
+    }
+    return { kind: 'home', view: 'slack' };
+  }
+  if (parts[0] === 'dev') {
+    if (parts[1] && parts[2]) {
+      return {
+        kind: 'home',
+        view: 'dev',
+        owner: decodeURIComponent(parts[1]),
+        repo: decodeURIComponent(parts[2]),
+      };
+    }
+    return { kind: 'home', view: 'dev' };
   }
   if (parts[0] === 'templates' && !parts[1]) {
     return { kind: 'home', view: 'templates' };
@@ -226,6 +257,7 @@ export function parseRoute(pathname: string): Route {
 export function buildPath(route: Route): string {
   if (route.kind === 'home') {
     if (route.view === 'onboarding') return '/onboarding';
+    if (route.view === 'search') return '/search';
     if (route.view === 'jobs') return '/jobs';
     if (route.view === 'tasks') return '/automations';
     if (route.view === 'plugins') return '/plugins';
@@ -243,13 +275,24 @@ export function buildPath(route: Route): string {
     if (route.view === 'approvals') return '/approvals';
     if (route.view === 'crm') return '/crm';
     if (route.view === 'purchasing') return '/purchasing';
-    if (route.view === 'team') return '/team';
+    if (route.view === 'team') {
+      return route.channelId ? `/team/${encodeURIComponent(route.channelId)}` : '/team';
+    }
     if (route.view === 'pages') {
       return route.pageId ? `/pages/${encodeURIComponent(route.pageId)}` : '/pages';
     }
     if (route.view === 'calendar') return '/calendar';
     if (route.view === 'mail') {
       return route.threadId ? `/mail/${encodeURIComponent(route.threadId)}` : '/mail';
+    }
+    if (route.view === 'slack') {
+      return route.channelId ? `/slack/${encodeURIComponent(route.channelId)}` : '/slack';
+    }
+    if (route.view === 'dev') {
+      if (route.owner && route.repo) {
+        return `/dev/${encodeURIComponent(route.owner)}/${encodeURIComponent(route.repo)}`;
+      }
+      return '/dev';
     }
     if (route.view === 'templates') return '/templates';
     if (route.view === 'tables') return '/tables';

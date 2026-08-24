@@ -1,0 +1,103 @@
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
+  max-width: 460px;
+  width: 100%;
+  padding: 28px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
+  border-radius: 16px;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.body {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.choice:hover {
+  border-color: var(--od-fg, inherit);
+}
+
+.choiceName {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.choiceHint {
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pending {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.pendingLabel {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.65;
+}
+
+.pendingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--od-danger, #b42318);
+}

@@ -29,6 +29,7 @@ import styles from './ToolBuilder.module.css';
 interface Props {
   onClose: () => void;
   onCreated: () => void | Promise<void>;
+  initialMode?: Mode;
 }
 
 type Mode = 'choose' | 'describe' | 'import' | 'define' | 'wiki';
@@ -39,10 +40,10 @@ function errorMessage(err: unknown): string {
 
 const EMPTY_FIELD: WorkspaceFieldInput = { name: '', type: 'text' };
 
-export function ToolBuilder({ onClose, onCreated }: Props) {
+export function ToolBuilder({ onClose, onCreated, initialMode = 'choose' }: Props) {
   const t = useT();
-  const { activeOrgId } = useOptionalOrg() ?? NO_ORG_CONTEXT;
-  const [mode, setMode] = useState<Mode>('choose');
+  const { activeOrgId, activeOrg } = useOptionalOrg() ?? NO_ORG_CONTEXT;
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -64,7 +65,7 @@ export function ToolBuilder({ onClose, onCreated }: Props) {
         name: description.trim().slice(0, 60),
         pendingPrompt: description.trim(),
         skillId: null,
-        designSystemId: null,
+        designSystemId: activeOrg?.defaultDesignSystemId ?? null,
       });
       if (created?.project) {
         navigate({
@@ -89,7 +90,7 @@ export function ToolBuilder({ onClose, onCreated }: Props) {
         name: description.trim().slice(0, 60),
         pendingPrompt: composePagesWikiPrompt({ request: description.trim() }),
         skillId: null,
-        designSystemId: null,
+        designSystemId: activeOrg?.defaultDesignSystemId ?? null,
       });
       if (created?.project) {
         navigate({

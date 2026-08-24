@@ -1,7 +1,8 @@
 import { cac } from "cac";
 import type { CAC } from "cac";
 
-import { resolveToolPackConfig, type ToolPackCliOptions, type ToolPackPlatform } from "./config.js";
+import { WORKSPACE_ROOT, resolveToolPackConfig, type ToolPackCliOptions, type ToolPackPlatform } from "./config.js";
+import { loadWorkspaceLocalEnv } from "./local-env.js";
 import {
   cleanupPackedMacNamespace,
   installPackedMacDmg,
@@ -67,7 +68,9 @@ function addSharedOptions(command: CacCommand) {
     .option("--cache-dir <path>", "advanced escape hatch for relocating tools-pack cache")
     .option("--dir <path>", "tools-pack output/runtime root directory")
     .option("--diagnose-attempts <count>", "diagnose-ipc: start/poll/stop attempts")
+    .option("--env-file <path>", "load a workspace env file before resolving config; repeatable")
     .option("--json", "print JSON")
+    .option("--no-env-file", "skip automatic workspace env file loading", { default: false })
     .option("--namespace <name>", "runtime namespace")
     .option("--expr <expression>", "desktop inspect eval expression")
     .option("--path <path>", "desktop inspect screenshot path")
@@ -262,4 +265,11 @@ addBuildOptions(addSharedOptions(cli.command("linux <action>", "Linux packaging 
   });
 
 cli.help();
+
+const cliArgs = process.argv.slice(2);
+loadWorkspaceLocalEnv({
+  args: cliArgs,
+  log: (message) => process.stderr.write(`${message}\n`),
+  workspaceRoot: WORKSPACE_ROOT,
+});
 cli.parse();

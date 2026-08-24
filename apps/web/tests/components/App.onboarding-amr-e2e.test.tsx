@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
 // High-fidelity integration test for the onboarding -> home agent-selection
-// bug: the user picks (or accepts the recommended default) Open Design AMR
+// bug: the user picks (or accepts the recommended default) Substrate AMR
 // during first-run onboarding, but the home agent picker comes back showing
 // Claude Code. Unlike the component-level EntryShell tests (which mock
 // `onAgentChange` so it never updates config), this mounts the REAL `App`
@@ -61,7 +61,7 @@ vi.mock('../../src/providers/registry', async () => {
     ...actual,
     fetchAuthContext: vi.fn().mockResolvedValue({
       mode: 'local-owner',
-      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null },
+      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
       organizations: [],
     }),
     daemonIsLive: vi.fn(),

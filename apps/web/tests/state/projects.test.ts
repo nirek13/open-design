@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   applyPlugin,
-  contributeGeneratedPluginToOpenDesign,
+  contributeGeneratedPluginToSubstrate,
   createProject,
   createPluginShareProject,
   deleteProject,
@@ -265,7 +265,7 @@ describe('generated plugin share actions', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const publish = await publishGeneratedPluginToGitHub('project-1', 'generated-plugin');
-    const contribute = await contributeGeneratedPluginToOpenDesign('project-1', 'generated-plugin');
+    const contribute = await contributeGeneratedPluginToSubstrate('project-1', 'generated-plugin');
 
     expect(publish).toMatchObject({ ok: true, message: 'Ready' });
     expect(contribute).toMatchObject({ ok: true, message: 'Ready' });

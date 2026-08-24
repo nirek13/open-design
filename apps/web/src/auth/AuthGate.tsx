@@ -81,7 +81,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // failed requests, and rendering a sign-in screen would be a guess.
   if (failed) {
     return (
-      <Notice title="Cannot reach Open Design">
+      <Notice title="Cannot reach Substrate">
         The daemon is not responding. Start it with <code>pnpm tools-dev start web</code> and
         reload.
       </Notice>
@@ -106,7 +106,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   return (
     <SignInBoundary>
       <Suspense fallback={<div className={styles.loading}>Loading…</div>}>
-        <ClerkSession publishableKey={context.publishableKey}>{children}</ClerkSession>
+        <ClerkSession appOrigin={context.appOrigin} publishableKey={context.publishableKey}>
+          {children}
+        </ClerkSession>
       </Suspense>
     </SignInBoundary>
   );

@@ -19,7 +19,7 @@ const PAGES_USAGE = `Usage:
   od tools pages search --query <text> [--limit <n>]
   od tools pages upsert --input page.json
   od tools pages append --page <page-id> --input blocks.json
-  od tools pages embed --page <page-id> --type <page|database|record|artifact|bookmark> [--target <id>] [--table <id>] [--record <id>] [--path <file>] [--url <url>]
+  od tools pages embed --page <page-id> --type <page|database|record|artifact|bookmark|embed> [--target <id>] [--table <id>] [--record <id>] [--path <file>] [--url <url>]
   od tools pages scaffold --input tree.json
   od tools pages duplicate --page <page-id> [--recursive]
   od tools pages archive --page <page-id>
@@ -35,7 +35,7 @@ Input files:
 Block types:
   paragraph, heading_1, heading_2, heading_3, bulleted_list_item,
   numbered_list_item, to_do, toggle, callout, quote, code, divider,
-  bookmark, table, database, artifact, page, record.
+  bookmark, embed, table, database, artifact, page, record.
 
 Embeds:
   page       props.pageId     — nested page / wiki link
@@ -43,6 +43,9 @@ Embeds:
   record     props.recordId   — one ERP / workspace row
   artifact   props.path       — project design file
   bookmark   props.url        — external URL card
+  embed      props.url        — live YouTube / Figma / Notion / created apps, pictures, videos, slides / any URL
+               For something you built, use /api/projects/<projectId>/raw/<file>
+               To make something unique for a page, generate the file then embed it with --type embed --url /api/projects/<projectId>/raw/<file>
 
 Creating a child page with parentPageId also appends a page embed on the parent
 unless you set linkOnParent: false.

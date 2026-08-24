@@ -26,6 +26,7 @@ import {
 } from 'react';
 import { EntryHelpMenu } from './EntryHelpMenu';
 import { Icon } from './Icon';
+import { isMacPlatform } from '../utils/platform';
 import { useT } from '../i18n';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
 import { DATABASE_UI_VISIBLE } from '../features/databaseUi';
@@ -52,6 +53,7 @@ import {
 
 export type EntryView =
   | 'home'
+  | 'search'
   | 'onboarding'
   | 'projects'
   | 'tasks'
@@ -73,6 +75,8 @@ export type EntryView =
   | 'pages'
   | 'calendar'
   | 'mail'
+  | 'slack'
+  | 'dev'
   | 'templates'
   | 'tables'
   | 'inventory'
@@ -146,11 +150,14 @@ function dockItemLabel(
     return pinnedApps.find((app) => app.id === appId)?.name ?? appId;
   }
   switch (id) {
+    case 'search': return t('entry.navSearch');
     case 'erp': return t('entry.navErp');
     case 'team': return t('entry.navTeam');
     case 'pages': return t('entry.navPages');
     case 'calendar': return t('entry.navCalendar');
     case 'mail': return t('entry.navMail');
+    case 'slack': return t('entry.navSlack');
+    case 'dev': return t('entry.navDev');
     case 'home': return t('entry.navHome');
     case 'projects': return t('entry.navProjects');
     case 'design-systems': return t('entry.navDesignSystems');
@@ -236,11 +243,14 @@ export function EntryNavRail({
 
   const availableIds = useMemo(() => {
     const ids: string[] = [
+      'search',
       'erp',
       'team',
       'pages',
       'calendar',
       'mail',
+      'slack',
+      'dev',
       'home',
       'projects',
       'design-systems',
@@ -458,6 +468,19 @@ export function EntryNavRail({
   const renderDockButton = (id: string) => {
     const nudge = (event: ReactKeyboardEvent<HTMLButtonElement>) => handleNudgeKey(id, event);
     switch (id) {
+      case 'search':
+        return (
+          <NavButton
+            active={view === 'search'}
+            ariaLabel={t('entry.navSearch')}
+            tooltip={`${t('entry.navSearch')} (${isMacPlatform() ? '⌘ Space / ⌘ 1' : 'Ctrl+Space / Ctrl+1'})`}
+            onClick={activate(() => selectView('search'))}
+            testId="entry-nav-search"
+            onKeyDown={nudge}
+          >
+            <Icon name="search" size={18} />
+          </NavButton>
+        );
       case 'erp':
         return (
           <NavButton
@@ -521,6 +544,32 @@ export function EntryNavRail({
             onKeyDown={nudge}
           >
             <Icon name="mail" size={18} />
+          </NavButton>
+        );
+      case 'slack':
+        return (
+          <NavButton
+            active={view === 'slack'}
+            ariaLabel={t('entry.navSlack')}
+            tooltip={t('entry.navSlack')}
+            onClick={activate(() => selectView('slack'))}
+            testId="entry-nav-slack"
+            onKeyDown={nudge}
+          >
+            <Icon name="hash" size={18} />
+          </NavButton>
+        );
+      case 'dev':
+        return (
+          <NavButton
+            active={view === 'dev'}
+            ariaLabel={t('entry.navDev')}
+            tooltip={t('entry.navDev')}
+            onClick={activate(() => selectView('dev'))}
+            testId="entry-nav-dev"
+            onKeyDown={nudge}
+          >
+            <Icon name="github" size={18} />
           </NavButton>
         );
       case 'home':

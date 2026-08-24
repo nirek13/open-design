@@ -153,9 +153,13 @@ export const API_ERROR_CODES = [
   // details carries { required, actual }.
   'ORG_ROLE_REQUIRED',
   'ORG_MEMBER_NOT_FOUND',
+  // Named group (Finance, contractors, …) inside an organization.
+  'ORG_TEAM_NOT_FOUND',
   // Refusing to remove or demote the last owner — an organization with no
   // owner can never be administered again.
   'ORG_LAST_OWNER',
+  // Setting reportsTo would loop (A reports to B reports to A).
+  'ORG_REPORTS_CYCLE',
   'ORG_INVITE_INVALID',
   'ORG_INVITE_EXPIRED',
   // The invite hit its maximum number of uses.
@@ -164,6 +168,8 @@ export const API_ERROR_CODES = [
   'ORG_INVITE_WRONG_RECIPIENT',
   // A still-open email/username invite to the same person already exists.
   'ORG_INVITE_DUPLICATE',
+  // Someone else already claimed this public username.
+  'USERNAME_TAKEN',
   'APP_NOT_FOUND',
   // The share link is unknown, revoked, or past its expiry.
   'APP_SHARE_INVALID',

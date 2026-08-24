@@ -40,9 +40,12 @@ import {
   listChannels,
   listMessages,
   markChannelRead,
+  openDirectMessage,
   postMessage,
   postSystemMessage,
+  searchMessages,
   setUpDefaultChannels,
+  toggleReaction,
   totalUnread,
 } from '../src/workspace-data/chat.js';
 import { loadTableByName } from '../src/workspace-data/schema.js';
@@ -567,6 +570,27 @@ describe('ERP templates', () => {
       ).rejects.toMatchObject({ code: 'WORKSPACE_VALIDATION_FAILED' });
     });
 
+    it('lets a file-only message through', async () => {
+      const channel = await createChannel(db(), orgId, 'wsm-test', { displayName: 'General' });
+      const message = await postMessage(db(), orgId, channel.slug, 'wsm-test', {
+        body: '',
+        attachments: [
+          {
+            kind: 'file',
+            id: 'file-1',
+            label: 'brief.pdf',
+            url: `/api/orgs/${orgId}/chat/files/file-1`,
+            mimeType: 'application/pdf',
+            fileName: 'brief.pdf',
+            byteSize: 1200,
+          },
+        ],
+      });
+      expect(message.body).toBe('');
+      expect(message.attachments[0]?.kind).toBe('file');
+      expect(message.attachments[0]?.fileName).toBe('brief.pdf');
+    });
+
     it('lets a person edit only their own message', async () => {
       const channel = await createChannel(db(), orgId, 'wsm-test', { displayName: 'General' });
       const message = await postMessage(db(), orgId, channel.slug, 'wsm-test', { body: 'mine' });
@@ -629,6 +653,44 @@ describe('ERP templates', () => {
         before: page.nextBefore!,
       });
       expect(older.messages.map((m) => m.body)).not.toEqual(page.messages.map((m) => m.body));
+    });
+
+    it('reuses a direct message between the same two people', async () => {
+      const first = await openDirectMessage(db(), orgId, 'wsm-test', ['wsm-other']);
+      const second = await openDirectMessage(db(), orgId, 'wsm-other', ['wsm-test']);
+
+      expect(first.kind).toBe('dm');
+      expect(first.visibility).toBe('private');
+      expect(second.id).toBe(first.id);
+    });
+
+    it('toggles a reaction on a message', async () => {
+      const channel = await createChannel(db(), orgId, 'wsm-test', { displayName: 'General' });
+      const message = await postMessage(db(), orgId, channel.slug, 'wsm-test', { body: 'ship it' });
+
+      const reacted = await toggleReaction(db(), orgId, message.id, 'wsm-test', '👍');
+      expect(reacted.reactions).toEqual([
+        expect.objectContaining({ emoji: '👍', count: 1, me: true }),
+      ]);
+
+      const cleared = await toggleReaction(db(), orgId, message.id, 'wsm-test', '👍');
+      expect(cleared.reactions).toEqual([]);
+    });
+
+    it('searches messages the caller can see, and hides private ones', async () => {
+      const channel = await createChannel(db(), orgId, 'wsm-test', { displayName: 'General' });
+      await postMessage(db(), orgId, channel.slug, 'wsm-test', { body: 'invoice INV-1042 is late' });
+      const secret = await createChannel(db(), orgId, 'wsm-test', {
+        displayName: 'Board comp',
+        visibility: 'private',
+      });
+      await postMessage(db(), orgId, secret.slug, 'wsm-test', { body: 'secret-token-xyz' });
+
+      const visible = await searchMessages(db(), orgId, 'wsm-test', 'INV-1042');
+      expect(visible[0]?.message.body).toContain('INV-1042');
+
+      const hidden = await searchMessages(db(), orgId, 'wsm-other', 'secret-token-xyz');
+      expect(hidden).toEqual([]);
     });
   });
 

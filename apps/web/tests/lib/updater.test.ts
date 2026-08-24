@@ -19,10 +19,10 @@ function downloadedStatus(overrides: Partial<OpenDesignHostUpdaterStatusSnapshot
   return {
     arch: 'arm64',
     artifact: {
-      name: 'Open Design Beta.dmg',
+      name: 'Substrate Beta.dmg',
       platformKey: 'macAppleSilicon',
       type: 'dmg',
-      url: 'https://fixture.test/Open Design Beta.dmg',
+      url: 'https://fixture.test/Substrate Beta.dmg',
     },
     availableVersion: '1.2.3-beta.4',
     capabilities: {
@@ -33,7 +33,7 @@ function downloadedStatus(overrides: Partial<OpenDesignHostUpdaterStatusSnapshot
     },
     channel: 'beta',
     currentVersion: '1.2.3-beta.3',
-    downloadPath: '/tmp/open-design-updater/Open Design Beta.dmg',
+    downloadPath: '/tmp/open-design-updater/Substrate Beta.dmg',
     enabled: true,
     mode: 'package-launcher',
     platform: 'darwin',
@@ -169,10 +169,10 @@ describe('web updater model', () => {
         incoming: {
           arch: 'arm64',
           artifact: {
-            name: 'Open Design Beta 1.2.3-beta.5.dmg',
+            name: 'Substrate Beta 1.2.3-beta.5.dmg',
             platformKey: 'macAppleSilicon',
             type: 'dmg',
-            url: 'https://fixture.test/Open Design Beta 1.2.3-beta.5.dmg',
+            url: 'https://fixture.test/Substrate Beta 1.2.3-beta.5.dmg',
           },
           channel: 'beta',
           key: '1.2.3-beta.5-mac-arm64',
@@ -200,7 +200,7 @@ describe('web updater model', () => {
         installResult: {
           dryRun: true,
           openedAt: '2026-05-19T00:00:00.000Z',
-          path: '/tmp/open-design-updater/Open Design Beta.dmg',
+          path: '/tmp/open-design-updater/Substrate Beta.dmg',
         },
       }),
       { hostAvailable: true },
@@ -223,7 +223,7 @@ describe('web updater model', () => {
       installResult: {
         dryRun: true,
         openedAt: '2026-05-19T00:00:00.000Z',
-        path: status.downloadPath ?? '/tmp/open-design-updater/Open Design Beta.dmg',
+        path: status.downloadPath ?? '/tmp/open-design-updater/Substrate Beta.dmg',
       },
     }));
     const quit = vi.fn(async () => ({ ok: true as const }));
@@ -289,7 +289,7 @@ describe('web updater model', () => {
       downloading: 'Downloading Update…',
       install: 'Install Update…',
       installing: 'Installing Update…',
-      restart: 'Restart to Update Open Design…',
+      restart: 'Restart to Update Substrate…',
     };
     await expect(syncUpdaterMenuLabels(labels)).resolves.toEqual({ ok: true });
     expect(setMenuLabels).toHaveBeenCalledWith(labels);

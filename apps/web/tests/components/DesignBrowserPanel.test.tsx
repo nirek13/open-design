@@ -70,11 +70,12 @@ describe('normalizeBrowserAddress', () => {
     expect(normalizeBrowserAddress('0.0.0.0:8000')).toBe('http://0.0.0.0:8000');
   });
 
-  it('resolves /api, /artifacts, /frames paths against the page origin', () => {
+  it('resolves /api, /artifacts, /frames, /s paths against the page origin', () => {
     const origin = window.location.origin;
     expect(normalizeBrowserAddress('/api/runs')).toBe(`${origin}/api/runs`);
     expect(normalizeBrowserAddress('/artifacts/x.png')).toBe(`${origin}/artifacts/x.png`);
     expect(normalizeBrowserAddress('/frames/1')).toBe(`${origin}/frames/1`);
+    expect(normalizeBrowserAddress('/s/share-token')).toBe(`${origin}/s/share-token`);
   });
 
   it('maps other absolute paths to file URLs', () => {
@@ -166,7 +167,7 @@ describe('inspiration action prompts', () => {
     });
 
     expect(prompt).toContain('@agent-browser');
-    expect(prompt).toContain('Use the selected Open Design Browser tab as the bound target.');
+    expect(prompt).toContain('Use the selected Substrate Browser tab as the bound target.');
     expect(prompt).toContain('- tab: Example landing');
     expect(prompt).toContain('- url: https://example.com');
     expect(prompt).toContain('Operation: extract_colors');

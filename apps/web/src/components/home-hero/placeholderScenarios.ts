@@ -57,12 +57,12 @@ export const PLACEHOLDER_SCENARIO_DEFS: ReadonlyArray<PlaceholderScenarioDef> = 
   { id: 'loading-animation', textKey: 'homeHero.carousel.loadingAnimation', chipId: 'hyperframes' },
   { id: 'team-update-slides', textKey: 'homeHero.carousel.teamUpdateSlides', chipId: 'deck' },
   { id: 'orders-dashboard', textKey: 'homeHero.carousel.ordersDashboard', chipId: 'prototype' },
-  { id: 'product-detail', textKey: 'homeHero.carousel.productDetail', chipId: 'wireframe' },
+  { id: 'product-detail', textKey: 'homeHero.carousel.productDetail', chipId: 'prototype' },
   { id: 'case-study', textKey: 'homeHero.carousel.caseStudy', chipId: 'document' },
   { id: 'landing-intro', textKey: 'homeHero.carousel.landingIntro', chipId: 'prototype' },
   { id: 'pitch-deck', textKey: 'homeHero.carousel.pitchDeck', chipId: 'deck' },
   { id: 'app-idea', textKey: 'homeHero.carousel.appIdea', chipId: 'mobile' },
-  { id: 'landing-layout', textKey: 'homeHero.carousel.landingLayout', chipId: 'wireframe' },
+  { id: 'landing-layout', textKey: 'homeHero.carousel.landingLayout', chipId: 'prototype' },
 ];
 
 export interface BuildPlaceholderScenariosInput {

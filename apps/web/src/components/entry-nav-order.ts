@@ -5,11 +5,14 @@ export const ENTRY_NAV_HIDDEN_KEY = 'od:entry-nav-hidden';
 export const ENTRY_NAV_DRAG_THRESHOLD_PX = 18;
 
 export const DEFAULT_ENTRY_NAV_ORDER = [
+  'search',
   'erp',
   'team',
   'pages',
   'calendar',
   'mail',
+  'slack',
+  'dev',
   'home',
   'projects',
   'design-systems',

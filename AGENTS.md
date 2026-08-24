@@ -250,8 +250,12 @@ API (`/api/orgs/*`), CLI (`od org`), and UI. Do not confuse it with
   `assertMemberRole` in `workspace-data/tenancy.ts`. The last owner can never be
   demoted or removed.
 - **Invite links and app share links** store only a SHA-256 hash; the token is
-  returned exactly once, at creation. Public link URLs are built from
-  `OD_PUBLIC_BASE_URL` when set, falling back to the request host.
+  returned exactly once, at creation. Share URLs (`/s/:token`) are served by
+  the daemon and use `OD_PUBLIC_BASE_URL` when set, else the request host.
+  Join URLs (`/join/:token`) are the web SPA: they use `OD_PUBLIC_BASE_URL`
+  when set, else the web origin in split-port local runs (`OD_WEB_PORT`),
+  else the request host. `GET /join/:token` on the daemon redirects to that
+  origin so a pasted daemon-port link still opens the join page.
 - **Link-shared apps are served without database access.** `GET /s/:token` uses
   the locked-down preview CSP (`connect-src 'none'`), so an anonymous visitor
   gets the interface and never a channel into organization data. Data-connected

@@ -12,12 +12,18 @@
 //     would confirm that #board-comp exists.
 
 import type { Express, Request as ExpressRequest, Response } from 'express';
-import { createApiError, type PostMessageRequest } from '@open-design/contracts';
+import multer from 'multer';
+import { CHAT_FILE_MAX_BYTES, createApiError, personLabel, type PostMessageRequest } from '@open-design/contracts';
 import { sendApiError } from '../http/response.js';
 import type { RouteDeps } from '../server-context.js';
 import type { IdentityService } from '../auth/identity.js';
 import type { WorkspaceDbManager } from '../storage/workspace-db.js';
 import { WorkspaceDataError } from '../workspace-data/errors.js';
+import {
+  chatFileContentDisposition,
+  readChatFile,
+  writeChatFile,
+} from '../workspace-data/chat-files.js';
 import {
   assertMemberRole,
   getActiveMemberForUser,
@@ -37,10 +43,14 @@ import {
   listChannels,
   listMessages,
   markChannelRead,
+  openDirectMessage,
   postMessage,
+  searchMessages,
   setUpDefaultChannels,
+  toggleReaction,
   totalUnread,
   updateChannel,
+  inviteChannelMembers,
   type ResolveMemberName,
 } from '../workspace-data/chat.js';
 
@@ -53,13 +63,18 @@ export interface TeamChatRouteServices {
   identity: IdentityService;
 }
 
-export interface RegisterTeamChatRoutesDeps extends RouteDeps<'db' | 'auth'> {
+export interface RegisterTeamChatRoutesDeps extends RouteDeps<'db' | 'auth' | 'paths'> {
   chat: TeamChatRouteServices;
 }
 
 export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutesDeps) {
   const { manager, identity } = ctx.chat;
+  const dataDir = ctx.paths.RUNTIME_DATA_DIR;
   const directory = () => manager.directoryExecutor;
+  const fileUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: CHAT_FILE_MAX_BYTES, files: 1 },
+  });
 
   function fail(res: Response, err: unknown): void {
     if (err instanceof WorkspaceDataError) {
@@ -110,7 +125,11 @@ export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutes
           names = new Map(
             (await listOrgMembers(directory(), orgId)).map((row) => [
               row.id,
-              row.displayName || row.email || row.userId,
+              personLabel({
+                displayName: row.displayName,
+                username: row.username,
+                email: row.email,
+              }),
             ]),
           );
         }
@@ -209,6 +228,47 @@ export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutes
     res.json(result);
   }));
 
+  app.post('/api/orgs/:orgId/chat/files', handle(async (req, res) => {
+    const { orgId } = await scope(req);
+    const file = await new Promise<Express.Multer.File>((resolve, reject) => {
+      fileUpload.single('file')(req, res, (err: unknown) => {
+        if (err) {
+          if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+            reject(new WorkspaceDataError('PAYLOAD_TOO_LARGE', 413, 'file must be 25 MB or smaller'));
+            return;
+          }
+          reject(err);
+          return;
+        }
+        if (!req.file) {
+          reject(new WorkspaceDataError('VALIDATION_FAILED', 422, 'file is required'));
+          return;
+        }
+        resolve(req.file);
+      });
+    });
+    const attachment = await writeChatFile(
+      dataDir,
+      orgId,
+      file.buffer,
+      file.originalname || 'file',
+      file.mimetype,
+    );
+    res.status(201).json({ attachment });
+  }));
+
+  app.get('/api/orgs/:orgId/chat/files/:fileId', handle(async (req, res) => {
+    await scope(req);
+    const stored = await readChatFile(dataDir, param(req, 'orgId'), param(req, 'fileId'));
+    if (!stored) {
+      throw new WorkspaceDataError('NOT_FOUND', 404, 'file not found');
+    }
+    res.setHeader('Content-Type', stored.mimeType);
+    res.setHeader('Content-Disposition', chatFileContentDisposition(stored.mimeType, stored.fileName));
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(stored.bytes);
+  }));
+
   app.post('/api/orgs/:orgId/chat/channels/:channelRef/messages', handle(async (req, res) => {
     const { orgId, member, db, withNames } = await scope(req);
     const message = await postMessage(
@@ -228,7 +288,7 @@ export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutes
    * channel the caller cannot see reads as missing. */
   app.get('/api/orgs/:orgId/chat/messages/:messageId', handle(async (req, res) => {
     const { orgId, member, db, withNames } = await scope(req);
-    const message = await getMessage(db, param(req, 'messageId'), await withNames());
+    const message = await getMessage(db, param(req, 'messageId'), await withNames(), member.id);
     if (message.orgId !== orgId) {
       throw new WorkspaceDataError('CHAT_MESSAGE_NOT_FOUND', 404, 'no such message');
     }
@@ -257,5 +317,49 @@ export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutes
     const force = member.role === 'owner' || member.role === 'admin';
     await deleteMessage(db, orgId, param(req, 'messageId'), member.id, { force });
     res.status(204).end();
+  }));
+
+  app.post('/api/orgs/:orgId/chat/dms', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    const memberIds = Array.isArray(req.body?.memberIds)
+      ? req.body.memberIds.filter((id: unknown) => typeof id === 'string')
+      : [];
+    const channel = await openDirectMessage(db, orgId, member.id, memberIds, await withNames());
+    res.status(201).json({ channel });
+  }));
+
+  app.get('/api/orgs/:orgId/chat/search', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    res.json({ hits: await searchMessages(db, orgId, member.id, q, await withNames()) });
+  }));
+
+  app.post('/api/orgs/:orgId/chat/channels/:channelRef/members', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    const memberIds = Array.isArray(req.body?.memberIds)
+      ? req.body.memberIds.filter((id: unknown) => typeof id === 'string')
+      : [];
+    const channel = await inviteChannelMembers(
+      db,
+      orgId,
+      param(req, 'channelRef'),
+      member.id,
+      memberIds,
+    );
+    res.json({ channel });
+  }));
+
+  app.post('/api/orgs/:orgId/chat/messages/:messageId/reactions', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    const emoji = typeof req.body?.emoji === 'string' ? req.body.emoji : '';
+    const message = await toggleReaction(
+      db,
+      orgId,
+      param(req, 'messageId'),
+      member.id,
+      emoji,
+      await withNames(),
+    );
+    res.json({ message });
   }));
 }

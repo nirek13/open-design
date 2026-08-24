@@ -17,8 +17,9 @@ const CURATED_PROTOTYPE_PLUGIN_IDS = [
 // Wireframe scenario: lo-fi / sketch explorations across distinct styles —
 // hand-drawn sketch, crisp greybox/blueprint, a multi-screen mobile flow, and
 // an annotated/redline landing wireframe. The chip's tag-matching surfaces any
-// other lo-fi templates behind these.
-const CURATED_WIREFRAME_PLUGIN_IDS = [
+// other lo-fi templates behind these. Kept for id matching so we can hide
+// these plugins from every create surface (Home examples, Community, composer).
+export const CURATED_WIREFRAME_PLUGIN_IDS = [
   'example-wireframe-sketch',
   'example-wireframe-greybox',
   'example-wireframe-mobile-flow',
@@ -165,4 +166,30 @@ export function curatedPluginPriorityForChip(
   if (!ids) return null;
   const index = ids.indexOf(record.id);
   return index >= 0 ? index : null;
+}
+
+const HIDDEN_WIREFRAME_CREATE_IDS = new Set<string>(CURATED_WIREFRAME_PLUGIN_IDS);
+const WIREFRAME_CREATE_ID_RE = /(?:^|[-:])wireframe(?:-|$)/i;
+
+export function isHiddenWireframeCreateId(id: string): boolean {
+  return HIDDEN_WIREFRAME_CREATE_IDS.has(id) || WIREFRAME_CREATE_ID_RE.test(id);
+}
+
+// Product create surfaces no longer offer wireframe as a first-class output.
+// Hide the bundled lo-fi plugins from Home examples, Community, and the
+// composer plugin picker. Existing wireframe projects still open as usual.
+export function isHiddenWireframeCreatePlugin(record: InstalledPluginRecord): boolean {
+  if (isHiddenWireframeCreateId(record.id)) return true;
+  const tags = record.manifest?.tags ?? [];
+  return tags.some((tag) => {
+    const slug = String(tag).toLowerCase();
+    return slug === 'wireframe' || slug === 'low-fidelity' || slug.includes('wireframe');
+  });
+}
+
+export function isHiddenWireframeCreateSkill(skill: {
+  id: string;
+  fidelity?: string | null;
+}): boolean {
+  return skill.fidelity === 'wireframe' || isHiddenWireframeCreateId(skill.id);
 }

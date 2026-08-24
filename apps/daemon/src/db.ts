@@ -276,6 +276,9 @@ function migrate(db: SqliteDb): void {
     db.exec(`ALTER TABLE projects ADD COLUMN org_id TEXT`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_org ON projects(org_id, updated_at DESC)`);
   }
+  if (!cols.some((c: DbRow) => c.name === 'created_by')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN created_by TEXT`);
+  }
   const conversationCols = db.prepare(`PRAGMA table_info(conversations)`).all() as DbRow[];
   if (!conversationCols.some((c: DbRow) => c.name === 'session_mode')) {
     db.exec(`ALTER TABLE conversations ADD COLUMN session_mode TEXT NOT NULL DEFAULT 'design'`);
@@ -623,6 +626,7 @@ const PROJECT_COLS = `id, name, skill_id AS skillId,
   applied_plugin_snapshot_id AS appliedPluginSnapshotId,
   custom_instructions AS customInstructions,
   org_id AS orgId,
+  created_by AS createdBy,
   created_at AS createdAt,
   updated_at AS updatedAt`;
 
@@ -842,8 +846,8 @@ export function insertProject(db: SqliteDb, p: DbRow) {
   db.prepare(
     `INSERT INTO projects
        (id, name, skill_id, design_system_id, pending_prompt,
-        metadata_json, custom_instructions, org_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        metadata_json, custom_instructions, org_id, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     p.id,
     p.name,
@@ -853,6 +857,7 @@ export function insertProject(db: SqliteDb, p: DbRow) {
     p.metadata ? JSON.stringify(p.metadata) : null,
     p.customInstructions ?? null,
     p.orgId ?? null,
+    p.createdBy ?? null,
     p.createdAt,
     p.updatedAt,
   );
@@ -876,6 +881,7 @@ export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
             metadata_json = ?,
             custom_instructions = ?,
             org_id = ?,
+            created_by = ?,
             updated_at = ?
       WHERE id = ?`,
   ).run(
@@ -886,6 +892,7 @@ export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
     merged.metadata ? JSON.stringify(merged.metadata) : null,
     merged.customInstructions ?? null,
     merged.orgId ?? null,
+    merged.createdBy ?? null,
     merged.updatedAt,
     id,
   );
@@ -915,6 +922,7 @@ function normalizeProject(row: DbRow) {
     appliedPluginSnapshotId: row.appliedPluginSnapshotId ?? undefined,
     customInstructions: row.customInstructions ?? undefined,
     orgId: row.orgId ?? null,
+    createdBy: row.createdBy ?? null,
     createdAt: Number(row.createdAt),
     updatedAt: Number(row.updatedAt),
   };

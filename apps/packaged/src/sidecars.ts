@@ -52,6 +52,9 @@ const PACKAGED_CHILD_ENV_ALLOWLIST = [
   "ALL_PROXY",
   "NODE_USE_ENV_PROXY",
   "NO_PROXY",
+  "OD_AUTH_MODE",
+  "OD_CLERK_ISSUER",
+  "OD_CLERK_PUBLISHABLE_KEY",
   "TMPDIR",
   "USER",
   "VP_HOME",
@@ -431,6 +434,8 @@ export type PackagedDaemonSpawnEnvOptions = {
   telemetryRelayUrl?: string | null;
   posthogKey?: string | null;
   posthogHost?: string | null;
+  clerkIssuer?: string | null;
+  clerkPublishableKey?: string | null;
 };
 
 /**
@@ -497,6 +502,16 @@ export function buildPackagedDaemonSpawnEnv(
     ...(options.posthogHost == null || options.posthogHost.length === 0
       ? {}
       : { POSTHOG_HOST: options.posthogHost }),
+    // Clerk public auth config. The daemon defaults to Clerk sign-in, so a
+    // packaged build that omits these shows AuthGate's "not finished being
+    // set up" screen. Baked by tools/pack from OD_CLERK_ISSUER /
+    // OD_CLERK_PUBLISHABLE_KEY; both values are public (issuer URL + pk_ key).
+    ...(options.clerkIssuer == null || options.clerkIssuer.length === 0
+      ? {}
+      : { OD_CLERK_ISSUER: options.clerkIssuer }),
+    ...(options.clerkPublishableKey == null || options.clerkPublishableKey.length === 0
+      ? {}
+      : { OD_CLERK_PUBLISHABLE_KEY: options.clerkPublishableKey }),
   };
 }
 
@@ -640,6 +655,8 @@ export async function startPackagedSidecars(
     telemetryRelayUrl: string | null;
     posthogKey: string | null;
     posthogHost: string | null;
+    clerkIssuer: string | null;
+    clerkPublishableKey: string | null;
     /**
      * PR #974 round-5 (lefarcen P2): caller asserts whether a desktop
      * runtime is being started in this packaged process group. The
@@ -717,6 +734,8 @@ export async function startPackagedSidecars(
         telemetryRelayUrl: options.telemetryRelayUrl,
         posthogKey: options.posthogKey,
         posthogHost: options.posthogHost,
+        clerkIssuer: options.clerkIssuer,
+        clerkPublishableKey: options.clerkPublishableKey,
       }),
       electronNodeCommand: options.electronNodeCommand,
       nodeCommand: options.nodeCommand,

@@ -13,6 +13,7 @@ export function isStaticSpaFallbackRequest(req: StaticSpaFallbackRequestLike): b
   if (req.path === '/api' || req.path.startsWith('/api/')) return false;
   if (req.path === '/artifacts' || req.path.startsWith('/artifacts/')) return false;
   if (req.path === '/frames' || req.path.startsWith('/frames/')) return false;
+  if (req.path === '/s' || req.path.startsWith('/s/')) return false;
   if (req.path === '/_next' || req.path.startsWith('/_next/')) return false;
 
   const accept = req.get?.('accept') ?? '';

@@ -100,6 +100,21 @@ export type ToolPackConfig = {
   posthogKey?: string;
   posthogHost?: string;
   /**
+   * Clerk Frontend API issuer, sourced from process.env.OD_CLERK_ISSUER at
+   * packaging time. Baked into open-design-config.json so the packaged daemon
+   * can read it as OD_CLERK_ISSUER at launch. Public (the Clerk Frontend API
+   * URL). Official CI builds should set this alongside OD_CLERK_PUBLISHABLE_KEY;
+   * local packs pick it up from the same env (or fail open to AuthGate's
+   * setup screen, which is intentional when Clerk is not configured).
+   */
+  clerkIssuer?: string;
+  /**
+   * Clerk publishable key, sourced from process.env.OD_CLERK_PUBLISHABLE_KEY
+   * at packaging time. Baked next to clerkIssuer. `pk_test_` / `pk_live_`
+   * keys are public client tokens.
+   */
+  clerkPublishableKey?: string;
+  /**
    * Personal API key (`phx_...`) used by the @posthog/cli sourcemap helper to
    * upload browser sourcemaps to PostHog after `next build` and before the
    * web bundle is copied into the Electron package. Sourced from
@@ -187,6 +202,32 @@ function resolveToolPackPosthogKey(value: string | undefined): string | undefine
   // misconfigured CI secret doesn't silently bake garbage into the bundle.
   if (/[\s\x00-\x1f]/.test(normalized)) {
     throw new Error(`POSTHOG_KEY contains whitespace or control chars: ${value}`);
+  }
+  return normalized;
+}
+
+function resolveToolPackClerkIssuer(value: string | undefined): string | undefined {
+  if (value == null) return undefined;
+  const normalized = value.trim().replace(/\/+$/, "");
+  if (normalized.length === 0) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error(`OD_CLERK_ISSUER must be an absolute URL: ${value}`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(`OD_CLERK_ISSUER must use https: ${value}`);
+  }
+  return normalized;
+}
+
+function resolveToolPackClerkPublishableKey(value: string | undefined): string | undefined {
+  if (value == null) return undefined;
+  const normalized = value.trim();
+  if (normalized.length === 0) return undefined;
+  if (/[\s\x00-\x1f]/.test(normalized)) {
+    throw new Error("OD_CLERK_PUBLISHABLE_KEY contains whitespace or control chars");
   }
   return normalized;
 }
@@ -358,6 +399,8 @@ export function resolveToolPackConfig(
     updateMetadataUrl: resolveToolPackUpdateMetadataUrl(process.env.OD_UPDATE_METADATA_URL),
     posthogKey: resolveToolPackPosthogKey(process.env.POSTHOG_KEY),
     posthogHost: resolveToolPackPosthogHost(process.env.POSTHOG_HOST),
+    clerkIssuer: resolveToolPackClerkIssuer(process.env.OD_CLERK_ISSUER),
+    clerkPublishableKey: resolveToolPackClerkPublishableKey(process.env.OD_CLERK_PUBLISHABLE_KEY),
     posthogCliApiKey: resolveToolPackPosthogCliApiKey(
       process.env.POSTHOG_CLI_API_KEY ?? process.env.POSTHOG_PERSONAL_API_KEY,
     ),

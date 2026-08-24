@@ -27,6 +27,14 @@ import {
 import { Icon } from '../Icon';
 import styles from './BlockEditor.module.css';
 import { DatabaseEmbed, RecordEmbed } from './Embeds';
+import { EmbedComposer, RichEmbed } from './RichEmbed';
+import { looksLikeUrl } from '../../runtime/rich-embed';
+import {
+  isPageMakeKind,
+  PAGE_MAKE_ACTIONS,
+  pageMakeAction,
+  type PageMakeKind,
+} from '../../runtime/page-make';
 
 export interface DraftBlock {
   /** Stable client key (server id when known). */
@@ -69,6 +77,8 @@ interface Props {
   onOpenPage?: (pageId: string) => void;
   /** Slash `/page` and the page picker can mint a real nested page. */
   onCreateSubpage?: () => Promise<{ id: string; title: string; icon: string | null } | null>;
+  /** Slash Make app/picture/video/slides generates a unique file and embeds it. */
+  onMake?: (kind: PageMakeKind, prompt: string) => void;
 }
 
 const ICONS: Partial<Record<PageBlockType, string>> = {
@@ -85,6 +95,7 @@ const ICONS: Partial<Record<PageBlockType, string>> = {
   code: '</>',
   divider: '—',
   bookmark: '🔗',
+  embed: '▣',
   table: '▦',
   database: '▤',
   artifact: '◇',
@@ -134,6 +145,9 @@ export function blocksFromServer(blocks: PageBlock[]): DraftBlock[] {
       if (block.type === 'bookmark' && !props.url && text.trim()) {
         props.url = text.trim();
       }
+      if (block.type === 'embed' && !props.url && text.trim()) {
+        props.url = text.trim();
+      }
       if ((block.type === 'database' || block.type === 'page' || block.type === 'record' || block.type === 'artifact') && text.trim()) {
         if (block.type === 'database' && !props.tableId) props.tableId = text.trim();
         if (block.type === 'page' && !props.pageId) props.pageId = text.trim();
@@ -167,6 +181,9 @@ export function blocksToServer(blocks: DraftBlock[]): PageBlockInput[] {
       delete props.rows;
     }
     if (block.type === 'bookmark' && !props.url && block.text.trim()) {
+      props.url = block.text.trim();
+    }
+    if (block.type === 'embed' && !props.url && block.text.trim()) {
       props.url = block.text.trim();
     }
     if (block.type === 'artifact' && block.text.trim()) {
@@ -403,13 +420,55 @@ function numberedIndex(siblings: DraftBlock[], key: string): number {
   return 1;
 }
 
-function filterCatalog(query: string) {
+type SlashItem =
+  | {
+      source: 'make';
+      kind: PageMakeKind;
+      label: string;
+      hint: string;
+      glyph: string;
+    }
+  | {
+      source: 'block';
+      type: PageBlockType;
+      label: string;
+      hint: string;
+      glyph: string;
+    };
+
+function matchesSlashQuery(
+  label: string,
+  hint: string,
+  keywords: readonly string[],
+  extra: string,
+  query: string,
+): boolean {
   const q = query.trim().toLowerCase();
-  if (!q) return [...PAGE_BLOCK_CATALOG];
-  return PAGE_BLOCK_CATALOG.filter((item) => {
-    const hay = `${item.label} ${item.hint} ${item.keywords.join(' ')}`.toLowerCase();
-    return hay.includes(q) || item.type.includes(q);
-  });
+  if (!q) return true;
+  const hay = `${label} ${hint} ${keywords.join(' ')} ${extra}`.toLowerCase();
+  return hay.includes(q);
+}
+
+function filterSlashItems(query: string): SlashItem[] {
+  const makeItems: SlashItem[] = PAGE_MAKE_ACTIONS.filter((action) =>
+    matchesSlashQuery(action.label, action.hint, action.keywords, action.kind, query),
+  ).map((action) => ({
+    source: 'make',
+    kind: action.kind,
+    label: action.label,
+    hint: action.hint,
+    glyph: action.glyph,
+  }));
+  const blocks: SlashItem[] = PAGE_BLOCK_CATALOG.filter((item) =>
+    matchesSlashQuery(item.label, item.hint, item.keywords, item.type, query),
+  ).map((item) => ({
+    source: 'block',
+    type: item.type,
+    label: item.label,
+    hint: item.hint,
+    glyph: ICONS[item.type] ?? '¶',
+  }));
+  return [...makeItems, ...blocks];
 }
 
 export function applyMarkdownShortcut(text: string): { type: PageBlockType; text: string } | null {
@@ -450,10 +509,12 @@ function placeholderFor(type: PageBlockType): string {
       return 'Code';
     case 'bookmark':
       return 'Paste a URL…';
+    case 'embed':
+      return 'Paste a URL, pick created work, or make a unique app, picture, video, or slides';
     case 'database':
       return 'Workspace table id…';
     case 'artifact':
-      return 'Path to a design file';
+      return 'Pick a created app, picture, video, or slides — or paste a path';
     case 'page':
       return 'Search or paste a page id…';
     case 'record':
@@ -498,6 +559,7 @@ export function BlockEditor({
   pages = [],
   onOpenPage,
   onCreateSubpage,
+  onMake,
 }: Props) {
   const [slash, setSlash] = useState<SlashState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -507,9 +569,16 @@ export function BlockEditor({
   const refs = useRef(new Map<string, HTMLElement>());
   const prevFocus = useRef<string | null>(null);
 
-  const slashItems = useMemo(() => (slash ? filterCatalog(slash.query) : []), [slash]);
-  const basicSlash = slashItems.filter((item) => BASIC_TYPES.has(item.type));
-  const otherSlash = slashItems.filter((item) => !BASIC_TYPES.has(item.type));
+  const slashItems = useMemo(() => (slash ? filterSlashItems(slash.query) : []), [slash]);
+  const makeSlash = slashItems.filter((item) => item.source === 'make');
+  const basicSlash = slashItems.filter(
+    (item): item is Extract<SlashItem, { source: 'block' }> =>
+      item.source === 'block' && BASIC_TYPES.has(item.type),
+  );
+  const otherSlash = slashItems.filter(
+    (item): item is Extract<SlashItem, { source: 'block' }> =>
+      item.source === 'block' && !BASIC_TYPES.has(item.type),
+  );
 
   useEffect(() => {
     if (!focusKey || focusKey === prevFocus.current) return;
@@ -562,10 +631,15 @@ export function BlockEditor({
   );
 
   const applySlash = useCallback(
-    (type: PageBlockType) => {
+    (item: SlashItem) => {
       if (!slash) return;
       const key = slash.blockKey;
       setSlash(null);
+      if (item.source === 'make') {
+        applyType(key, 'embed', '', { makeKind: item.kind });
+        return;
+      }
+      const type = item.type;
       if (type === 'page' && onCreateSubpage) {
         void (async () => {
           const created = await onCreateSubpage();
@@ -585,6 +659,12 @@ export function BlockEditor({
     [applyType, onCreateSubpage, slash],
   );
 
+  const submitMake = (key: string, kind: PageMakeKind, prompt: string) => {
+    const action = pageMakeAction(kind);
+    applyType(key, 'callout', `Making a unique ${action.noun}: ${prompt}`);
+    onMake?.(kind, prompt);
+  };
+
   const onText = (key: string, text: string, node?: HTMLElement) => {
     const md = applyMarkdownShortcut(text);
     if (md) {
@@ -599,6 +679,7 @@ export function BlockEditor({
     if (current?.type === 'record' && text.trim()) props.recordId = text.trim();
     if (current?.type === 'artifact' && text.trim()) props.path = text.trim();
     if (current?.type === 'bookmark' && text.trim()) props.url = text.trim();
+    if (current?.type === 'embed' && text.trim()) props.url = text.trim();
     if (current?.type === 'page' && text.trim()) props.pageId = text.trim();
     onChange(updateAt(blocks, key, { text, props }));
     if (text.startsWith('/')) {
@@ -662,7 +743,7 @@ export function BlockEditor({
       if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault();
         const pick = slashItems[slash.index] ?? slashItems[0];
-        if (pick) applySlash(pick.type);
+        if (pick) applySlash(pick);
         return;
       }
       if (event.key === 'Escape') {
@@ -792,6 +873,8 @@ export function BlockEditor({
           <div className={styles.slashEmpty}>No results</div>
         ) : (
           <>
+            {makeSlash.length > 0 ? <div className={styles.slashTitle}>Make</div> : null}
+            {makeSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
             {basicSlash.length > 0 ? <div className={styles.slashTitle}>Basic blocks</div> : null}
             {basicSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
             {otherSlash.length > 0 ? <div className={styles.slashTitle}>Advanced</div> : null}
@@ -802,22 +885,19 @@ export function BlockEditor({
     );
   };
 
-  const renderSlashItem = (
-    item: (typeof PAGE_BLOCK_CATALOG)[number],
-    index: number,
-  ) => (
+  const renderSlashItem = (item: SlashItem, index: number) => (
     <button
-      key={item.type}
+      key={item.source === 'make' ? `make-${item.kind}` : item.type}
       type="button"
       role="option"
       aria-selected={index === slash?.index}
       className={`${styles.slashItem}${index === slash?.index ? ` ${styles.slashActive}` : ''}`}
       onMouseDown={(event) => {
         event.preventDefault();
-        applySlash(item.type);
+        applySlash(item);
       }}
     >
-      <span className={styles.slashGlyph}>{ICONS[item.type] ?? '¶'}</span>
+      <span className={styles.slashGlyph}>{item.glyph}</span>
       <span className={styles.slashCopy}>
         <strong>{item.label}</strong>
         <span>{item.hint}</span>
@@ -843,7 +923,7 @@ export function BlockEditor({
           Duplicate
         </button>
         <div className={styles.menuLabel}>Turn into</div>
-        {PAGE_BLOCK_CATALOG.slice(0, 12).map((item) => (
+        {PAGE_BLOCK_CATALOG.slice(0, 14).map((item) => (
           <button
             key={item.type}
             type="button"
@@ -885,14 +965,67 @@ export function BlockEditor({
         </div>
       );
     }
+    if (block.type === 'embed') {
+      const url = String(block.props.url ?? block.text ?? '').trim();
+      if (url) {
+        return (
+          <div className={styles.embedSlot}>
+            <RichEmbed
+              url={url}
+              onClear={
+                readOnly
+                  ? undefined
+                  : () => applyType(block.key, 'embed', '', { url: undefined })
+              }
+            />
+          </div>
+        );
+      }
+      if (readOnly) return null;
+      return (
+        <div className={styles.embedSlot}>
+          <EmbedComposer
+            orgId={orgId}
+            initialMakeKind={isPageMakeKind(block.props.makeKind) ? block.props.makeKind : null}
+            onSubmit={(next) => applyType(block.key, 'embed', next, { url: next })}
+            onMake={(kind, prompt) => submitMake(block.key, kind, prompt)}
+          />
+        </div>
+      );
+    }
     if (block.type === 'bookmark') {
       const url = String(block.props.url ?? block.text ?? '').trim();
       if (url) {
         return (
-          <a className={styles.bookmark} href={url} target="_blank" rel="noreferrer">
-            <span className={styles.bookmarkHost}>{hostOf(url)}</span>
-            <span className={styles.bookmarkUrl}>{url}</span>
-          </a>
+          <div className={styles.embedSlot}>
+            <RichEmbed url={url} />
+          </div>
+        );
+      }
+    }
+    if (block.type === 'artifact') {
+      const path = String(block.props.path ?? block.text ?? '').trim();
+      if (path && (looksLikeUrl(path) || path.startsWith('/') || path.startsWith('api/'))) {
+        return (
+          <div className={styles.embedSlot}>
+            <RichEmbed
+              url={path.startsWith('api/') ? `/${path}` : path}
+              onClear={
+                readOnly ? undefined : () => applyType(block.key, 'artifact', '', { path: undefined })
+              }
+            />
+          </div>
+        );
+      }
+      if (!path && !readOnly) {
+        return (
+          <div className={styles.embedSlot}>
+            <EmbedComposer
+              orgId={orgId}
+              onSubmit={(next) => applyType(block.key, 'artifact', next, { path: next })}
+              onMake={(kind, prompt) => submitMake(block.key, kind, prompt)}
+            />
+          </div>
         );
       }
     }
@@ -1020,6 +1153,12 @@ export function BlockEditor({
     if (block.type === 'database' && block.props.tableId) return false;
     if (block.type === 'record' && block.props.recordId) return false;
     if (block.type === 'page' && (block.props.pageId || pages.length > 0)) return false;
+    if (block.type === 'embed') return false;
+    if (block.type === 'artifact') {
+      const path = String(block.props.path ?? block.text ?? '').trim();
+      if (!path) return false;
+      if (looksLikeUrl(path) || path.startsWith('/') || path.startsWith('api/')) return false;
+    }
     if (block.type === 'bookmark' && (block.props.url || looksLikeUrl(block.text))) return false;
     return true;
   };
@@ -1135,6 +1274,19 @@ export function BlockEditor({
               data-placeholder={placeholderFor(block.type)}
               onInput={(event) => onText(block.key, event.currentTarget.textContent ?? '', event.currentTarget)}
               onKeyDown={(event) => onKeyDown(block, event)}
+              onPaste={(event) => {
+                const pasted = event.clipboardData?.getData('text/plain')?.trim() ?? '';
+                if (!looksLikeUrl(pasted)) return;
+                if (block.type === 'paragraph' && !block.text.trim()) {
+                  event.preventDefault();
+                  applyType(block.key, 'embed', pasted, { url: pasted });
+                  return;
+                }
+                if (block.type === 'embed' || block.type === 'bookmark') {
+                  event.preventDefault();
+                  applyType(block.key, block.type, pasted, { url: pasted });
+                }
+              }}
               onFocus={() => setFocusKey(block.key)}
             />
           ) : null}
@@ -1170,16 +1322,4 @@ export function BlockEditor({
       )}
     </div>
   );
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
-
-function looksLikeUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value.trim());
 }

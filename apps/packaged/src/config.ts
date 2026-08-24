@@ -43,6 +43,11 @@ export type RawPackagedConfig = {
   // either this is absent or the user has declined Privacy → metrics.
   posthogKey?: string;
   posthogHost?: string;
+  // Clerk public auth config, baked by tools/pack from OD_CLERK_ISSUER and
+  // OD_CLERK_PUBLISHABLE_KEY. Forwarded to the daemon sidecar as the same
+  // env names. Both values are public (issuer URL + pk_ publishable key).
+  clerkIssuer?: string;
+  clerkPublishableKey?: string;
   webSidecarEntryRelative?: string;
   webStandaloneRoot?: string;
   webOutputMode?: string;
@@ -61,6 +66,8 @@ export type PackagedConfig = {
   updateMetadataUrl: string | null;
   posthogKey: string | null;
   posthogHost: string | null;
+  clerkIssuer: string | null;
+  clerkPublishableKey: string | null;
   webSidecarEntry: string | null;
   webStandaloneRoot: string | null;
   webOutputMode: PackagedWebOutputMode;
@@ -205,6 +212,8 @@ export async function readPackagedConfig(): Promise<PackagedConfig> {
     updateMetadataUrl: cleanOptionalString(raw.updateMetadataUrl),
     posthogKey: cleanOptionalString(raw.posthogKey),
     posthogHost: cleanOptionalString(raw.posthogHost),
+    clerkIssuer: cleanOptionalString(raw.clerkIssuer),
+    clerkPublishableKey: cleanOptionalString(raw.clerkPublishableKey),
     webSidecarEntry,
     webStandaloneRoot,
     webOutputMode,

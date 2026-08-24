@@ -65,6 +65,8 @@ function resolveHeadlessConfig(): PackagedConfig {
     updateMetadataUrl: process.env.OD_UPDATE_METADATA_URL?.trim() || null,
     posthogKey: process.env.POSTHOG_KEY?.trim() || null,
     posthogHost: process.env.POSTHOG_HOST?.trim() || null,
+    clerkIssuer: process.env.OD_CLERK_ISSUER?.trim() || null,
+    clerkPublishableKey: process.env.OD_CLERK_PUBLISHABLE_KEY?.trim() || null,
     webSidecarEntry: null,
     webStandaloneRoot: null,
     webOutputMode: "server",

@@ -1,0 +1,140 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.lead,
+.empty,
+.sent,
+.error {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.lead,
+.empty {
+  color: var(--text-muted);
+}
+
+.sent {
+  color: var(--green);
+}
+
+.error {
+  color: var(--danger, #c44);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 520px) {
+  .columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.section {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--bg-subtle);
+}
+
+.chip,
+.chipOn {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: start;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.chipOn {
+  border-color: rgba(76, 124, 243, 0.55);
+  background: rgba(76, 124, 243, 0.16);
+}
+
+.chipExcept {
+  width: 100%;
+  border: 1px solid rgba(220, 80, 80, 0.45);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: start;
+  background: rgba(220, 80, 80, 0.12);
+  color: inherit;
+  cursor: pointer;
+}
+
+.chipMeta {
+  float: inline-end;
+  opacity: 0.55;
+  font-size: 0.72rem;
+}
+
+.except {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.exceptHint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.note {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}

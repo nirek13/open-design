@@ -112,6 +112,109 @@ export function parseHostHeader(value: unknown): ParsedHostHeader | null {
   }
 }
 
+export interface OriginRequestLike {
+  protocol?: string;
+  get?: (name: string) => string | undefined;
+}
+
+function formatHttpOrigin(protocol: string, hostname: string, port: number): string {
+  const host = hostname.includes(':') ? `[${hostname}]` : hostname;
+  const isDefault = (protocol === 'https' && port === 443) || (protocol === 'http' && port === 80);
+  return isDefault ? `${protocol}://${host}` : `${protocol}://${host}:${port}`;
+}
+
+/** Origin of this inbound request (`protocol` + `Host`). */
+export function requestOrigin(req: OriginRequestLike): string {
+  const proto = req.protocol || 'http';
+  const host = req.get?.('host');
+  if (!host) return `${proto}://127.0.0.1`;
+  return `${proto}://${host}`;
+}
+
+function configuredPublicBaseUrl(env: NodeJS.ProcessEnv): string | null {
+  const configured = env.OD_PUBLIC_BASE_URL?.trim();
+  if (configured && /^https?:\/\//i.test(configured)) {
+    return configured.replace(/\/+$/u, '');
+  }
+  return null;
+}
+
+function firstForwardedValue(value: string | undefined): string | undefined {
+  const first = value?.split(',')[0]?.trim();
+  return first || undefined;
+}
+
+/**
+ * Public origin advertised by a reverse proxy that rewrites `Host` to
+ * loopback (the AWS nginx auth-proxy). Only trusted when the inbound Host
+ * is already loopback/private — a client that can hit loopback is the
+ * machine owner, and a public daemon ignores a spoofed forwarded host.
+ */
+function forwardedBrowserOrigin(req: OriginRequestLike): string | null {
+  const parsedHost = parseHostHeader(req.get?.('host'));
+  if (!parsedHost || !isLoopbackOrPrivateLanHost(parsedHost.hostname)) return null;
+  const forwardedHost = firstForwardedValue(req.get?.('x-forwarded-host'));
+  if (!forwardedHost) return null;
+  const parsedForwarded = parseHostHeader(forwardedHost);
+  if (!parsedForwarded) return null;
+  const forwardedProto = firstForwardedValue(req.get?.('x-forwarded-proto'))?.toLowerCase();
+  const proto =
+    forwardedProto === 'https' || forwardedProto === 'http'
+      ? forwardedProto
+      : req.protocol || 'http';
+  return `${proto}://${parsedForwarded.host}`;
+}
+
+/**
+ * Origin a human should open in a browser.
+ *
+ * `OD_PUBLIC_BASE_URL` wins (cloud / reverse-proxy). In split-port local
+ * runs the daemon is not the SPA, so `OD_WEB_PORT` remaps the request host
+ * to the web origin. Same-port packaged installs keep the request origin.
+ */
+export function browserFacingOrigin(
+  req: OriginRequestLike,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configured = configuredPublicBaseUrl(env);
+  if (configured) return configured;
+  const forwarded = forwardedBrowserOrigin(req);
+  if (forwarded) return forwarded;
+  const proto = req.protocol || 'http';
+  const parsed = parseHostHeader(req.get?.('host'));
+  const webPort = Number(env.OD_WEB_PORT);
+  if (parsed && Number.isInteger(webPort) && webPort > 0) {
+    const requestPort = Number(parsed.port) || (proto === 'https' ? 443 : 80);
+    if (webPort !== requestPort) {
+      return formatHttpOrigin(proto, parsed.hostname, webPort);
+    }
+  }
+  if (parsed?.host) return `${proto}://${parsed.host}`;
+  return `${proto}://127.0.0.1`;
+}
+
+/**
+ * HTTP(S) origin Clerk may use as `redirect_url`.
+ *
+ * Clerk's Frontend API rejects custom schemes. Packaged Electron loads the
+ * SPA at `od://app/` while the web sidecar listens on `OD_WEB_PORT`; that
+ * loopback origin is what Clerk should receive — even if `OD_PUBLIC_BASE_URL`
+ * points at a hosted site, because sending OAuth there would drop the
+ * desktop session.
+ */
+export function clerkFacingOrigin(
+  req: OriginRequestLike,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const proto = req.protocol === 'https' ? 'https' : 'http';
+  const parsed = parseHostHeader(req.get?.('host'));
+  const webPort = Number(env.OD_WEB_PORT);
+  if (parsed && Number.isInteger(webPort) && webPort > 0) {
+    return formatHttpOrigin(proto, parsed.hostname, webPort);
+  }
+  return browserFacingOrigin(req, env);
+}
+
 export function isPrivateIpv4(hostname: unknown): boolean {
   const parts = String(hostname || '').split('.');
   if (parts.length !== 4) return false;

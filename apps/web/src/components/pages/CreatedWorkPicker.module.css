@@ -1,0 +1,123 @@
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  border: 1px solid var(--border, #e1e5eb);
+  background: var(--bg-panel, #fdfcfa);
+  color: var(--text-muted, #74716b);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.chip[data-active='true'] {
+  border-color: color-mix(in srgb, var(--embed-accent, #d97757) 55%, var(--border, #e1e5eb));
+  background: color-mix(in srgb, var(--embed-accent, #d97757) 14%, var(--bg-panel, #fdfcfa));
+  color: var(--text, #1a1916);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: rgb(20 16 12 / 0.05);
+}
+
+.thumb,
+.mark {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--embed-accent, #d97757) 16%, #fff);
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: var(--embed-accent, #d97757);
+}
+
+.mark[data-kind='slides'] {
+  background: #c45c26;
+}
+
+.mark[data-kind='video'] {
+  background: #2563eb;
+}
+
+.mark[data-kind='app'] {
+  background: #d97757;
+}
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.copy em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: normal;
+  font-size: 0.75rem;
+  color: var(--text-muted, #74716b);
+}
+
+.status {
+  margin: 8px 2px 0;
+  font-size: 0.8rem;
+  color: var(--text-muted, #74716b);
+}

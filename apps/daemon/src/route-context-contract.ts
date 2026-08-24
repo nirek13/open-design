@@ -20,6 +20,7 @@ import type { RegisterStaticResourceRoutesDeps } from './routes/static-resource.
 import type { RegisterVelaRoutesDeps } from './routes/vela.js';
 import type { RegisterErpRoutesDeps } from './routes/erp.js';
 import type { RegisterOrganizationRoutesDeps } from './routes/organizations.js';
+import type { RegisterTeamChatRoutesDeps } from './routes/team-chat.js';
 import type { RegisterWorkspaceDataRoutesDeps } from './routes/workspace-data.js';
 import type { RegisterXaiRoutesDeps } from './routes/xai.js';
 
@@ -51,6 +52,7 @@ type AllRegisteredRouteDeps =
   & RegisterVelaRoutesDeps
   & RegisterErpRoutesDeps
   & RegisterOrganizationRoutesDeps
+  & RegisterTeamChatRoutesDeps
   & RegisterWorkspaceDataRoutesDeps
   & RegisterXaiRoutesDeps;
 

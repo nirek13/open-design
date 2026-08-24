@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input } from '@open-design/components';
-import type { OrgPendingInvite } from '@open-design/contracts';
+import { workspaceLabel, type OrgPendingInvite } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { useOptionalOrg } from '../../org/OrgContext';
 import { acceptPendingInvite, fetchPendingInvites } from '../../providers/registry';
@@ -105,9 +105,16 @@ export function OrgSwitcher({ onManage }: Props) {
         data-testid="org-switcher-trigger"
       >
         <span className={styles.avatar} aria-hidden="true">
-          {(activeOrg?.name ?? '?').slice(0, 1).toUpperCase()}
+          {(activeOrg
+            ? workspaceLabel(activeOrg.name, t('team.workspace'))
+            : '?'
+          ).slice(0, 1).toUpperCase()}
         </span>
-        <span className={styles.name}>{activeOrg?.name ?? t('org.noOrganization')}</span>
+        <span className={styles.name}>
+          {activeOrg
+            ? workspaceLabel(activeOrg.name, t('team.workspace'))
+            : t('org.noOrganization')}
+        </span>
         {pending.length > 0 ? (
           <span className={styles.badge} data-testid="org-pending-badge">
             {pending.length}
@@ -132,7 +139,9 @@ export function OrgSwitcher({ onManage }: Props) {
                 setOpen(false);
               }}
             >
-              <span className={styles.itemName}>{org.name}</span>
+              <span className={styles.itemName}>
+                {workspaceLabel(org.name, t('team.workspace'))}
+              </span>
               <span className={styles.itemMeta}>
                 {org.role} · {t('org.memberCount', { count: String(org.memberCount) })}
               </span>

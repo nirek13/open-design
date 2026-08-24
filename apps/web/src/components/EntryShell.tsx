@@ -105,6 +105,9 @@ import { TeamChatView } from './team/TeamChatView';
 import { PagesView } from './pages/PagesView';
 import { CalendarView } from './calendar/CalendarView';
 import { MailView } from './mail/MailView';
+import { SlackView } from './slack/SlackView';
+import { DevView } from './dev/DevView';
+import { SearchView } from './search/SearchView';
 import { OrgAppsView } from './org/OrgAppsView';
 import { OrgMembersView } from './org/OrgMembersView';
 import { useOptionalRunningApp } from './apps/RunningAppContext';
@@ -159,13 +162,16 @@ import {
   SUGGESTED_MODELS_BY_PROTOCOL,
 } from '../state/apiProtocols';
 import {
+  applyDefaultOpenAiByokProfile,
   applySavedByokCredentialProfile,
   defaultKnownProviderModel,
+  fetchByokCredentialProfilesFromDaemon,
+  findEnvOpenAiByokProfile,
   KNOWN_PROVIDERS,
 } from '../state/config';
 import type { KnownProvider } from '../state/config';
 import { saveOnboardingProfile } from '../state/onboarding-profile';
-import { testAgent, testApiProvider } from '../providers/connection-test';
+import { testAgent, testApiProvider, testSavedByokProfile } from '../providers/connection-test';
 import { fetchProviderModels } from '../providers/provider-models';
 import {
   cancelVelaLogin,
@@ -264,7 +270,7 @@ type EntryCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   initialRunContext?: RunContextSelection | null;
   conversationMode?: ChatSessionMode;
   autoSendFirstMessage?: boolean;
-  /** The home submit already ran the Open Design Cloud balance gate; the
+  /** The home submit already ran the Substrate Cloud balance gate; the
    *  project's first auto-send must not re-gate. */
   amrGatePrechecked?: boolean;
   requestId?: string;
@@ -426,7 +432,7 @@ interface Props {
   // not accept a `renderDesignSystemCreation` renderer. Guided creation stays
   // reachable from the standalone `design-system-create` route and the
   // Design Systems tab; do not re-thread an onboarding renderer here.
-  onOpenDesignSystem?: (id: string) => void;
+  onSubstrateSystem?: (id: string) => void;
   onDesignSystemsRefresh?: () => Promise<void> | void;
   onPersistComposioKey: (composio: AppConfig['composio']) => Promise<void> | void;
   onPersistByokCredential?: (
@@ -485,6 +491,10 @@ function inactiveViewProps(active: boolean) {
   };
 }
 
+function isChatCanvasView(view: EntryViewKind): boolean {
+  return view === 'team' || view === 'slack';
+}
+
 export function EntryShell({
   skills,
   designTemplates,
@@ -532,7 +542,7 @@ export function EntryShell({
   onProjectsRefresh,
   onChangeDefaultDesignSystem,
   onCreateDesignSystem,
-  onOpenDesignSystem,
+  onSubstrateSystem,
   onDesignSystemsRefresh,
   onPersistComposioKey,
   onPersistByokCredential,
@@ -585,6 +595,13 @@ export function EntryShell({
   useEffect(() => {
     writeStoredRailOpen(railOpen);
   }, [railOpen]);
+  // Team chat / Slack occupy the remaining pane like a dedicated app. Keep
+  // the icon rail collapsed unless the user explicitly opens it on this view.
+  const [chatCanvasRailUnlocked, setChatCanvasRailUnlocked] = useState(false);
+  useEffect(() => {
+    setChatCanvasRailUnlocked(false);
+  }, [view]);
+  const shownRailOpen = isChatCanvasView(view) && !chatCanvasRailUnlocked ? false : railOpen;
 
   // Keep the entry nav rail visible beside a running workspace app so users
   // can switch destinations / pinned apps without closing the instance first.
@@ -727,7 +744,7 @@ export function EntryShell({
   // projectKind='other', so the agent infers the task type and asks only
   // when the brief cannot be routed reliably.
   async function handlePluginLoopSubmit(payload: PluginLoopSubmit) {
-    // Open Design Cloud pre-run balance gate: hard blocks (empty wallet or
+    // Substrate Cloud pre-run balance gate: hard blocks (empty wallet or
     // signed out) and the soft low-balance reminder both fire BEFORE the
     // project is created, so the dialog appears right here on the home page
     // and the composer keeps its draft. In-project sends are gated separately
@@ -954,7 +971,7 @@ export function EntryShell({
 
   return (
     <div className="entry-shell entry-shell--no-header">
-      <div className={`entry${railOpen ? ' entry--rail-open' : ''}`}>
+      <div className={`entry${shownRailOpen ? ' entry--rail-open' : ''}`}>
         <EntryNavRail
           view={view}
           onViewChange={changeView}
@@ -966,17 +983,27 @@ export function EntryShell({
             });
             openNewProject();
           }}
-          open={railOpen}
-          onClose={() => setRailOpen(false)}
+          open={shownRailOpen}
+          onClose={() => {
+            setChatCanvasRailUnlocked(false);
+            setRailOpen(false);
+          }}
         />
         <main className="entry-main entry-main--scroll" ref={entryMainScrollRef}>
           <div className="entry-main__topbar">
             <button
               type="button"
               className="entry-rail-toggle"
-              onClick={() => setRailOpen((prev) => !prev)}
+              onClick={() => {
+                if (isChatCanvasView(view) && !shownRailOpen) {
+                  setChatCanvasRailUnlocked(true);
+                  setRailOpen(true);
+                  return;
+                }
+                setRailOpen((prev) => !prev);
+              }}
               aria-label={t('entry.navExpand')}
-              aria-expanded={railOpen}
+              aria-expanded={shownRailOpen}
               data-testid="entry-rail-toggle"
             >
               <Icon name="panel-left" size={20} />
@@ -1015,13 +1042,16 @@ export function EntryShell({
           </div>
           <div
             className={`entry-main__inner${
-              view === 'pages' || view === 'mail'
+              view === 'pages' || view === 'mail' || view === 'slack' || view === 'dev' || view === 'team'
                 ? ' entry-main__inner--fullscreen'
                 : view === 'home'
                   ? ''
                   : ' entry-main__inner--wide'
             }`}
           >
+            <div data-testid="entry-view-search" data-active={view === 'search' ? 'true' : 'false'} {...inactiveViewProps(view === 'search')}>
+              <SearchView active={view === 'search'} />
+            </div>
             <div data-testid="entry-view-home" data-active={view === 'home' ? 'true' : 'false'} {...inactiveViewProps(view === 'home')}>
               <HomeView
                 isActive={view === 'home'}
@@ -1108,7 +1138,7 @@ export function EntryShell({
                     selectedId={defaultDesignSystemId}
                     onSelect={onChangeDefaultDesignSystem}
                     onCreate={onCreateDesignSystem}
-                    onOpenSystem={onOpenDesignSystem}
+                    onOpenSystem={onSubstrateSystem}
                     onSystemsRefresh={onDesignSystemsRefresh}
                   />
                 </div>
@@ -1123,7 +1153,7 @@ export function EntryShell({
                     selectedId={defaultDesignSystemId}
                     onSelect={onChangeDefaultDesignSystem}
                     onCreate={onCreateDesignSystem}
-                    onOpenSystem={onOpenDesignSystem}
+                    onOpenSystem={onSubstrateSystem}
                     onSystemsRefresh={onDesignSystemsRefresh}
                   />
                 </div>
@@ -1150,7 +1180,10 @@ export function EntryShell({
               />
             </div>
             <div data-testid="entry-view-team" data-active={view === 'team' ? 'true' : 'false'} {...inactiveViewProps(view === 'team')}>
-              <TeamChatView active={view === 'team'} />
+              <TeamChatView
+                active={view === 'team'}
+                initialChannelId={route.kind === 'home' && route.view === 'team' ? route.channelId : undefined}
+              />
             </div>
             <div data-testid="entry-view-pages" data-active={view === 'pages' ? 'true' : 'false'} {...inactiveViewProps(view === 'pages')}>
               <PagesView
@@ -1169,6 +1202,20 @@ export function EntryShell({
               <MailView
                 active={view === 'mail'}
                 initialThreadId={route.kind === 'home' && route.view === 'mail' ? route.threadId : undefined}
+              />
+            </div>
+            <div data-testid="entry-view-slack" data-active={view === 'slack' ? 'true' : 'false'} {...inactiveViewProps(view === 'slack')}>
+              <SlackView
+                active={view === 'slack'}
+                initialChannelId={route.kind === 'home' && route.view === 'slack' ? route.channelId : undefined}
+              />
+            </div>
+            <div data-testid="entry-view-dev" data-active={view === 'dev' ? 'true' : 'false'} {...inactiveViewProps(view === 'dev')}>
+              <DevView
+                active={view === 'dev'}
+                initialOwner={route.kind === 'home' && route.view === 'dev' ? route.owner : undefined}
+                initialRepo={route.kind === 'home' && route.view === 'dev' ? route.repo : undefined}
+                onReviewWithAgent={handlePluginLoopSubmit}
               />
             </div>
             <div data-testid="entry-view-apps" data-active={view === 'apps' ? 'true' : 'false'} {...inactiveViewProps(view === 'apps')}>
@@ -1284,6 +1331,8 @@ function OnboardingView({
   const [connectExpanded, setConnectExpanded] = useState<'local' | 'byok' | null>('byok');
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [byokPersistPending, setByokPersistPending] = useState(false);
+  const [defaultByokProfile, setDefaultByokProfile] = useState<ByokCredentialProfile | null>(null);
+  const [byokKeySource, setByokKeySource] = useState<'default' | 'own'>('own');
   const [cliScanStatus, setCliScanStatus] = useState<'idle' | 'scanning' | 'done'>('idle');
   const [amrStatus, setAmrStatus] = useState<VelaLoginStatus | null>(null);
   // Initial login status fetch has settled, whether signed in or not. The
@@ -1396,11 +1445,15 @@ function OnboardingView({
     runtime,
     step,
   };
+  const usingDefaultByokKey = byokKeySource === 'default' && Boolean(defaultByokProfile);
+  const defaultByokTestInputKey = defaultByokProfile ? `default:${defaultByokProfile.id}` : '';
   const canTestProvider =
+    !usingDefaultByokKey &&
     Boolean(config.apiKey.trim()) &&
     Boolean(config.baseUrl.trim()) &&
     Boolean(config.model.trim());
   const canFetchProviderModels =
+    !usingDefaultByokKey &&
     apiProtocol !== 'azure' &&
     apiProtocol !== 'ollama' &&
     Boolean(config.apiKey.trim()) &&
@@ -1408,7 +1461,9 @@ function OnboardingView({
     isLikelyHttpUrl(config.baseUrl);
   const visibleProviderTestState =
     providerTestState.status !== 'idle' &&
-    providerTestState.inputKey === providerTestInputKey
+    providerTestState.inputKey === (
+      usingDefaultByokKey ? defaultByokTestInputKey : providerTestInputKey
+    )
       ? providerTestState
       : { status: 'idle' as const };
   const visibleProviderModelsState =
@@ -1482,7 +1537,9 @@ function OnboardingView({
       : connectGateReason === 'local_agent_unavailable'
         ? t('settings.onboardingGateTooltipLocal')
         : connectGateReason === 'byok_unverified'
-          ? t('settings.onboardingGateTooltipByok')
+          ? t(usingDefaultByokKey
+            ? 'settings.onboardingGateTooltipDefaultKey'
+            : 'settings.onboardingGateTooltipByok')
           : connectGateReason === 'no_runtime'
             ? t('settings.onboardingGateTooltipNoRuntime')
             : null;
@@ -1500,6 +1557,19 @@ function OnboardingView({
     if (runtime !== 'byok') return;
     onModeChange('api');
   }, [onModeChange, runtime]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchByokCredentialProfilesFromDaemon().then((response) => {
+      if (cancelled) return;
+      const profile = findEnvOpenAiByokProfile(response?.profiles);
+      setDefaultByokProfile(profile);
+      if (profile) setByokKeySource('default');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (runtime !== 'local') return;
@@ -2025,6 +2095,33 @@ function OnboardingView({
     }
     if (step === 0 && runtime === 'byok') {
       if (!byokConnectionVerified) return;
+      if (usingDefaultByokKey && defaultByokProfile) {
+        setByokPersistPending(true);
+        try {
+          onApiProtocolChange('openai');
+          await onConfigPersist(applyDefaultOpenAiByokProfile(config, defaultByokProfile));
+          emitOnboardingClick('continue', 'continue');
+          await runOnboardingCompletion('completed_without_design_system');
+          onFinish();
+        } catch (error) {
+          setProviderTestState({
+            status: 'done',
+            inputKey: defaultByokTestInputKey,
+            result: {
+              ok: false,
+              kind: 'unknown',
+              latencyMs: 0,
+              model: defaultByokProfile.model,
+              detail: error instanceof Error
+                ? error.message
+                : 'Default OpenAI key could not be applied',
+            },
+          });
+        } finally {
+          setByokPersistPending(false);
+        }
+        return;
+      }
       if (apiProtocol === 'bedrock') {
         setProviderTestState({
           status: 'done',
@@ -2107,7 +2204,7 @@ function OnboardingView({
   }
 
   // Cloud-landing primary CTA: pick the AMR cloud runtime and kick off the
-  // Open Design Cloud sign-in in one gesture. Mirrors the old AMR card's
+  // Substrate Cloud sign-in in one gesture. Mirrors the old AMR card's
   // selection side effects (mode/agent) followed by the sign-in path, so a
   // successful login advances to the next onboarding step exactly the same way.
   async function handleCloudSignIn() {
@@ -2579,6 +2676,29 @@ function OnboardingView({
     }
   }
 
+  async function testDefaultByokInline() {
+    if (!defaultByokProfile || providerTestState.status === 'running') return;
+    const inputKey = defaultByokTestInputKey;
+    providerAutoTestKeyRef.current = inputKey;
+    setProviderTestState({ status: 'running', inputKey });
+    try {
+      const result = await testSavedByokProfile(defaultByokProfile.id);
+      setProviderTestState({ status: 'done', inputKey, result });
+    } catch (error) {
+      setProviderTestState({
+        status: 'done',
+        inputKey,
+        result: {
+          ok: false,
+          kind: 'unknown',
+          latencyMs: 0,
+          model: defaultByokProfile.model,
+          detail: error instanceof Error ? error.message : 'Test request failed',
+        },
+      });
+    }
+  }
+
   async function testAgentInline() {
     if (!selectedAgent || !canTestAgent || agentTestState.status === 'running') return;
     const inputKey = agentTestInputKey;
@@ -2692,6 +2812,24 @@ function OnboardingView({
     step,
   ]);
 
+  useEffect(() => {
+    if (runtime !== 'byok' || step !== 0) return;
+    if (!usingDefaultByokKey || !defaultByokProfile) return;
+    if (providerTestState.status === 'running') return;
+    if (providerAutoTestKeyRef.current === defaultByokTestInputKey) return;
+    const timer = window.setTimeout(() => {
+      void testDefaultByokInline();
+    }, ONBOARDING_BYOK_AUTO_TEST_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    defaultByokProfile,
+    defaultByokTestInputKey,
+    providerTestState.status,
+    runtime,
+    step,
+    usingDefaultByokKey,
+  ]);
+
   const onboardingNavigationLocked = newsletterSubmitting || byokPersistPending;
   const primaryActionLabel = byokPersistPending
     ? t('common.loading')
@@ -2707,7 +2845,7 @@ function OnboardingView({
       ? t('settings.onboardingFinish')
       : t('settings.onboardingContinue');
 
-  // Connect step, default face: a minimal, centered Open Design Cloud sign-in
+  // Connect step, default face: a minimal, centered Substrate Cloud sign-in
   // landing. No stepper, no runtime cards — just the cloud CTA, a secondary
   // link into the full runtime chooser, and a top-left language/theme bar.
   if (step === 0 && connectExpanded === null) {
@@ -2742,7 +2880,7 @@ function OnboardingView({
           <span
             className="onboarding-cloud__logo od-brand-glyph"
             role="img"
-            aria-label="Open Design"
+            aria-label={t('app.brand')}
           />
           <h1 className="onboarding-cloud__title">{t('settings.onboardingCloudTitle')}</h1>
           <p className="onboarding-cloud__body">{t('settings.onboardingCloudBody')}</p>
@@ -2827,16 +2965,20 @@ function OnboardingView({
                   emitOnboardingClick('byok', 'select_runtime', { runtime_type: 'byok' });
                   setRuntime('byok');
                   onModeChange('api');
+                  setByokKeySource(defaultByokProfile ? 'default' : 'own');
+                  if (defaultByokProfile) onApiProtocolChange('openai');
                   setConnectExpanded('byok');
                 }}
               >
-                {t('settings.onboardingByokTitle')}
+                {t(defaultByokProfile
+                  ? 'settings.onboardingDefaultKeyTitle'
+                  : 'settings.onboardingByokTitle')}
               </button>
             </div>
           )}
         </div>
         <footer className="onboarding-cloud__footer">
-          © {new Date().getFullYear()} Open Design · {t('settings.onboardingCloudRights')}
+          © {new Date().getFullYear()} {t('app.brand')} · {t('settings.onboardingCloudRights')}
         </footer>
       </section>
     );
@@ -2857,11 +2999,45 @@ function OnboardingView({
           {step === 0 ? (
             <div className="onboarding-view__panel">
               <OnboardingPanelHeader
-                title={t('settings.onboardingByokTitle')}
-                body={t('settings.onboardingByokBody')}
+                title={t(defaultByokProfile && byokKeySource === 'default'
+                  ? 'settings.onboardingDefaultKeyTitle'
+                  : 'settings.onboardingByokTitle')}
+                body={t(defaultByokProfile && byokKeySource === 'default'
+                  ? 'settings.onboardingDefaultKeyBody'
+                  : 'settings.onboardingByokBody')}
               />
               <div className="onboarding-view__runtime-stack">
-                {connectExpanded === 'byok' ? (
+                {connectExpanded === 'byok' && defaultByokProfile ? (
+                  <div className="onboarding-view__key-source" role="tablist" aria-label={t('settings.onboardingDefaultKeyTitle')}>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={byokKeySource === 'default'}
+                      className={byokKeySource === 'default' ? 'is-selected' : undefined}
+                      onClick={() => {
+                        setByokKeySource('default');
+                        onApiProtocolChange('openai');
+                      }}
+                    >
+                      {t('settings.onboardingDefaultKeyAction')}
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={byokKeySource === 'own'}
+                      className={byokKeySource === 'own' ? 'is-selected' : undefined}
+                      onClick={() => setByokKeySource('own')}
+                    >
+                      {t('settings.onboardingOwnKeyChoice')}
+                    </button>
+                  </div>
+                ) : null}
+                {connectExpanded === 'byok' && usingDefaultByokKey ? (
+                  <OnboardingDefaultKeyPanel
+                    testState={visibleProviderTestState}
+                  />
+                ) : null}
+                {connectExpanded === 'byok' && !usingDefaultByokKey ? (
                   <OnboardingByokSetupPanel
                     apiProtocol={apiProtocol}
                     apiKey={config.apiKey}
@@ -3421,6 +3597,39 @@ function onboardingModelCostLabel(
 ): { label: string } | undefined {
   const tier = getModelCostTier(model);
   return tier ? { label: t(MODEL_COST_TIER_LABEL_KEYS[tier]) } : undefined;
+}
+
+function OnboardingDefaultKeyPanel({
+  testState,
+}: {
+  testState:
+    | { status: 'idle' }
+    | { status: 'running'; inputKey: string }
+    | { status: 'done'; inputKey: string; result: ConnectionTestResponse };
+}) {
+  const t = useT();
+  const running = testState.status === 'running';
+  return (
+    <div className="onboarding-view__setup-panel onboarding-view__default-key">
+      <p className="onboarding-view__default-key-copy">
+        {t('settings.onboardingDefaultKeyReady')}
+      </p>
+      {running ? (
+        <p className="onboarding-view__test-status is-running" role="status">
+          {t('settings.testRunning')}
+        </p>
+      ) : testState.status === 'done' ? (
+        <p
+          className={`onboarding-view__test-status is-${onboardingTestVariant(testState.result)}`}
+          role={testState.result.ok ? 'status' : 'alert'}
+        >
+          {testState.result.ok
+            ? t('settings.onboardingDefaultKeyReady')
+            : t('settings.onboardingDefaultKeyFailed')}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function OnboardingByokSetupPanel({

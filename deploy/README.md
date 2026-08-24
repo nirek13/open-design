@@ -6,7 +6,7 @@ separate nginx container.
 
 Cloud / platform guides:
 
-- **AWS (ECS/Fargate + ALB):** [`aws/README.md`](./aws/README.md) — stack deploy, local→ECR redeploy, HTTPS when you have a domain
+- **AWS (ECS/Fargate + ALB):** [`aws/README.md`](./aws/README.md) — stack deploy, economy/performance cost modes, local→ECR redeploy, HTTPS when you have a domain
 - **Azure:** [`azure/README.md`](./azure/README.md)
 
 ## Local compose

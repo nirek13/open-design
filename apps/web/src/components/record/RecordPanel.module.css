@@ -22,16 +22,10 @@
   gap: 12px;
   padding: 16px 20px 24px;
   overflow-y: auto;
-  background: var(--surface-0, #fff);
-  border-left: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  background: var(--surface-0);
+  border-left: 1px solid var(--border);
   box-shadow: -12px 0 32px rgba(0, 0, 0, 0.12);
   animation: slide 200ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-@media (prefers-color-scheme: dark) {
-  .panel {
-    background: var(--surface-0, #16181c);
-  }
 }
 
 @keyframes fade {

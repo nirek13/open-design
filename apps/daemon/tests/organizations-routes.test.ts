@@ -13,6 +13,7 @@ import {
   ensureDefaultOrganization,
   ensureLocalOwnerUser,
   getActiveMemberForUser,
+  setUserUsername,
   updateOrgMember,
   upsertExternalUser,
 } from '../src/workspace-data/tenancy.js';
@@ -40,6 +41,7 @@ describe('organization routes', () => {
       organizations: {
         manager,
         identity: new IdentityService({ mode: 'local-owner', issuer: null, publishableKey: null }),
+        dataDir: tempDir,
         serveAppFile: async (
           _req: unknown,
           res: express.Response,
@@ -128,6 +130,25 @@ describe('organization routes', () => {
       expect(accepted.status).toBe(200);
       const invites = await json('GET', `/api/orgs/${orgId}/invites`);
       expect(invites.body.invites[0].useCount).toBe(0);
+    });
+
+    it('points join links at the web origin and redirects daemon-port /join URLs there', async () => {
+      const previous = process.env.OD_WEB_PORT;
+      process.env.OD_WEB_PORT = '17573';
+      try {
+        const created = await json('POST', `/api/orgs/${orgId}/invites`, { role: 'member' });
+        expect(created.status).toBe(201);
+        expect(created.body.url).toBe(`http://127.0.0.1:17573/join/${created.body.token}`);
+
+        const response = await fetch(`${base}/join/${created.body.token}`, { redirect: 'manual' });
+        expect(response.status).toBe(302);
+        expect(response.headers.get('location')).toBe(
+          `http://127.0.0.1:17573/join/${created.body.token}`,
+        );
+      } finally {
+        if (previous == null) delete process.env.OD_WEB_PORT;
+        else process.env.OD_WEB_PORT = previous;
+      }
     });
 
     it('admits a genuinely new person with the invited role', async () => {
@@ -234,7 +255,7 @@ describe('organization routes', () => {
       expect(created.status).toBe(201);
       expect(created.body.invite).toMatchObject({
         kind: 'username',
-        targetUsername: 'Sam',
+        targetUsername: 'sam',
         targetUserId: teammate.id,
         maxUses: 1,
       });
@@ -442,6 +463,43 @@ describe('organization routes', () => {
       expect(page.status).toBe(404);
     });
 
+    it('publishes an app to a stable public web URL in one step', async () => {
+      const app = await publishApp();
+      const first = await json('POST', `/api/orgs/${orgId}/apps/${app.id}/publish-web`);
+      expect(first.status).toBe(200);
+      expect(first.body.url).toMatch(/\/s\//);
+      expect(first.body.app.webUrl).toBe(first.body.url);
+
+      const page = await fetch(first.body.url as string);
+      expect(page.status).toBe(200);
+      expect(servedFiles).toEqual([{ projectId: 'proj-1', filePath: 'expenses.html' }]);
+
+      const again = await json('POST', `/api/orgs/${orgId}/apps/${app.id}/publish-web`);
+      expect(again.status).toBe(200);
+      expect(again.body.url).toBe(first.body.url);
+    });
+
+    it('rewrites a persisted loopback share URL onto the public origin', async () => {
+      const app = await publishApp();
+      const first = await json('POST', `/api/orgs/${orgId}/apps/${app.id}/publish-web`);
+      expect(first.status).toBe(200);
+      const tokenPath = new URL(first.body.url as string).pathname;
+      expect(tokenPath).toMatch(/^\/s\//);
+
+      const rewritten = await fetch(`${base}/api/orgs/${orgId}/apps/${app.id}/publish-web`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-host': 'od.example.com',
+          'x-forwarded-proto': 'https',
+        },
+      });
+      expect(rewritten.status).toBe(200);
+      const body = (await rewritten.json()) as { url: string; app: { webUrl: string } };
+      expect(body.url).toBe(`https://od.example.com${tokenPath}`);
+      expect(body.app.webUrl).toBe(body.url);
+    });
+
     it('stops serving an archived app even with a live link', async () => {
       const app = await publishApp();
       const shared = await json('POST', `/api/orgs/${orgId}/apps/${app.id}/shares`);
@@ -500,6 +558,87 @@ describe('organization routes', () => {
       expect(canEditApp(app, { memberId: otherMember!.id, role: 'member' }, 'edit')).toBe(true);
     });
 
+    it('hides an org-wide app from a member on the except list', async () => {
+      const created = await json('POST', `/api/orgs/${orgId}/apps`, {
+        name: 'Payroll',
+        projectId: 'proj-1',
+        filePath: 'payroll.html',
+        denials: [],
+      });
+      expect(created.status).toBe(201);
+      const appId = created.body.app.id;
+
+      const other = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-except-peer',
+        displayName: 'Pat',
+        email: null,
+      });
+      const { acceptOrgInvite } = await import('../src/workspace-data/tenancy.js');
+      const invite = await json('POST', `/api/orgs/${orgId}/invites`, {});
+      await acceptOrgInvite(manager.directoryExecutor, invite.body.token, other.id);
+      const otherMember = await getActiveMemberForUser(manager.directoryExecutor, orgId, other.id);
+
+      await json('PUT', `/api/orgs/${orgId}/apps/${appId}/grants`, {
+        grants: [],
+        denials: [{ memberId: otherMember!.id }],
+      });
+      const { listApps } = await import('../src/workspace-data/apps.js');
+      const hidden = await listApps(manager.workspaceExecutor(orgId), orgId, {
+        viewerMemberId: otherMember!.id,
+        viewerRole: 'member',
+      });
+      expect(hidden.find((row) => row.id === appId)).toBeUndefined();
+    });
+
+    it('lets a restricted app through a team grant, then hides it with a denial', async () => {
+      const other = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-team-peer',
+        displayName: 'Kim',
+        email: null,
+      });
+      const { acceptOrgInvite } = await import('../src/workspace-data/tenancy.js');
+      const invite = await json('POST', `/api/orgs/${orgId}/invites`, {});
+      await acceptOrgInvite(manager.directoryExecutor, invite.body.token, other.id);
+      const otherMember = await getActiveMemberForUser(manager.directoryExecutor, orgId, other.id);
+
+      const team = await json('POST', `/api/orgs/${orgId}/teams`, {
+        name: 'Finance',
+        memberIds: [otherMember!.id],
+      });
+      expect(team.status).toBe(201);
+      expect(team.body.team.memberIds).toContain(otherMember!.id);
+
+      const created = await json('POST', `/api/orgs/${orgId}/apps`, {
+        name: 'Ledger',
+        projectId: 'proj-1',
+        filePath: 'ledger.html',
+        accessMode: 'restricted',
+        teamGrants: [{ teamId: team.body.team.id, role: 'view' }],
+      });
+      expect(created.status).toBe(201);
+      const appId = created.body.app.id;
+
+      const { listApps } = await import('../src/workspace-data/apps.js');
+      const viaTeam = await listApps(manager.workspaceExecutor(orgId), orgId, {
+        viewerMemberId: otherMember!.id,
+        viewerRole: 'member',
+        viewerTeamIds: [team.body.team.id],
+      });
+      expect(viaTeam.find((row) => row.id === appId)?.id).toBe(appId);
+
+      await json('PUT', `/api/orgs/${orgId}/apps/${appId}/grants`, {
+        grants: [],
+        teamGrants: [{ teamId: team.body.team.id, role: 'view' }],
+        denials: [{ memberId: otherMember!.id }],
+      });
+      const denied = await listApps(manager.workspaceExecutor(orgId), orgId, {
+        viewerMemberId: otherMember!.id,
+        viewerRole: 'member',
+        viewerTeamIds: [team.body.team.id],
+      });
+      expect(denied.find((row) => row.id === appId)).toBeUndefined();
+    });
+
     it('refuses GET of a private app for a non-creator', async () => {
       const app = await publishApp();
       await json('PATCH', `/api/orgs/${orgId}/apps/${app.id}`, { visibility: 'private' });
@@ -520,6 +659,130 @@ describe('organization routes', () => {
           role: 'member',
         }),
       ).rejects.toMatchObject({ code: 'APP_FORBIDDEN' });
+    });
+  });
+
+  describe('org teams', () => {
+    it('creates a named team and replaces its members', async () => {
+      const created = await json('POST', `/api/orgs/${orgId}/teams`, { name: 'Finance' });
+      expect(created.status).toBe(201);
+      expect(created.body.team).toMatchObject({ name: 'Finance', slug: 'finance', memberIds: [] });
+
+      const listed = await json('GET', `/api/orgs/${orgId}/teams`);
+      expect(listed.body.teams.map((row: { name: string }) => row.name)).toContain('Finance');
+
+      const owner = await getActiveMemberForUser(manager.directoryExecutor, orgId, LOCAL_OWNER_USER_ID);
+      const patched = await json('PATCH', `/api/orgs/${orgId}/teams/${created.body.team.id}`, {
+        memberIds: [owner!.id],
+      });
+      expect(patched.body.team.memberIds).toEqual([owner!.id]);
+    });
+
+    it('rejects an app grant for a team that does not exist', async () => {
+      const created = await json('POST', `/api/orgs/${orgId}/apps`, {
+        name: 'Ledger',
+        projectId: 'proj-1',
+        filePath: 'ledger.html',
+        accessMode: 'restricted',
+      });
+      const denied = await json('PUT', `/api/orgs/${orgId}/apps/${created.body.app.id}/grants`, {
+        grants: [],
+        teamGrants: [{ teamId: 'team-missing', role: 'view' }],
+      });
+      expect(denied.status).toBe(404);
+      expect(denied.body.error.code).toBe('ORG_TEAM_NOT_FOUND');
+    });
+  });
+
+  describe('profile username', () => {
+    it('lets the signed-in person claim a unique public handle', async () => {
+      const patched = await json('PATCH', '/api/me', { username: 'Jane' });
+      expect(patched.status).toBe(200);
+      expect(patched.body).toMatchObject({
+        userId: LOCAL_OWNER_USER_ID,
+        username: 'jane',
+      });
+
+      const context = await json('GET', '/api/auth/context');
+      expect(context.body.viewer.username).toBe('jane');
+
+      const lookedUp = await json('GET', '/api/users/Jane');
+      expect(lookedUp.status).toBe(200);
+      expect(lookedUp.body).toMatchObject({
+        userId: LOCAL_OWNER_USER_ID,
+        username: 'jane',
+      });
+      expect(lookedUp.body).not.toHaveProperty('email');
+
+      const missing = await json('GET', '/api/users/nope');
+      expect(missing.status).toBe(404);
+
+      const tooShort = await json('PATCH', '/api/me', { username: 'a' });
+      expect(tooShort.status).toBe(422);
+
+      const reserved = await json('PATCH', '/api/me', { username: 'me' });
+      expect(reserved.status).toBe(422);
+
+      const members = await json('GET', `/api/orgs/${orgId}/members`);
+      expect(members.body.members).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ userId: LOCAL_OWNER_USER_ID, username: 'jane' }),
+        ]),
+      );
+
+      const other = await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-other-handle',
+        displayName: 'Other',
+        email: 'other@co.com',
+      });
+      await expect(setUserUsername(manager.directoryExecutor, other.id, 'jane')).rejects.toMatchObject({
+        code: 'USERNAME_TAKEN',
+      });
+    });
+
+    it('lets the signed-in person set a name, bio, and photo', async () => {
+      const patched = await json('PATCH', '/api/me', {
+        displayName: 'Ada Lovelace',
+        bio: 'Builds things',
+      });
+      expect(patched.status).toBe(200);
+      expect(patched.body).toMatchObject({
+        userId: LOCAL_OWNER_USER_ID,
+        displayName: 'Ada Lovelace',
+        bio: 'Builds things',
+      });
+
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      );
+      const form = new FormData();
+      form.append('file', new Blob([png], { type: 'image/png' }), 'me.png');
+      const put = await fetch(`${base}/api/me/avatar`, { method: 'PUT', body: form });
+      expect(put.status).toBe(200);
+      const profile = (await put.json()) as { avatarUrl: string };
+      expect(profile.avatarUrl).toMatch(/\/api\/users\/.+\/avatar/);
+
+      const got = await fetch(`${base}${profile.avatarUrl}`);
+      expect(got.status).toBe(200);
+      expect(got.headers.get('content-type')).toBe('image/png');
+      expect(Buffer.from(await got.arrayBuffer()).equals(png)).toBe(true);
+    });
+
+    it('does not bind an invite to a person by display name', async () => {
+      await upsertExternalUser(manager.directoryExecutor, {
+        externalId: 'ext-jordan',
+        displayName: 'Jordan Lee',
+        email: 'jordan@co.com',
+        username: 'jlee',
+      });
+      const created = await json('POST', `/api/orgs/${orgId}/invites`, { username: 'jordanlee' });
+      expect(created.status).toBe(201);
+      expect(created.body.invite).toMatchObject({
+        kind: 'username',
+        targetUsername: 'jordanlee',
+        targetUserId: null,
+      });
     });
   });
 });

@@ -152,6 +152,13 @@ describe('organization pages', () => {
     expect(withBookmark.blocks.at(-1)?.type).toBe('bookmark');
     expect(withBookmark.blocks.at(-1)?.props.url).toBe('https://example.com/handbook');
 
+    const withLive = await embedInPage(db(), orgId, child.id, {
+      type: 'embed',
+      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
+    expect(withLive.blocks.at(-1)?.type).toBe('embed');
+    expect(withLive.blocks.at(-1)?.props.url).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+
     const nested = await scaffoldPages(db(), orgId, 'member-1', {
       parentPageId: root.id,
       pages: [

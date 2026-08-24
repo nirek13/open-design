@@ -723,7 +723,7 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false,
         (primaryWithoutAlt && !event.shiftKey && (lowerKey === 't' || lowerKey === 'w'))
         || (ctrlWithoutPlatformModifiers && key === 'Tab')
         || (ctrlWithoutPlatformModifiers && !event.shiftKey && (key === 'PageDown' || key === 'PageUp'))
-        || (primaryWithoutAlt && !event.shiftKey && /^[1-9]$/u.test(key));
+        || (primaryWithoutAlt && !event.shiftKey && /^[2-9]$/u.test(key));
 
       if (isBrowserStyleTabShortcut && shouldDeferShortcutToProjectWorkspace()) {
         return;
@@ -759,7 +759,8 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false,
         return;
       }
 
-      if (primaryWithoutAlt && !event.shiftKey && /^[1-9]$/u.test(key)) {
+      // Cmd/Ctrl+1 is organization search; 2–9 still jump to workspace tabs.
+      if (primaryWithoutAlt && !event.shiftKey && /^[2-9]$/u.test(key)) {
         consumeWorkspaceTabShortcut(event);
         const normalized = normalizeTabsState(state);
         const targetIndex = key === '9'
@@ -1252,6 +1253,7 @@ function displayTabFor(
   }
   const entryTitle: Record<EntryHomeView, string> = {
     home: t('entry.navHome'),
+    search: t('entry.navSearch'),
     onboarding: t('settings.welcomeTitle'),
     projects: t('entry.navProjects'),
     tasks: t('entry.navTasks'),
@@ -1273,6 +1275,8 @@ function displayTabFor(
     pages: t('entry.navPages'),
     calendar: t('entry.navCalendar'),
     mail: t('entry.navMail'),
+    slack: t('entry.navSlack'),
+    dev: t('entry.navDev'),
     templates: t('entry.navTemplates'),
     tables: t('entry.navTables'),
     inventory: t('entry.navInventory'),
@@ -1281,6 +1285,7 @@ function displayTabFor(
   };
   const entryIcon: Record<EntryHomeView, IconName> = {
     home: 'home',
+    search: 'search',
     onboarding: 'sparkles',
     projects: 'folder',
     tasks: 'kanban',
@@ -1302,6 +1307,8 @@ function displayTabFor(
     pages: 'file-text',
     calendar: 'history',
     mail: 'mail',
+    slack: 'hash',
+    dev: 'github',
     templates: 'blocks',
     tables: 'layout',
     inventory: 'layers-filled',

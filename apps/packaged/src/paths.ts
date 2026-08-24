@@ -64,13 +64,13 @@ function resolvePackagedDataRoot(
     if (!isAbs) {
       throw new PackagedPathAccessError(
         [
-          "Open Design's packaged runtime requires OD_DATA_DIR to be an absolute path.",
+          "Substrate's packaged runtime requires OD_DATA_DIR to be an absolute path.",
           "",
           `Configured value: ${odDataDir}`,
           "",
-          "Set OD_DATA_DIR to an absolute path (for example, C:\\\\Users\\\\You\\\\OpenDesign on Windows or /Users/you/OpenDesign on macOS/Linux) and relaunch Open Design.",
+          "Set OD_DATA_DIR to an absolute path (for example, C:\\\\Users\\\\You\\\\Substrate on Windows or /Users/you/Substrate on macOS/Linux) and relaunch Substrate.",
         ].join("\n"),
-        { title: "Open Design cannot start with this OD_DATA_DIR" },
+        { title: "Substrate cannot start with this OD_DATA_DIR" },
       );
     }
     const scopedNamespace = getScopedPackagedDataRootNamespace(expanded);
@@ -78,7 +78,7 @@ function resolvePackagedDataRoot(
       if (scopedNamespace !== namespace) {
         throw new PackagedPathAccessError(
           [
-            "Open Design's packaged runtime requires OD_DATA_DIR to target the active namespace.",
+            "Substrate's packaged runtime requires OD_DATA_DIR to target the active namespace.",
             "",
             `Configured value: ${odDataDir}`,
             `Configured namespace: ${scopedNamespace}`,
@@ -86,7 +86,7 @@ function resolvePackagedDataRoot(
             "",
             "Use an unscoped absolute base path or relaunch the matching packaged namespace.",
           ].join("\n"),
-          { title: "Open Design cannot start with this OD_DATA_DIR" },
+          { title: "Substrate cannot start with this OD_DATA_DIR" },
         );
       }
       return expanded;

@@ -134,6 +134,7 @@
   border-top: none;
 }
 .mention-item--plugin { align-items: center; }
+.mention-item--person { align-items: center; }
 .mention-item-body {
   display: flex;
   flex-direction: column;
@@ -292,6 +293,7 @@
 }
 .modal {
   background: var(--bg-elevated);
+  color: var(--text);
   -webkit-app-region: no-drag;
   border-radius: var(--radius-lg);
   padding: 22px;

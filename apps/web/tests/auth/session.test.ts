@@ -40,6 +40,7 @@ describe('installSessionFetch', () => {
 
   afterEach(() => {
     window.fetch = originalFetch;
+    document.cookie = 'od_session=; Path=/; Max-Age=0; SameSite=Lax';
     vi.restoreAllMocks();
   });
 
@@ -54,6 +55,7 @@ describe('installSessionFetch', () => {
     await window.fetch('/api/orgs');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(new Headers(lastInit(fetchMock)?.headers).get('authorization')).toBe('Bearer jwt-1');
+    expect(document.cookie).toContain('od_session=jwt-1');
 
     fetchMock.mockClear();
     await window.fetch('https://clerk.example/v1/client');
@@ -88,5 +90,24 @@ describe('installSessionFetch', () => {
 
     await window.fetch('/api/orgs');
     expect(lastInit(fetchMock)).toBeUndefined();
+  });
+});
+
+describe('plantSessionCookie', () => {
+  afterEach(() => {
+    document.cookie = 'od_session=; Path=/; Max-Age=0; SameSite=Lax';
+  });
+
+  it('plants a cookie iframe file previews can send', async () => {
+    const { plantSessionCookie, SESSION_COOKIE_NAME } = await import('../../src/auth/session');
+    plantSessionCookie('jwt-iframe');
+    expect(document.cookie).toContain(`${SESSION_COOKIE_NAME}=jwt-iframe`);
+  });
+
+  it('clears the cookie on sign-out', async () => {
+    const { plantSessionCookie } = await import('../../src/auth/session');
+    plantSessionCookie('jwt-iframe');
+    plantSessionCookie(null);
+    expect(document.cookie).not.toMatch(/od_session=jwt-iframe/);
   });
 });

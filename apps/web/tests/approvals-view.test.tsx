@@ -61,7 +61,7 @@ describe('ApprovalsView', () => {
   beforeEach(() => {
     vi.spyOn(registry, 'fetchAuthContext').mockResolvedValue({
       mode: 'local-owner',
-      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null },
+      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
       organizations: [ORG],
     });
     vi.spyOn(registry, 'fetchProposals').mockResolvedValue([proposal()]);

@@ -560,7 +560,7 @@ describe('ComposerPlusMenu module wiring', () => {
       onLinkLocalCode: vi.fn(),
       onImportFigma: vi.fn(),
       onShowFigmaHelp: vi.fn(),
-      onOpenDesignSystems: vi.fn(),
+      onSubstrateSystems: vi.fn(),
     });
 
     // Each row closes the menu, so re-open before clicking the next one.
@@ -585,7 +585,7 @@ describe('ComposerPlusMenu module wiring', () => {
     expect(props.onShowFigmaHelp).toHaveBeenCalledTimes(1);
 
     clickRow('composer-plus-design-system');
-    expect(props.onOpenDesignSystems).toHaveBeenCalledTimes(1);
+    expect(props.onSubstrateSystems).toHaveBeenCalledTimes(1);
   });
 
   it('invokes every submenu pick and "Add …" row handler', () => {

@@ -358,7 +358,7 @@ describe("stopPackedLinuxHeadless", () => {
       await writeFile(
         markerPath,
         `${JSON.stringify({
-          appPath: "/tmp/Open-Design.AppImage",
+          appPath: "/tmp/Substrate.AppImage",
           executablePath: "/tmp/.mount_od/AppRun",
           logPath: join(namespaceRoot, "logs", "desktop", "latest.log"),
           namespaceRoot,
@@ -419,7 +419,7 @@ describe("stopPackedLinuxHeadless", () => {
       await writeFile(
         markerPath,
         `${JSON.stringify({
-          appPath: "/tmp/Open-Design.AppImage",
+          appPath: "/tmp/Substrate.AppImage",
           executablePath: "/tmp/.mount_od/AppRun",
           logPath: join(namespaceRoot, "logs", "desktop", "latest.log"),
           namespaceRoot,
@@ -488,7 +488,7 @@ describe("stopPackedLinuxHeadless", () => {
       await writeFile(
         markerPath,
         `${JSON.stringify({
-          appPath: "/tmp/Open-Design.AppImage",
+          appPath: "/tmp/Substrate.AppImage",
           executablePath: "/tmp/.mount_od/AppRun",
           logPath: join(namespaceRoot, "logs", "desktop", "latest.log"),
           namespaceRoot,
@@ -541,7 +541,7 @@ describe("stopPackedLinuxApp", () => {
       },
     };
     const appDir = join(root, "AppDir");
-    const executablePath = join(appDir, "Open Design");
+    const executablePath = join(appDir, "Substrate");
     const appRunPath = join(appDir, "AppRun");
     const markerPath = join(runtimeNamespaceRoot, "runtime", "desktop-root.json");
     const stamp = {
@@ -563,7 +563,7 @@ describe("stopPackedLinuxApp", () => {
       await chmod(executablePath, 0o755);
       await writeFile(appRunPath, "#!/bin/sh\n", "utf8");
       await mkdir(config.roots.output.appBuilderRoot, { recursive: true });
-      await writeFile(join(config.roots.output.appBuilderRoot, "Open-Design.direct-apprun.AppImage"), "", "utf8");
+      await writeFile(join(config.roots.output.appBuilderRoot, "Substrate.direct-apprun.AppImage"), "", "utf8");
 
       child = spawn(executablePath, ["-e", "setInterval(() => {}, 1000)"], {
         env: { ...process.env, APPIMAGE: appRunPath },
@@ -662,7 +662,7 @@ describe("resolveProductionInstallCommand", () => {
 describe("renderDesktopTemplate", () => {
   const template = `[Desktop Entry]
 Type=Application
-Name=Open Design (@@NAMESPACE@@)
+Name=Substrate (@@NAMESPACE@@)
 Exec=env -u ELECTRON_RUN_AS_NODE OD_PACKAGED_NAMESPACE=@@NAMESPACE@@ @@EXEC_PATH@@ --appimage-extract-and-run %U
 Icon=@@ICON_PATH@@
 MimeType=x-scheme-handler/od;
@@ -671,12 +671,12 @@ MimeType=x-scheme-handler/od;
   it("substitutes all @@TOKEN@@ placeholders", () => {
     const out = renderDesktopTemplate(template, {
       namespace: "default",
-      execPath: "/home/u/.local/bin/Open-Design.default.AppImage",
+      execPath: "/home/u/.local/bin/Substrate.default.AppImage",
       iconName: "open-design-default",
     });
-    expect(out).toContain("Name=Open Design (default)");
+    expect(out).toContain("Name=Substrate (default)");
     expect(out).toContain(
-      "Exec=env -u ELECTRON_RUN_AS_NODE OD_PACKAGED_NAMESPACE=default /home/u/.local/bin/Open-Design.default.AppImage --appimage-extract-and-run %U",
+      "Exec=env -u ELECTRON_RUN_AS_NODE OD_PACKAGED_NAMESPACE=default /home/u/.local/bin/Substrate.default.AppImage --appimage-extract-and-run %U",
     );
     expect(out).toContain("Icon=open-design-default");
   });
@@ -750,7 +750,7 @@ describe("renderLinuxAppImageAppRun", () => {
 
     expect(out).toContain("unset ELECTRON_RUN_AS_NODE");
     expect(out.indexOf("unset ELECTRON_RUN_AS_NODE")).toBeLessThan(out.indexOf('exec "$BIN"'));
-    expect(out).toContain('BIN="$APPDIR/Open Design"');
+    expect(out).toContain('BIN="$APPDIR/Substrate"');
   });
 
   it("preserves AppImageLauncher install-only behavior", () => {
@@ -778,7 +778,7 @@ describe("renderLinuxAppImageAppRun", () => {
     const appDir = join(root, "AppDir");
     const appRunPath = join(appDir, "AppRun");
     const observedEnvPath = join(root, "observed-env.txt");
-    const electronPath = join(appDir, "Open Design");
+    const electronPath = join(appDir, "Substrate");
 
     try {
       await mkdir(appDir, { recursive: true });
@@ -900,7 +900,7 @@ describe("inspectPackedLinuxApp", () => {
     requestJsonIpcMock.mockReset();
     requestJsonIpcMock
       .mockResolvedValueOnce({ state: "running", url: "od://app/" })
-      .mockResolvedValueOnce({ ok: true, value: "Open Design" })
+      .mockResolvedValueOnce({ ok: true, value: "Substrate" })
       .mockResolvedValueOnce({ path: "/tmp/open-design-linux.png" });
 
     const result = await inspectPackedLinuxApp(makeConfig(), {
@@ -909,7 +909,7 @@ describe("inspectPackedLinuxApp", () => {
     });
 
     expect(result).toEqual({
-      eval: { ok: true, value: "Open Design" },
+      eval: { ok: true, value: "Substrate" },
       screenshot: { path: "/tmp/open-design-linux.png" },
       status: { state: "running", url: "od://app/" },
     });
@@ -918,7 +918,7 @@ describe("inspectPackedLinuxApp", () => {
 });
 
 describe("matchesAppImageProcess", () => {
-  const installPath = "/home/u/.local/bin/Open-Design.default.AppImage";
+  const installPath = "/home/u/.local/bin/Substrate.default.AppImage";
 
   it("matches FUSE-mode (executable === installPath)", () => {
     const ok = matchesAppImageProcess(
@@ -964,7 +964,7 @@ describe("matchesAppImageProcess", () => {
     const ok = matchesAppImageProcess(
       {
         pid: 1234,
-        executable: "/tmp/appimage_extracted_fe548e54/Open Design",
+        executable: "/tmp/appimage_extracted_fe548e54/Substrate",
         env: { APPIMAGE: "/tmp/appimage_extracted_fe548e54/AppRun" },
       },
       installPath,
@@ -976,7 +976,7 @@ describe("matchesAppImageProcess", () => {
     const ok = matchesAppImageProcess(
       {
         pid: 1234,
-        executable: "/tmp/appimage_extracted_fe548e54/Open Design",
+        executable: "/tmp/appimage_extracted_fe548e54/Substrate",
         env: { APPIMAGE: "/tmp/other/AppRun" },
       },
       installPath,
@@ -988,7 +988,7 @@ describe("matchesAppImageProcess", () => {
     const ok = matchesAppImageProcess(
       {
         pid: 1234,
-        executable: "/tmp/appimage_extracted_fe548e54/Open Design",
+        executable: "/tmp/appimage_extracted_fe548e54/Substrate",
         env: { APPIMAGE: installPath },
       },
       installPath,
@@ -1000,7 +1000,7 @@ describe("matchesAppImageProcess", () => {
     const ok = matchesAppImageProcess(
       {
         pid: 1234,
-        executable: "/tmp/appimage_extracted_fe548e54/Open Design",
+        executable: "/tmp/appimage_extracted_fe548e54/Substrate",
         env: { APPIMAGE: "/elsewhere/Other.AppImage" },
       },
       installPath,

@@ -5,6 +5,7 @@ CloudFormation + ECS/Fargate runbook for hosting Open Design on AWS.
 | File | Purpose |
 | --- | --- |
 | [`template.yaml`](./template.yaml) | Stack: VPC, ALB, ECS, EFS, Secrets Manager, optional HTTPS |
+| [`set-mode.sh`](./set-mode.sh) | Flip **economy** (cheap) ↔ **performance** (VC demo) without rebuilding |
 | [`redeploy-local.sh`](./redeploy-local.sh) | Build local checkout → ECR → roll ECS (keeps runtime fixes) |
 
 For Docker Compose / GHCR images, see [`../README.md`](../README.md). For Azure, see [`../azure/README.md`](../azure/README.md).
@@ -20,7 +21,7 @@ Internet (allowlisted CIDR only)
    ALB (HTTP :80, optional HTTPS :443)
         │
         ▼
-   ECS Fargate task (private subnet)
+   ECS Fargate task (public subnet + public IP; inbound only from the ALB SG)
    ┌─────────────────────────────────────┐
    │  auth-proxy (nginx)  →  app (daemon)│
    │  injects Bearer token for /api/*    │
@@ -31,9 +32,31 @@ Internet (allowlisted CIDR only)
    EFS (persistent .od data) — DeletionPolicy: Retain
 ```
 
-- **DesiredCount: 1** — SQLite under EFS must not be multi-writer.
-- **Two NAT gateways** — one per AZ for HA outbound. Expect ~\$60+/mo NATs alone, plus ALB, Fargate, EFS, data transfer.
+- **DesiredCount: 0 or 1** — SQLite under EFS must not be multi-writer. `0` parks the task.
+- **No NAT gateways** — Fargate uses a public IP for outbound (ECR, AWS APIs, model providers). Inbound is still only the ALB security group. This drops ~\$65/mo versus dual NAT.
 - **Auth model:** browser hits ALB; nginx adds `Authorization: Bearer <ApiToken>` for `/api/`. Token lives in Secrets Manager, not in the image.
+
+### Cost modes (economy vs performance)
+
+Stay on **economy** day-to-day. Flip to **performance** about 10 minutes before a VC demo, then flip back.
+
+| Mode | Fargate | ALB idle timeout | Logs | Ballpark 24/7 (us-east-1) |
+| --- | --- | --- | --- | --- |
+| `economy` (default) | 0.25 vCPU / 1 GB (`small`; `TaskSize` still applies) | 10 min | 3 days | **~$25–35/mo** (ALB + small Fargate + EFS) |
+| `performance` | 4 vCPU / 16 GB | ~66 min | 14 days | **~$175–200/mo** if left on |
+| `stop` | desired count 0 | — | kept | **~$16–20/mo** (ALB + EFS; data retained) |
+
+NAT used to be ~\$32/mo **each** (two of them). They are gone in both modes — they did not make the app faster.
+
+```bash
+./deploy/aws/set-mode.sh economy        # cheap default
+./deploy/aws/set-mode.sh performance    # before a demo
+./deploy/aws/set-mode.sh economy        # after the demo
+./deploy/aws/set-mode.sh stop           # park overnight / weekend
+./deploy/aws/set-mode.sh status
+```
+
+The first stack **update** after this template change deletes the NAT gateways (several minutes) and moves the task onto public subnets. Later mode switches only replace the task definition (a few minutes). `set-mode.sh` reuses the image the service is already running so a mode flip does not roll you back to an old GHCR tag.
 
 Daemon data paths follow root [`AGENTS.md`](../../AGENTS.md) → **Daemon data directory contract**. Do not invent alternate data roots in this doc.
 
@@ -61,7 +84,9 @@ Some accounts lack `alias/aws/efs`. If stack create fails on EFS encryption, cre
 | `DockerImage` | Yes | Full URI+tag (ECR or GHCR). Initial seed only — local rolls use `redeploy-local.sh` |
 | `CustomDomainName` | No | e.g. `od.example.com`. Blank = HTTP on ALB DNS only |
 | `AcmCertificateArn` | If domain | ACM cert ARN in the ALB region |
-| `TaskSize` | No | `small` / `medium` / `large` |
+| `TaskSize` | No | `small` / `medium` / `large` / `xlarge`. Used in **economy** only |
+| `OperatingMode` | No | `economy` (default) or `performance`. Use `set-mode.sh` |
+| `DesiredCount` | No | `0` or `1`. `0` parks the task (ALB still bills) |
 | `TaskCpuArchitecture` | No | Must match image (`X86_64` ↔ `linux/amd64`) |
 | `ProxyPort` | No | Nginx listen port (≥1024), default `8080` |
 | `AppStoragePath` | No | EFS mount in container; see daemon data contract |
@@ -323,9 +348,10 @@ aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
 
 ## Cost and teardown notes
 
-- **Ongoing:** 2× NAT Gateway, ALB, Fargate (`small` by default), EFS, CloudWatch logs, Secrets Manager.
+- **Default (economy):** ALB, small Fargate, EFS, CloudWatch logs, Secrets Manager. No NAT.
+- **Performance:** same, but 4 vCPU / 16 GB Fargate. Flip back after the demo — leaving it on is ~5–6× the compute bill.
 - **EFS** has `DeletionPolicy: Retain` — deleting the stack does **not** delete the filesystem. Delete the EFS volume manually in the console if you intend to destroy data.
-- To stop burn without deleting everything: set ECS desired count to `0`, or delete the stack (then clean retained EFS/KMS if needed).
+- To stop burn without deleting everything: `./deploy/aws/set-mode.sh stop` (desired count `0`), or delete the stack (then clean retained EFS/KMS if needed).
 
 ```bash
 aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \

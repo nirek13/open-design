@@ -247,6 +247,10 @@ export interface Project {
    * visible to everyone on the machine. Server-assigned — a client cannot
    * move a project between organizations by sending this field. */
   orgId?: string | null;
+  /** Organization member who created the project. Null for projects that
+   * predate the reporting hierarchy; those stay visible to every member of
+   * the owning organization. Server-assigned. */
+  createdBy?: string | null;
 }
 
 export interface ProjectTemplate {

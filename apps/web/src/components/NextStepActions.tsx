@@ -223,8 +223,8 @@ interface Props {
   skills?: SkillSummary[];
   // Resolved `@skill` names per featured action, shown in the hover detail.
   toolboxSkillNames?: Partial<Record<DesignToolboxActionId, string | null>>;
-  // Contribute the artifact to the Open Design community gallery.
-  onShareToOpenDesign?: () => void;
+  // Contribute the artifact to the Substrate community gallery.
+  onShareToSubstrate?: () => void;
   shareToOpenDesignBusy?: boolean;
   variant?: NextStepActionsVariant;
 }
@@ -334,7 +334,7 @@ export function NextStepActions({
   onPickSkill,
   skills = [],
   toolboxSkillNames,
-  onShareToOpenDesign,
+  onShareToSubstrate,
   shareToOpenDesignBusy = false,
   variant = 'default',
 }: Props) {
@@ -455,11 +455,11 @@ export function NextStepActions({
   }, [closeAll, fileName, onDownload, track]);
 
   const handleContribute = useCallback(() => {
-    if (!onShareToOpenDesign || shareToOpenDesignBusy) return;
+    if (!onShareToSubstrate || shareToOpenDesignBusy) return;
     track('share_to_open_design');
-    onShareToOpenDesign();
+    onShareToSubstrate();
     closeAll();
-  }, [closeAll, onShareToOpenDesign, shareToOpenDesignBusy, track]);
+  }, [closeAll, onShareToSubstrate, shareToOpenDesignBusy, track]);
 
   const handleToolboxAction = useCallback(
     (id: DesignToolboxActionId) => {
@@ -617,7 +617,7 @@ export function NextStepActions({
   // Share group is available whenever any of its three actions can fire.
   const canShare = !!(fileName && onShare);
   const canDownload = !!(fileName && onDownload);
-  const canContribute = !!onShareToOpenDesign;
+  const canContribute = !!onShareToSubstrate;
   const hasShareGroup = canShare || canDownload || canContribute;
   const showCreateDesignSystem = (
     variant === 'default' ||

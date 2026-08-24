@@ -7,8 +7,9 @@
 //
 // Access:
 //   visibility private — only the creator (list/get/open)
-//   accessMode org     — every member can view; creator + admins + edit grants edit
-//   accessMode restricted — only grants ∪ creator ∪ admin can view
+//   accessMode org     — every member can view unless they are on the denial list
+//   accessMode restricted — only grants ∪ team grants ∪ creator ∪ admin can view
+//   denials            — named people cannot open it (creator/admins still can)
 //
 // Every query carries the organization id explicitly. On SQLite that is
 // redundant (the file is the organization) but harmless; on Supabase Postgres
@@ -18,6 +19,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type {
   AppAccessMode,
+  AppAccessPolicy,
   AppGrant,
   AppGrantRole,
   AppShareLink,
@@ -42,7 +44,8 @@ const APP_COLS = `
   data_scopes_json AS "dataScopesJson",
   COALESCE(access_mode, 'org') AS "accessMode",
   COALESCE(pinned, 0) AS "pinned",
-  pinned_at AS "pinnedAt"
+  pinned_at AS "pinnedAt",
+  web_url AS "webUrl"
 `;
 
 const SHARE_COLS = `
@@ -82,7 +85,7 @@ function asPinned(value: unknown): boolean {
 }
 
 function normalizeApp(row: Record<string, any>, orgId: string, createdByName: string | null): OrgApp {
-  const { dataScopesJson, pinned, pinnedAt, accessMode, ...rest } = row;
+  const { dataScopesJson, pinned, pinnedAt, accessMode, webUrl, ...rest } = row;
   return {
     ...(rest as OrgApp),
     orgId,
@@ -99,6 +102,7 @@ function normalizeApp(row: Record<string, any>, orgId: string, createdByName: st
     archivedAt: nullableNum(row.archivedAt),
     lastOpenedAt: nullableNum(row.lastOpenedAt),
     openCount: num(row.openCount),
+    webUrl: typeof webUrl === 'string' && webUrl ? webUrl : null,
   };
 }
 
@@ -166,23 +170,128 @@ async function replaceGrants(
   }
 }
 
+function normalizeTeamGrantInput(
+  grants: Array<{ teamId: string; role: AppGrantRole }> | undefined,
+): Array<{ teamId: string; role: AppGrantRole }> {
+  if (!grants?.length) return [];
+  const out: Array<{ teamId: string; role: AppGrantRole }> = [];
+  const seen = new Set<string>();
+  for (const grant of grants) {
+    if (typeof grant.teamId !== 'string' || !grant.teamId.trim()) continue;
+    if (!GRANT_ROLES.has(grant.role)) continue;
+    const teamId = grant.teamId.trim();
+    if (seen.has(teamId)) continue;
+    seen.add(teamId);
+    out.push({ teamId, role: grant.role });
+  }
+  return out;
+}
+
+function normalizeDenialInput(
+  denials: Array<{ memberId: string }> | undefined,
+): string[] {
+  if (!denials?.length) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const denial of denials) {
+    if (typeof denial.memberId !== 'string' || !denial.memberId.trim()) continue;
+    const memberId = denial.memberId.trim();
+    if (seen.has(memberId)) continue;
+    seen.add(memberId);
+    out.push(memberId);
+  }
+  return out;
+}
+
+async function replaceTeamGrants(
+  db: SqlExecutor,
+  orgId: string,
+  appId: string,
+  grants: Array<{ teamId: string; role: AppGrantRole }>,
+): Promise<void> {
+  await db.run('DELETE FROM od_app_team_grants WHERE app_id = ? AND workspace_id = ?', [appId, orgId]);
+  const now = Date.now();
+  for (const grant of grants) {
+    await db.run(
+      `INSERT INTO od_app_team_grants (app_id, workspace_id, team_id, role, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [appId, orgId, grant.teamId, grant.role, now],
+    );
+  }
+}
+
+async function replaceDenials(db: SqlExecutor, orgId: string, appId: string, memberIds: string[]): Promise<void> {
+  await db.run('DELETE FROM od_app_denials WHERE app_id = ? AND workspace_id = ?', [appId, orgId]);
+  const now = Date.now();
+  for (const memberId of memberIds) {
+    await db.run(
+      `INSERT INTO od_app_denials (app_id, workspace_id, member_id, created_at)
+       VALUES (?, ?, ?, ?)`,
+      [appId, orgId, memberId, now],
+    );
+  }
+}
+
+export interface AppAccessResolvers {
+  memberName?: (memberId: string) => string | null;
+  teamName?: (teamId: string) => string | null;
+}
+
+export async function listAppAccess(
+  db: SqlExecutor,
+  orgId: string,
+  appId: string,
+  resolve: AppAccessResolvers = {},
+): Promise<AppAccessPolicy> {
+  await getApp(db, orgId, appId);
+  const [grantRows, teamRows, denialRows] = await Promise.all([
+    db.all<{ memberId: string; role: AppGrantRole }>(
+      `SELECT member_id AS "memberId", role FROM od_app_grants
+        WHERE app_id = ? AND workspace_id = ? ORDER BY member_id`,
+      [appId, orgId],
+    ),
+    db.all<{ teamId: string; role: AppGrantRole }>(
+      `SELECT team_id AS "teamId", role FROM od_app_team_grants
+        WHERE app_id = ? AND workspace_id = ? ORDER BY team_id`,
+      [appId, orgId],
+    ),
+    db.all<{ memberId: string }>(
+      `SELECT member_id AS "memberId" FROM od_app_denials
+        WHERE app_id = ? AND workspace_id = ? ORDER BY member_id`,
+      [appId, orgId],
+    ),
+  ]);
+  return {
+    grants: grantRows.map((row) => ({
+      memberId: row.memberId,
+      role: row.role === 'edit' ? 'edit' : 'view',
+      memberName: resolve.memberName?.(row.memberId) ?? null,
+    })),
+    teamGrants: teamRows.map((row) => ({
+      teamId: row.teamId,
+      role: row.role === 'edit' ? 'edit' : 'view',
+      teamName: resolve.teamName?.(row.teamId) ?? null,
+    })),
+    denials: denialRows.map((row) => ({
+      memberId: row.memberId,
+      memberName: resolve.memberName?.(row.memberId) ?? null,
+    })),
+  };
+}
+
 export async function listAppGrants(
   db: SqlExecutor,
   orgId: string,
   appId: string,
   resolveMemberName?: (memberId: string) => string | null,
 ): Promise<AppGrant[]> {
-  await getApp(db, orgId, appId);
-  const rows = await db.all<{ memberId: string; role: AppGrantRole }>(
-    `SELECT member_id AS "memberId", role FROM od_app_grants
-      WHERE app_id = ? AND workspace_id = ? ORDER BY member_id`,
-    [appId, orgId],
+  const access = await listAppAccess(
+    db,
+    orgId,
+    appId,
+    resolveMemberName ? { memberName: resolveMemberName } : {},
   );
-  return rows.map((row) => ({
-    memberId: row.memberId,
-    role: row.role === 'edit' ? 'edit' : 'view',
-    memberName: resolveMemberName?.(row.memberId) ?? null,
-  }));
+  return access.grants;
 }
 
 export async function setAppGrants(
@@ -190,12 +299,20 @@ export async function setAppGrants(
   orgId: string,
   appId: string,
   input: SetAppGrantsRequest,
-  resolveMemberName?: (memberId: string) => string | null,
-): Promise<AppGrant[]> {
+  resolve: AppAccessResolvers | ((memberId: string) => string | null) = {},
+): Promise<AppAccessPolicy> {
   await getApp(db, orgId, appId);
+  const resolvers: AppAccessResolvers =
+    typeof resolve === 'function' ? { memberName: resolve } : resolve;
   const grants = normalizeGrantInput(input.grants);
   await replaceGrants(db, orgId, appId, grants);
-  return listAppGrants(db, orgId, appId, resolveMemberName);
+  if (input.teamGrants !== undefined) {
+    await replaceTeamGrants(db, orgId, appId, normalizeTeamGrantInput(input.teamGrants));
+  }
+  if (input.denials !== undefined) {
+    await replaceDenials(db, orgId, appId, normalizeDenialInput(input.denials));
+  }
+  return listAppAccess(db, orgId, appId, resolvers);
 }
 
 async function grantRoleFor(
@@ -212,21 +329,81 @@ async function grantRoleFor(
   return row.role === 'edit' ? 'edit' : 'view';
 }
 
+async function teamGrantRoleFor(
+  db: SqlExecutor,
+  orgId: string,
+  appId: string,
+  teamIds: readonly string[] | undefined,
+): Promise<AppGrantRole | null> {
+  if (!teamIds?.length) return null;
+  const placeholders = teamIds.map(() => '?').join(', ');
+  const rows = await db.all<{ role: string }>(
+    `SELECT role FROM od_app_team_grants
+      WHERE app_id = ? AND workspace_id = ? AND team_id IN (${placeholders})`,
+    [appId, orgId, ...teamIds],
+  );
+  if (rows.some((row) => row.role === 'edit')) return 'edit';
+  if (rows.length > 0) return 'view';
+  return null;
+}
+
+async function isDeniedMember(
+  db: SqlExecutor,
+  orgId: string,
+  appId: string,
+  memberId: string,
+): Promise<boolean> {
+  const row = await db.get<{ memberId: string }>(
+    `SELECT member_id AS "memberId" FROM od_app_denials
+      WHERE app_id = ? AND workspace_id = ? AND member_id = ?`,
+    [appId, orgId, memberId],
+  );
+  return row !== null;
+}
+
 export interface AppViewerContext {
   memberId: string;
   role: OrgRole;
+  /** Named teams this person belongs to, used to expand team grants. */
+  teamIds?: readonly string[];
 }
 
-export function canViewApp(app: OrgApp, viewer: AppViewerContext, grant: AppGrantRole | null): boolean {
+export interface AppAccessCheck {
+  denied?: boolean;
+  teamGrant?: AppGrantRole | null;
+}
+
+export function strongerGrant(
+  left: AppGrantRole | null | undefined,
+  right: AppGrantRole | null | undefined,
+): AppGrantRole | null {
+  if (left === 'edit' || right === 'edit') return 'edit';
+  if (left === 'view' || right === 'view') return 'view';
+  return null;
+}
+
+export function canViewApp(
+  app: OrgApp,
+  viewer: AppViewerContext,
+  grant: AppGrantRole | null,
+  extras: AppAccessCheck = {},
+): boolean {
   if (app.createdBy === viewer.memberId || isAdminRole(viewer.role)) return true;
+  if (extras.denied) return false;
   if (app.visibility === 'private') return false;
-  if (app.accessMode === 'restricted') return grant !== null;
+  if (app.accessMode === 'restricted') return strongerGrant(grant, extras.teamGrant) !== null;
   return true;
 }
 
-export function canEditApp(app: OrgApp, viewer: AppViewerContext, grant: AppGrantRole | null): boolean {
+export function canEditApp(
+  app: OrgApp,
+  viewer: AppViewerContext,
+  grant: AppGrantRole | null,
+  extras: AppAccessCheck = {},
+): boolean {
   if (app.createdBy === viewer.memberId || isAdminRole(viewer.role)) return true;
-  return grant === 'edit';
+  if (extras.denied) return false;
+  return strongerGrant(grant, extras.teamGrant) === 'edit';
 }
 
 export async function assertCanViewApp(
@@ -235,8 +412,12 @@ export async function assertCanViewApp(
   app: OrgApp,
   viewer: AppViewerContext,
 ): Promise<void> {
-  const grant = await grantRoleFor(db, orgId, app.id, viewer.memberId);
-  if (!canViewApp(app, viewer, grant)) {
+  const [grant, teamGrant, denied] = await Promise.all([
+    grantRoleFor(db, orgId, app.id, viewer.memberId),
+    teamGrantRoleFor(db, orgId, app.id, viewer.teamIds),
+    isDeniedMember(db, orgId, app.id, viewer.memberId),
+  ]);
+  if (!canViewApp(app, viewer, grant, { teamGrant, denied })) {
     throw new WorkspaceDataError('APP_FORBIDDEN', 403, 'you do not have access to this app');
   }
 }
@@ -247,8 +428,12 @@ export async function assertCanEditApp(
   app: OrgApp,
   viewer: AppViewerContext,
 ): Promise<void> {
-  const grant = await grantRoleFor(db, orgId, app.id, viewer.memberId);
-  if (!canEditApp(app, viewer, grant)) {
+  const [grant, teamGrant, denied] = await Promise.all([
+    grantRoleFor(db, orgId, app.id, viewer.memberId),
+    teamGrantRoleFor(db, orgId, app.id, viewer.teamIds),
+    isDeniedMember(db, orgId, app.id, viewer.memberId),
+  ]);
+  if (!canEditApp(app, viewer, grant, { teamGrant, denied })) {
     throw new WorkspaceDataError('APP_FORBIDDEN', 403, 'you cannot edit this app');
   }
 }
@@ -314,6 +499,10 @@ export async function publishApp(
     ],
   );
   if (grants.length) await replaceGrants(db, orgId, id, grants);
+  const teamGrants = normalizeTeamGrantInput(input.teamGrants);
+  if (teamGrants.length) await replaceTeamGrants(db, orgId, id, teamGrants);
+  const denials = normalizeDenialInput(input.denials);
+  if (denials.length) await replaceDenials(db, orgId, id, denials);
   return getApp(db, orgId, id, memberName);
 }
 
@@ -338,6 +527,8 @@ export interface ListAppsOptions {
   /** Member id of the viewer. Private / restricted apps are filtered here. */
   viewerMemberId?: string | null;
   viewerRole?: OrgRole | null;
+  /** Named teams the viewer belongs to, used to expand team grants. */
+  viewerTeamIds?: readonly string[];
   /** Only apps pinned to the sidebar. */
   pinnedOnly?: boolean;
   /** Resolves member ids to display names for the gallery byline. */
@@ -359,6 +550,7 @@ export async function listApps(
   );
   const viewerId = options.viewerMemberId ?? null;
   const viewerRole = options.viewerRole ?? null;
+  const viewerTeamIds = options.viewerTeamIds ?? [];
   const grantRows =
     viewerId == null
       ? []
@@ -370,6 +562,28 @@ export async function listApps(
   const grants = new Map<string, AppGrantRole>(
     grantRows.map((row) => [row.appId, row.role === 'edit' ? 'edit' : 'view']),
   );
+  const deniedRows =
+    viewerId == null
+      ? []
+      : await db.all<{ appId: string }>(
+          `SELECT app_id AS "appId" FROM od_app_denials
+            WHERE workspace_id = ? AND member_id = ?`,
+          [orgId, viewerId],
+        );
+  const denied = new Set(deniedRows.map((row) => row.appId));
+  const teamGrantRows =
+    viewerId == null || viewerTeamIds.length === 0
+      ? []
+      : await db.all<{ appId: string; role: string }>(
+          `SELECT app_id AS "appId", role FROM od_app_team_grants
+            WHERE workspace_id = ? AND team_id IN (${viewerTeamIds.map(() => '?').join(', ')})`,
+          [orgId, ...viewerTeamIds],
+        );
+  const teamGrants = new Map<string, AppGrantRole>();
+  for (const row of teamGrantRows) {
+    const next = strongerGrant(teamGrants.get(row.appId) ?? null, row.role === 'edit' ? 'edit' : 'view');
+    if (next) teamGrants.set(row.appId, next);
+  }
 
   const out: OrgApp[] = [];
   for (const row of rows) {
@@ -378,8 +592,16 @@ export async function listApps(
       const viewer: AppViewerContext = {
         memberId: viewerId,
         role: viewerRole ?? 'member',
+        teamIds: viewerTeamIds,
       };
-      if (!canViewApp(app, viewer, grants.get(app.id) ?? null)) continue;
+      if (
+        !canViewApp(app, viewer, grants.get(app.id) ?? null, {
+          denied: denied.has(app.id),
+          teamGrant: teamGrants.get(app.id) ?? null,
+        })
+      ) {
+        continue;
+      }
     }
     out.push(app);
   }
@@ -387,6 +609,10 @@ export async function listApps(
     out.sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
   }
   return out.slice(0, options.pinnedOnly ? 8 : out.length);
+}
+
+export async function deleteAppTeamGrants(db: SqlExecutor, orgId: string, teamId: string): Promise<void> {
+  await db.run('DELETE FROM od_app_team_grants WHERE workspace_id = ? AND team_id = ?', [orgId, teamId]);
 }
 
 export async function updateApp(
@@ -508,6 +734,50 @@ export async function createAppShareLink(
     await db.run("UPDATE od_apps SET visibility = 'link', updated_at = ? WHERE id = ?", [now, appId]);
   }
   return { share: await getAppShareLink(db, id), token };
+}
+
+/** Keep the `/s/:token` path, move the origin to whatever is publicly reachable now. */
+function relocateShareUrl(storedUrl: string, publicBaseUrl: string): string {
+  try {
+    const parsed = new URL(storedUrl);
+    if (!parsed.pathname.startsWith('/s/')) return storedUrl;
+    const origin = publicBaseUrl.replace(/\/+$/u, '');
+    return `${origin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return storedUrl;
+  }
+}
+
+/** Create a lasting public URL for an app-builder app, or return the one it already has. */
+export async function publishAppToWeb(
+  db: SqlExecutor,
+  directory: SqlExecutor,
+  orgId: string,
+  appId: string,
+  memberId: string,
+  publicBaseUrl: string,
+): Promise<{ app: OrgApp; url: string }> {
+  const existing = await getApp(db, orgId, appId);
+  if (existing.webUrl) {
+    const url = relocateShareUrl(existing.webUrl, publicBaseUrl);
+    if (url === existing.webUrl) {
+      return { app: existing, url: existing.webUrl };
+    }
+    const now = Date.now();
+    await db.run(
+      `UPDATE od_apps SET web_url = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`,
+      [url, now, appId, orgId],
+    );
+    return { app: await getApp(db, orgId, appId), url };
+  }
+  const created = await createAppShareLink(db, directory, orgId, appId, memberId, {});
+  const url = `${publicBaseUrl.replace(/\/+$/u, '')}/s/${created.token}`;
+  const now = Date.now();
+  await db.run(
+    `UPDATE od_apps SET web_url = ?, visibility = 'link', updated_at = ? WHERE id = ? AND workspace_id = ?`,
+    [url, now, appId, orgId],
+  );
+  return { app: await getApp(db, orgId, appId), url };
 }
 
 export async function getAppShareLink(db: SqlExecutor, shareId: string): Promise<AppShareLink> {

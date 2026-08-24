@@ -79,7 +79,7 @@ describe('EntryNavRail dock reorder', () => {
     expect(screen.getByTestId('entry-nav-new-project')).toBeTruthy();
     expect(screen.getByTestId('entry-nav-logo').closest('[data-nav-id]')).toBeNull();
     expect(screen.getByTestId('entry-nav-new-project').closest('[data-nav-id]')).toBeNull();
-    expect(slotIds()[0]).toBe('erp');
+    expect(slotIds()[0]).toBe('search');
     expect(slotIds()).toContain('home');
     expect(slotIds()).toContain('pages');
   });
@@ -197,6 +197,7 @@ describe('EntryNavRail dock reorder', () => {
       lastOpenedAt: null,
       openCount: 0,
       dataScopes: [],
+      webUrl: null,
     }));
     vi.mocked(fetchAllOrgApps).mockResolvedValueOnce(apps);
     renderRail();

@@ -110,7 +110,6 @@
         "type": "select",
         "required": true,
         "options": [
-          "wireframe",
           "high-fidelity"
         ],
         "default": "high-fidelity"

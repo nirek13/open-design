@@ -50,10 +50,10 @@ function renderPicker(activeChipId: string | null, onClear = vi.fn()) {
 describe('TemplatePicker', () => {
   it('highlights a selected template and exposes an inline reset control', () => {
     const onClear = vi.fn();
-    const view = renderPicker('wireframe', onClear);
+    const view = renderPicker('prototype', onClear);
 
     expect(screen.getByTestId('home-hero-template-picker').className).toContain('has-selection');
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Wireframe');
+    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     const reset = screen.getByTestId('home-hero-template-reset');
     const resetIcon = reset.querySelector('svg');
     expect(resetIcon).not.toBeNull();

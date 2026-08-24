@@ -87,7 +87,7 @@ describe('AmrGuidance', () => {
 
   it('fires ui_click go_amr and calls onActivate on click', () => {
     const { onActivate } = renderGuidance();
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to Open Design Cloud & retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to Substrate Cloud & retry' }));
     expect(trackRunFailedToastGoAmrClick).toHaveBeenCalledTimes(1);
     expect(vi.mocked(trackRunFailedToastGoAmrClick).mock.calls[0]![1]).toMatchObject({
       page_name: 'chat_panel',

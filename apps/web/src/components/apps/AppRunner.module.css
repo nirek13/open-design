@@ -38,6 +38,22 @@
   flex-shrink: 0;
 }
 
+.sendPanel {
+  flex-shrink: 0;
+  padding: 12px 16px 16px;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.18));
+  max-height: 55%;
+  overflow: auto;
+}
+
+.webUrl {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: var(--text-muted, rgba(160, 160, 160, 0.95));
+  word-break: break-all;
+}
+
 .body {
   flex: 1;
   display: grid;
@@ -63,7 +79,7 @@
   min-height: 0;
   border: none;
   border-radius: 0;
-  background: #fff;
+  background: var(--bg);
 }
 
 .log {

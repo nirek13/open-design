@@ -126,6 +126,43 @@ describe('parseRoute / buildPath (issue #1505)', () => {
     expect(roundTrip(thread)).toEqual(thread);
   });
 
+  it('round-trips slack and a slack channel', () => {
+    const workspace: Route = { kind: 'home', view: 'slack' };
+    expect(parseRoute('/slack')).toEqual(workspace);
+    expect(buildPath(workspace)).toBe('/slack');
+    const channel: Route = { kind: 'home', view: 'slack', channelId: 'C0123ABCD' };
+    expect(parseRoute('/slack/C0123ABCD')).toEqual(channel);
+    expect(buildPath(channel)).toBe('/slack/C0123ABCD');
+    expect(roundTrip(channel)).toEqual(channel);
+  });
+
+  it('round-trips dev and a github repo', () => {
+    const hub: Route = { kind: 'home', view: 'dev' };
+    expect(parseRoute('/dev')).toEqual(hub);
+    expect(buildPath(hub)).toBe('/dev');
+    const repo: Route = { kind: 'home', view: 'dev', owner: 'nexu-io', repo: 'open-design' };
+    expect(parseRoute('/dev/nexu-io/open-design')).toEqual(repo);
+    expect(buildPath(repo)).toBe('/dev/nexu-io/open-design');
+    expect(roundTrip(repo)).toEqual(repo);
+  });
+
+  it('round-trips team chat and a team channel', () => {
+    const workspace: Route = { kind: 'home', view: 'team' };
+    expect(parseRoute('/team')).toEqual(workspace);
+    expect(buildPath(workspace)).toBe('/team');
+    const channel: Route = { kind: 'home', view: 'team', channelId: 'general' };
+    expect(parseRoute('/team/general')).toEqual(channel);
+    expect(buildPath(channel)).toBe('/team/general');
+    expect(roundTrip(channel)).toEqual(channel);
+  });
+
+  it('round-trips organization search', () => {
+    const route: Route = { kind: 'home', view: 'search' };
+    expect(parseRoute('/search')).toEqual(route);
+    expect(buildPath(route)).toBe('/search');
+    expect(roundTrip(route)).toEqual(route);
+  });
+
   it('falls back to home when the URL is unrecognized', () => {
     expect(parseRoute('/something/else')).toEqual({ kind: 'home', view: 'home' });
     expect(parseRoute('/projects')).toEqual({ kind: 'home', view: 'projects' });

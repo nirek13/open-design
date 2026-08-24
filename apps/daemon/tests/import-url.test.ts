@@ -118,6 +118,21 @@ describe('fetchImportSource', () => {
     expect(source.content).toContain('A-1,4');
   });
 
+  it('turns repeating HTML cards into rows when the page has no table', async () => {
+    const source = await fetchImportSource(
+      'https://example.com/catalog',
+      mockFetch(
+        `<div class="item"><h3>Lamp</h3><span class="price">$40</span><a href="/p/1">Buy</a></div>
+         <div class="item"><h3>Vase</h3><span class="price">$22</span><a href="/p/2">Buy</a></div>
+         <div class="item"><h3>Bowl</h3><span class="price">$18</span><a href="/p/3">Buy</a></div>`,
+        'text/html',
+      ),
+    );
+    expect(source.kind).toBe('html-table');
+    expect(source.content).toContain('Lamp');
+    expect(source.content).toContain('Vase');
+  });
+
   it('refuses a non-public status', async () => {
     await expect(
       fetchImportSource('https://example.com/secret.csv', mockFetch('nope', 'text/csv', 403)),

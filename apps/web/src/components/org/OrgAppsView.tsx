@@ -12,24 +12,27 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CreateAppFlow } from '../apps/CreateAppFlow';
+import { SendAppPicker } from '../apps/SendAppPicker';
 import { useOptionalRunningApp, markAppEditWorkspaceFocus } from '../apps/RunningAppContext';
 import { Badge, Button, EmptyState, Select } from '@open-design/components';
 import type {
   AppAccessMode,
-  AppGrant,
+  AppAccessPolicy,
   AppGrantRole,
   OrgAppWithOrgName,
   OrgMember,
+  OrgTeam,
 } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
-  createAppShareLink,
   fetchAllOrgApps,
-  fetchAppGrants,
+  fetchAppAccess,
   fetchOrgMembers,
+  fetchOrgTeams,
+  publishAppToWeb,
   recordOrgAppOpen,
-  setAppGrants,
+  setAppAccess,
   updateOrgApp,
 } from '../../providers/registry';
 import { navigate } from '../../router';
@@ -59,8 +62,10 @@ export function OrgAppsView({ active }: { active: boolean }) {
   const [shareLink, setShareLink] = useState<{ appId: string; url: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [managingId, setManagingId] = useState<string | null>(null);
+  const [sendingId, setSendingId] = useState<string | null>(null);
   const [membersByOrg, setMembersByOrg] = useState<Record<string, OrgMember[]>>({});
-  const [grantsByApp, setGrantsByApp] = useState<Record<string, AppGrant[]>>({});
+  const [teamsByOrg, setTeamsByOrg] = useState<Record<string, OrgTeam[]>>({});
+  const [accessByApp, setAccessByApp] = useState<Record<string, AppAccessPolicy>>({});
 
   const load = useCallback(async () => {
     try {
@@ -124,45 +129,101 @@ export function OrgAppsView({ active }: { active: boolean }) {
   }
 
   async function openManage(orgApp: OrgAppWithOrgName) {
+    setSendingId(null);
     setManagingId(orgApp.id);
     try {
       if (!membersByOrg[orgApp.orgId]) {
         const members = await fetchOrgMembers(orgApp.orgId);
         setMembersByOrg((prev) => ({ ...prev, [orgApp.orgId]: members }));
       }
-      const grants = await fetchAppGrants(orgApp.orgId, orgApp.id);
-      setGrantsByApp((prev) => ({ ...prev, [orgApp.id]: grants }));
+      if (!teamsByOrg[orgApp.orgId]) {
+        const teams = await fetchOrgTeams(orgApp.orgId).catch(() => [] as OrgTeam[]);
+        setTeamsByOrg((prev) => ({ ...prev, [orgApp.orgId]: teams }));
+      }
+      const access = await fetchAppAccess(orgApp.orgId, orgApp.id);
+      setAccessByApp((prev) => ({ ...prev, [orgApp.id]: access }));
     } catch (err) {
       setError(errorMessage(err));
     }
+  }
+
+  function currentAccess(appId: string): AppAccessPolicy {
+    return accessByApp[appId] ?? { grants: [], teamGrants: [], denials: [] };
+  }
+
+  async function saveAccess(
+    orgApp: OrgAppWithOrgName,
+    next: {
+      grants: Array<{ memberId: string; role: AppGrantRole }>;
+      teamGrants: Array<{ teamId: string; role: AppGrantRole }>;
+      denials: Array<{ memberId: string }>;
+    },
+  ) {
+    const saved = await setAppAccess(orgApp.orgId, orgApp.id, next);
+    setAccessByApp((prev) => ({ ...prev, [orgApp.id]: saved }));
   }
 
   async function toggleGrant(orgApp: OrgAppWithOrgName, memberId: string, role: AppGrantRole) {
-    const current = grantsByApp[orgApp.id] ?? [];
-    const existing = current.find((g) => g.memberId === memberId);
-    let next: Array<{ memberId: string; role: AppGrantRole }>;
-    if (existing?.role === role) {
-      next = current.filter((g) => g.memberId !== memberId).map((g) => ({ memberId: g.memberId, role: g.role }));
-    } else {
-      next = [
-        ...current.filter((g) => g.memberId !== memberId).map((g) => ({ memberId: g.memberId, role: g.role })),
-        { memberId, role },
-      ];
-    }
+    const current = currentAccess(orgApp.id);
+    const existing = current.grants.find((g) => g.memberId === memberId);
+    const grants =
+      existing?.role === role
+        ? current.grants.filter((g) => g.memberId !== memberId)
+        : [...current.grants.filter((g) => g.memberId !== memberId), { memberId, role }];
     try {
-      const saved = await setAppGrants(orgApp.orgId, orgApp.id, next);
-      setGrantsByApp((prev) => ({ ...prev, [orgApp.id]: saved }));
+      await saveAccess(orgApp, {
+        grants: grants.map((g) => ({ memberId: g.memberId, role: g.role })),
+        teamGrants: current.teamGrants.map((g) => ({ teamId: g.teamId, role: g.role })),
+        denials: current.denials.filter((row) => row.memberId !== memberId).map((row) => ({ memberId: row.memberId })),
+      });
     } catch (err) {
       setError(errorMessage(err));
     }
   }
 
-  async function handlePreviewLink(orgApp: OrgAppWithOrgName) {
+  async function toggleTeamGrant(orgApp: OrgAppWithOrgName, teamId: string, role: AppGrantRole) {
+    const current = currentAccess(orgApp.id);
+    const existing = current.teamGrants.find((g) => g.teamId === teamId);
+    const teamGrants =
+      existing?.role === role
+        ? current.teamGrants.filter((g) => g.teamId !== teamId)
+        : [...current.teamGrants.filter((g) => g.teamId !== teamId), { teamId, role }];
     try {
-      const created = await createAppShareLink(orgApp.orgId, orgApp.id);
-      setShareLink({ appId: orgApp.id, url: created.url });
+      await saveAccess(orgApp, {
+        grants: current.grants.map((g) => ({ memberId: g.memberId, role: g.role })),
+        teamGrants: teamGrants.map((g) => ({ teamId: g.teamId, role: g.role })),
+        denials: current.denials.map((row) => ({ memberId: row.memberId })),
+      });
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function toggleDenial(orgApp: OrgAppWithOrgName, memberId: string) {
+    const current = currentAccess(orgApp.id);
+    const on = current.denials.some((row) => row.memberId === memberId);
+    const denials = on
+      ? current.denials.filter((row) => row.memberId !== memberId)
+      : [...current.denials, { memberId }];
+    try {
+      await saveAccess(orgApp, {
+        grants: current.grants
+          .filter((g) => g.memberId !== memberId)
+          .map((g) => ({ memberId: g.memberId, role: g.role })),
+        teamGrants: current.teamGrants.map((g) => ({ teamId: g.teamId, role: g.role })),
+        denials: denials.map((row) => ({ memberId: row.memberId })),
+      });
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handlePublishToWeb(orgApp: OrgAppWithOrgName) {
+    try {
+      const published = await publishAppToWeb(orgApp.orgId, orgApp.id);
+      setShareLink({ appId: orgApp.id, url: published.url });
       try {
-        await navigator.clipboard.writeText(created.url);
+        await navigator.clipboard.writeText(published.url);
       } catch {
         // Clipboard optional.
       }
@@ -260,6 +321,16 @@ export function OrgAppsView({ active }: { active: boolean }) {
                 <Button variant="ghost" onClick={() => void handleOpen(orgApp)}>
                   {t('apps.open')}
                 </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setManagingId(null);
+                    setSendingId((current) => (current === orgApp.id ? null : orgApp.id));
+                  }}
+                  data-testid="org-app-send"
+                >
+                  {t('apps.send')}
+                </Button>
                 <Button variant="ghost" onClick={() => handleEdit(orgApp)}>
                   {t('apps.edit')}
                 </Button>
@@ -269,8 +340,12 @@ export function OrgAppsView({ active }: { active: boolean }) {
                 <Button variant="ghost" onClick={() => void openManage(orgApp)}>
                   {t('apps.manageAccess')}
                 </Button>
-                <Button variant="ghost" onClick={() => void handlePreviewLink(orgApp)}>
-                  {t('apps.previewLink')}
+                <Button
+                  variant="ghost"
+                  onClick={() => void handlePublishToWeb(orgApp)}
+                  data-testid="org-app-publish-web"
+                >
+                  {orgApp.webUrl ? t('apps.copyWebLink') : t('apps.publishToWeb')}
                 </Button>
                 <Button variant="ghost" onClick={() => void handleArchive(orgApp)}>
                   {t('apps.archive')}
@@ -301,7 +376,7 @@ export function OrgAppsView({ active }: { active: boolean }) {
                   {orgApp.accessMode === 'restricted' ? (
                     <div className={styles.grants}>
                       {(membersByOrg[orgApp.orgId] ?? []).map((member) => {
-                        const grant = (grantsByApp[orgApp.id] ?? []).find((g) => g.memberId === member.id);
+                        const grant = currentAccess(orgApp.id).grants.find((g) => g.memberId === member.id);
                         return (
                           <div key={member.id} className={styles.grantRow}>
                             <span>{member.displayName}</span>
@@ -324,18 +399,78 @@ export function OrgAppsView({ active }: { active: boolean }) {
                           </div>
                         );
                       })}
+                      {(teamsByOrg[orgApp.orgId] ?? []).map((team) => {
+                        const grant = currentAccess(orgApp.id).teamGrants.find((g) => g.teamId === team.id);
+                        return (
+                          <div key={team.id} className={styles.grantRow}>
+                            <span>{team.name}</span>
+                            <div className={styles.grantRoles}>
+                              <button
+                                type="button"
+                                className={grant?.role === 'view' ? styles.roleActive : styles.role}
+                                onClick={() => void toggleTeamGrant(orgApp, team.id, 'view')}
+                              >
+                                {t('apps.grant.view')}
+                              </button>
+                              <button
+                                type="button"
+                                className={grant?.role === 'edit' ? styles.roleActive : styles.role}
+                                onClick={() => void toggleTeamGrant(orgApp, team.id, 'edit')}
+                              >
+                                {t('apps.grant.edit')}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : null}
+                  <fieldset className={styles.fieldset}>
+                    <legend>{t('apps.except')}</legend>
+                    <p className={styles.shareWarning}>{t('apps.exceptHint')}</p>
+                    <div className={styles.grants}>
+                      {(membersByOrg[orgApp.orgId] ?? [])
+                        .filter((member) => member.status === 'active')
+                        .map((member) => {
+                          const on = currentAccess(orgApp.id).denials.some((row) => row.memberId === member.id);
+                          return (
+                            <button
+                              key={member.id}
+                              type="button"
+                              className={on ? styles.exceptOn : styles.role}
+                              aria-pressed={on}
+                              data-testid={`org-app-except-${member.id}`}
+                              onClick={() => void toggleDenial(orgApp, member.id)}
+                            >
+                              {member.displayName}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </fieldset>
                   <Button variant="ghost" onClick={() => setManagingId(null)}>
                     {t('apps.dismiss')}
                   </Button>
                 </div>
               ) : null}
 
-              {shareLink?.appId === orgApp.id ? (
+              {sendingId === orgApp.id ? (
+                <div className={styles.manageBox} data-testid="org-app-send-picker">
+                  <SendAppPicker
+                    orgId={orgApp.orgId}
+                    app={orgApp}
+                    onSkip={() => setSendingId(null)}
+                    onSent={() => setSendingId(null)}
+                  />
+                </div>
+              ) : null}
+
+              {shareLink?.appId === orgApp.id || orgApp.webUrl ? (
                 <div className={styles.shareBox} data-testid="org-app-share-link">
-                  <code className={styles.shareUrl}>{shareLink.url}</code>
-                  <p className={styles.shareWarning}>{t('apps.previewLinkWarning')}</p>
+                  <code className={styles.shareUrl}>
+                    {shareLink?.appId === orgApp.id ? shareLink.url : orgApp.webUrl}
+                  </code>
+                  <p className={styles.shareWarning}>{t('apps.publishToWebHint')}</p>
                   <Button variant="ghost" onClick={() => setShareLink(null)}>
                     {t('apps.dismiss')}
                   </Button>

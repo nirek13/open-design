@@ -107,8 +107,9 @@ Current materialization-time parameters:
 - **Namespace / channel and runtime endpoints.**
   `win.electron-builder-dir` omits them. `open-design-config.json` — which
   carries `namespace`, `amrProfile`, `telemetryRelayUrl`, `updateMetadataUrl`,
-  `posthogKey`/`posthogHost`, `webOutputMode`, and `namespaceBaseRoot` — is
-  regenerated on the materialization path by `writePackagedConfig`.
+  `posthogKey`/`posthogHost`, `clerkIssuer`/`clerkPublishableKey`,
+  `webOutputMode`, and `namespaceBaseRoot` — is regenerated on the
+  materialization path by `writePackagedConfig`.
 
 The downstream `win.nsis-payload-overlay`, `win.nsis-installer`,
 `win.portable-zip`, and `win.launcher-payload` nodes carry `namespace` and the
@@ -133,8 +134,9 @@ Adding a materialization-time parameter without (2) is not permitted.
 
 > Known asymmetry: app version satisfies (2). The other regenerated config
 > fields — `namespace`, `amrProfile`, `telemetryRelayUrl`,
-> `updateMetadataUrl`, `posthogKey`, `posthogHost`, `webOutputMode`,
-> `namespaceBaseRoot`, and the packaged entrypoint fields — currently satisfy
+> `updateMetadataUrl`, `posthogKey`, `posthogHost`, `clerkIssuer`,
+> `clerkPublishableKey`, `webOutputMode`, `namespaceBaseRoot`, and the
+> packaged entrypoint fields — currently satisfy
 > only (1): they are rewritten but not asserted.
 
 ## Signing boundary

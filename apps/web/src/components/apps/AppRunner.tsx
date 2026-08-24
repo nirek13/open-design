@@ -30,11 +30,13 @@ import { useT } from '../../i18n';
 import {
   createWorkspaceRecord,
   fetchWorkspaceTables,
+  publishAppToWeb,
   queryWorkspaceRecords,
   sendOrgMail,
   updateWorkspaceRecord,
 } from '../../providers/registry';
 import { APP_SDK_SOURCE } from './appSdk';
+import { SendAppPicker } from './SendAppPicker';
 import styles from './AppRunner.module.css';
 
 interface Props {
@@ -72,6 +74,14 @@ export function AppRunner({ orgId, app, source, onClose, onEdit }: Props) {
   const [log, setLog] = useState<CallLogEntry[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [webUrl, setWebUrl] = useState(app.webUrl);
+  const [publishing, setPublishing] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [showSend, setShowSend] = useState(false);
+
+  useEffect(() => {
+    setWebUrl(app.webUrl);
+  }, [app.webUrl]);
 
   const scopes = app.dataScopes ?? [];
 
@@ -242,6 +252,11 @@ export function AppRunner({ orgId, app, source, onClose, onEdit }: Props) {
           {/* Said in plain words, before anything runs: an app's permissions
               are only meaningful if a person can read them. */}
           <p className={styles.scopes}>{describeAppScopes(scopes)}</p>
+          {webUrl ? (
+            <a className={styles.webUrl} href={webUrl} target="_blank" rel="noreferrer">
+              {webUrl}
+            </a>
+          ) : null}
         </div>
         <div className={styles.headActions}>
           {onEdit ? (
@@ -249,6 +264,44 @@ export function AppRunner({ orgId, app, source, onClose, onEdit }: Props) {
               {t('apps.edit')}
             </Button>
           ) : null}
+          <Button
+            variant="ghost"
+            onClick={() => setShowSend((open) => !open)}
+            data-testid="app-send"
+          >
+            {t('apps.send')}
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={publishing}
+            onClick={() => {
+              void (async () => {
+                setPublishing(true);
+                setError(null);
+                try {
+                  const published = await publishAppToWeb(orgId, app.id);
+                  setWebUrl(published.url);
+                  try {
+                    await navigator.clipboard.writeText(published.url);
+                    setCopied(true);
+                  } catch {
+                    setCopied(false);
+                  }
+                } catch (err) {
+                  setError(errorMessage(err));
+                } finally {
+                  setPublishing(false);
+                }
+              })();
+            }}
+            data-testid="app-publish-web"
+          >
+            {publishing
+              ? t('apps.publishingToWeb')
+              : copied || webUrl
+                ? t('apps.copyWebLink')
+                : t('apps.publishToWeb')}
+          </Button>
           <Button
             variant="ghost"
             onClick={() => setShowLog((prev) => !prev)}
@@ -267,6 +320,17 @@ export function AppRunner({ orgId, app, source, onClose, onEdit }: Props) {
         <p className={styles.error} role="alert">
           {error}
         </p>
+      ) : null}
+
+      {showSend ? (
+        <div className={styles.sendPanel} data-testid="app-send-panel">
+          <SendAppPicker
+            orgId={orgId}
+            app={app}
+            onSkip={() => setShowSend(false)}
+            onSent={() => setShowSend(false)}
+          />
+        </div>
       ) : null}
 
       <div className={styles.body}>

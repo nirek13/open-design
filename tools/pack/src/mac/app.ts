@@ -169,6 +169,10 @@ export function renderMacPackagedConfig(options: {
       ...(options.config.updateMetadataUrl == null ? {} : { updateMetadataUrl: options.config.updateMetadataUrl }),
       ...(options.config.posthogKey == null ? {} : { posthogKey: options.config.posthogKey }),
       ...(options.config.posthogHost == null ? {} : { posthogHost: options.config.posthogHost }),
+      ...(options.config.clerkIssuer == null ? {} : { clerkIssuer: options.config.clerkIssuer }),
+      ...(options.config.clerkPublishableKey == null
+        ? {}
+        : { clerkPublishableKey: options.config.clerkPublishableKey }),
       ...(options.usePrebundledStandaloneWeb ? { webSidecarEntryRelative: MAC_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH } : {}),
       webOutputMode: options.config.webOutputMode,
       ...(options.config.portable ? {} : { namespaceBaseRoot: options.config.roots.runtime.namespaceBaseRoot }),

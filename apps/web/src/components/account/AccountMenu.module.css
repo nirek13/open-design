@@ -42,22 +42,16 @@
   top: calc(100% + 6px);
   right: 0;
   z-index: 50;
-  min-width: 240px;
+  min-width: 280px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 6px;
   border: 1px solid var(--od-border, rgba(127, 127, 127, 0.28));
   border-radius: 12px;
-  background: var(--od-surface-1, #14141a);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  background: var(--od-surface-1);
+  box-shadow: var(--shadow-lg);
   animation: menu-in 200ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-@media (prefers-color-scheme: light) {
-  .menu {
-    background: var(--od-surface-1, #fff);
-  }
 }
 
 @keyframes menu-in {
@@ -110,6 +104,74 @@
 .itemMeta {
   font-size: 11px;
   opacity: 0.6;
+}
+
+.photoRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.photoPreview {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  font-size: 14px;
+}
+
+.photoActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.usernameForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 10px 8px;
+}
+
+.usernameLabel {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.usernameRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.usernameHint,
+.usernameError,
+.usernameSaved {
+  margin: 0;
+  font-size: 11px;
+}
+
+.usernameHint {
+  opacity: 0.6;
+}
+
+.usernameError {
+  color: var(--od-danger, #c44);
+}
+
+.usernameSaved {
+  color: var(--od-success, #2a8);
 }
 
 .divider {

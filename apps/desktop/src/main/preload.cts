@@ -24,6 +24,8 @@ const UPDATER_STATUS_EVENT = 'od:update:status-changed';
 const UPDATER_OPEN_DIALOG_EVENT = 'od:update:open-dialog';
 const APP_CONFIG_CHANGED_IPC_CHANNEL = 'od:app-config-changed';
 const APP_CONFIG_CHANGED_EVENT = 'open-design:app-config-changed';
+const TOGGLE_SEARCH_IPC_CHANNEL = 'od:toggle-search';
+const TOGGLE_SEARCH_EVENT = 'open-design:toggle-search';
 
 // Mirror of the argv prefix used by main's `applyOsLocaleSwitch` and
 // runtime's `additionalArguments`. Duplicated literal on purpose: the
@@ -300,6 +302,10 @@ const osLocale = readOsLocaleFromArgv();
 
 ipcRenderer.on(APP_CONFIG_CHANGED_IPC_CHANNEL, () => {
   window.dispatchEvent(new CustomEvent(APP_CONFIG_CHANGED_EVENT));
+});
+
+ipcRenderer.on(TOGGLE_SEARCH_IPC_CHANNEL, () => {
+  window.dispatchEvent(new CustomEvent(TOGGLE_SEARCH_EVENT));
 });
 
 const hostBridge = {

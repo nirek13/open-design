@@ -47,7 +47,7 @@ import { AgentIcon } from './AgentIcon';
 import { AgentDiagnosticRow } from './AgentDiagnosticRow';
 import { AmrLoginPill } from './AmrLoginPill';
 import { PlanBadge } from './PlanBadge';
-import { orderAgentsWithOpenDesignFirst } from './agentOrdering';
+import { orderAgentsWithSubstrateFirst } from './agentOrdering';
 import {
   AMR_LOGIN_STATUS_EVENT,
   amrLoginStatusEventReason,
@@ -837,7 +837,7 @@ function cleanAgentVersionLabel(
 }
 
 function displayAgentName(agent: Pick<AgentInfo, 'id' | 'name'>): string {
-  return agent.id === 'amr' ? 'Open Design' : agent.name;
+  return agent.id === 'amr' ? 'Substrate' : agent.name;
 }
 
 const AGENT_CLI_ENV_FIELDS = [
@@ -3855,7 +3855,7 @@ export function SettingsDialog({
   };
   const activeHeader = sectionHeader[activeSection];
   const visibleAgents = agents.filter(isVisibleLocalCliAgent);
-  const installedAgents = orderAgentsWithOpenDesignFirst(
+  const installedAgents = orderAgentsWithSubstrateFirst(
     visibleAgents.filter((a) => a.available),
   );
   const unavailableAgents = visibleAgents.filter((a) => !a.available);
@@ -7889,7 +7889,7 @@ function MediaProvidersSection({
 // Important: every snippet uses absolute paths to the daemon's current
 // Node-compatible runtime and built cli.js, fetched at runtime. macOS
 // and Linux ship a system /usr/bin/od (octal-dump) that shadows any
-// `od` we might add to PATH, and most Open Design users run from
+// `od` we might add to PATH, and most Substrate users run from
 // source where `od` is not installed globally. The installer panel
 // must NOT reference bare `od`.
 type McpClientId =

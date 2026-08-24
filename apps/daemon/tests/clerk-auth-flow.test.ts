@@ -73,6 +73,7 @@ describe('clerk sign-in HTTP flow', () => {
       organizations: {
         manager,
         identity,
+        dataDir: tempDir,
         serveAppFile: async (_req: express.Request, res: express.Response) => {
           res.status(200).send('');
         },
@@ -107,18 +108,52 @@ describe('clerk sign-in HTTP flow', () => {
   it('lets the browser discover clerk mode while signed out', async () => {
     const context = await json('/api/auth/context');
     expect(context.status).toBe(200);
-    expect(context.body).toEqual({
+    expect(context.body).toMatchObject({
       mode: 'clerk',
       publishableKey: 'pk_test_x',
       viewer: null,
       organizations: [],
     });
+    expect(context.body.appOrigin).toMatch(/^https?:\/\//);
+  });
+
+  it('advertises the web sidecar origin so packaged Clerk redirects stay http', async () => {
+    const previous = process.env.OD_WEB_PORT;
+    process.env.OD_WEB_PORT = '17573';
+    try {
+      const context = await json('/api/auth/context');
+      expect(context.status).toBe(200);
+      expect(context.body.appOrigin).toBe('http://127.0.0.1:17573');
+    } finally {
+      if (previous === undefined) delete process.env.OD_WEB_PORT;
+      else process.env.OD_WEB_PORT = previous;
+    }
   });
 
   it('refuses every other API call until a session exists', async () => {
     const orgs = await json('/api/orgs');
     expect(orgs.status).toBe(401);
     expect(orgs.body.error.code).toBe('UNAUTHORIZED');
+  });
+
+  it('admits a session cookie so iframe file previews can load', async () => {
+    const token = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_iframe',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        name: 'Ivy',
+        email: 'ivy@co.com',
+      },
+      privateKey,
+    );
+    const response = await fetch(`${base}/api/orgs`, {
+      headers: { cookie: `od_session=${token}` },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { organizations?: unknown[] };
+    expect(Array.isArray(body.organizations)).toBe(true);
   });
 
   it('admits a verified session and names the caller', async () => {

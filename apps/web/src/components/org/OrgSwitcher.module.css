@@ -87,15 +87,9 @@
   padding: 6px;
   border: 1px solid var(--od-border, rgba(127, 127, 127, 0.28));
   border-radius: 12px;
-  background: var(--od-surface-1, #14141a);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  background: var(--od-surface-1);
+  box-shadow: var(--shadow-lg);
   animation: menu-in 200ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-@media (prefers-color-scheme: light) {
-  .menu {
-    background: var(--od-surface-1, #fff);
-  }
 }
 
 @keyframes menu-in {

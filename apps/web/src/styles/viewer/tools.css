@@ -907,6 +907,9 @@
   width: min(760px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   overflow: auto;
+  padding: 0;
+  background: var(--bg-elevated);
+  color: var(--text);
 }
 .deploy-flow-backdrop.modal-backdrop {
   box-sizing: border-box;

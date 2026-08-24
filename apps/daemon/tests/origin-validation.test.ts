@@ -5,11 +5,14 @@ import type { NextFunction, Request, Response } from 'express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   allowedBrowserPorts,
+  browserFacingOrigin,
+  clerkFacingOrigin,
   configuredAllowedInternalHosts,
   configuredAllowedOrigins,
   isAllowedBrowserOrigin,
   isLocalSameOrigin,
   isZeroConfigClipperLibraryRequest,
+  requestOrigin,
 } from '../src/origin-validation.js';
 
 type TestRequestOptions = {
@@ -814,5 +817,87 @@ describe('configuredAllowedInternalHosts: OD_ALLOWED_INTERNAL_HOSTS parsing (iss
     expect(hosts).toEqual(['10.0.0.5']);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/CIDR/i);
+  });
+});
+
+describe('browserFacingOrigin', () => {
+  const req = {
+    protocol: 'http',
+    get: (name: string) => (name.toLowerCase() === 'host' ? '127.0.0.1:17456' : undefined),
+  };
+
+  it('keeps the request origin when the SPA is on the same port', () => {
+    expect(browserFacingOrigin(req, {})).toBe('http://127.0.0.1:17456');
+    expect(requestOrigin(req)).toBe('http://127.0.0.1:17456');
+  });
+
+  it('honors OD_PUBLIC_BASE_URL over the request host', () => {
+    expect(
+      browserFacingOrigin(req, { OD_PUBLIC_BASE_URL: 'https://app.example.com/' }),
+    ).toBe('https://app.example.com');
+  });
+
+  it('remaps to OD_WEB_PORT in split-port local runs', () => {
+    expect(browserFacingOrigin(req, { OD_WEB_PORT: '17573' })).toBe('http://127.0.0.1:17573');
+  });
+
+  it('uses X-Forwarded-Host when the inbound Host is loopback (reverse proxy)', () => {
+    const proxied = {
+      protocol: 'http',
+      get: (name: string) => {
+        switch (name.toLowerCase()) {
+          case 'host':
+            return '127.0.0.1:7456';
+          case 'x-forwarded-host':
+            return 'od.example.com';
+          case 'x-forwarded-proto':
+            return 'https';
+          default:
+            return undefined;
+        }
+      },
+    };
+    expect(browserFacingOrigin(proxied, {})).toBe('https://od.example.com');
+  });
+
+  it('ignores a spoofed X-Forwarded-Host when the inbound Host is public', () => {
+    const publicReq = {
+      protocol: 'https',
+      get: (name: string) => {
+        switch (name.toLowerCase()) {
+          case 'host':
+            return 'od.example.com';
+          case 'x-forwarded-host':
+            return 'evil.example';
+          case 'x-forwarded-proto':
+            return 'https';
+          default:
+            return undefined;
+        }
+      },
+    };
+    expect(browserFacingOrigin(publicReq, {})).toBe('https://od.example.com');
+  });
+});
+
+describe('clerkFacingOrigin', () => {
+  const req = {
+    protocol: 'http',
+    get: (name: string) => (name.toLowerCase() === 'host' ? '127.0.0.1:17456' : undefined),
+  };
+
+  it('prefers OD_WEB_PORT over OD_PUBLIC_BASE_URL so packaged OAuth stays local', () => {
+    expect(
+      clerkFacingOrigin(req, {
+        OD_WEB_PORT: '17573',
+        OD_PUBLIC_BASE_URL: 'https://app.example.com',
+      }),
+    ).toBe('http://127.0.0.1:17573');
+  });
+
+  it('falls back to the browser-facing origin when no web port is set', () => {
+    expect(clerkFacingOrigin(req, { OD_PUBLIC_BASE_URL: 'https://app.example.com/' })).toBe(
+      'https://app.example.com',
+    );
   });
 });

@@ -14,7 +14,7 @@ import {
   type ProjectFileVersionSource,
   type ProjectFileVersionWarning,
 } from '@open-design/contracts';
-import { listOrganizationsForUser } from '../../workspace-data/tenancy.js';
+import { getActiveMemberForUser, listOrganizationsForUser } from '../../workspace-data/tenancy.js';
 import type { OrganizationRouteServices } from '../organizations.js';
 import { readMeta as readBrandMeta } from '../../brands/store.js';
 import { createProjectArtifactFile } from '../../artifacts/create.js';
@@ -1299,6 +1299,21 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       return null;
     }
   }
+
+  async function resolveRequestMemberId(req: any, orgId: string | null): Promise<string | null> {
+    if (!orgId) return null;
+    const orgManager = ctx.organizations?.manager;
+    const orgIdentity = ctx.organizations?.identity;
+    if (!orgManager || !orgIdentity) return null;
+    try {
+      const viewer = await orgIdentity.resolveViewer(req, orgManager.directoryExecutor);
+      if (!viewer) return null;
+      const member = await getActiveMemberForUser(orgManager.directoryExecutor, orgId, viewer.userId);
+      return member?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
   async function loadPluginRegistryView() {
     const [skills, designSystems] = await Promise.all([
       listSkills(SKILLS_DIR),
@@ -1789,6 +1804,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             designSystemId: normalizedDesignSystemId,
           });
         }
+        const orgId = await resolveRequestOrgId(req);
         project = insertProject(db, {
           id,
           name: name.trim(),
@@ -1803,7 +1819,8 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           // Server-assigned from the caller's active organization. Never read
           // from the request body, so a client cannot file work into an
           // organization it does not belong to.
-          orgId: await resolveRequestOrgId(req),
+          orgId,
+          createdBy: await resolveRequestMemberId(req, orgId),
           createdAt: now,
           updatedAt: now,
         });

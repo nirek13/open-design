@@ -975,25 +975,53 @@
   min-height: 0;
 }
 
-/* Mail is a contained app: the reading pane scrolls, not the page. */
-.entry-main--scroll:has([data-testid='entry-view-mail'][data-active='true']) {
+/* Mail / team chat / Slack are contained apps: the inner pane scrolls, not the page. */
+.entry-main--scroll:has([data-testid='entry-view-mail'][data-active='true']),
+.entry-main--scroll:has([data-testid='entry-view-team'][data-active='true']),
+.entry-main--scroll:has([data-testid='entry-view-slack'][data-active='true']) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
-.entry-main--scroll:has([data-testid='entry-view-mail'][data-active='true']) .entry-main__inner--fullscreen {
+.entry-main--scroll:has([data-testid='entry-view-mail'][data-active='true']) .entry-main__inner--fullscreen,
+.entry-main--scroll:has([data-testid='entry-view-team'][data-active='true']) .entry-main__inner--fullscreen,
+.entry-main--scroll:has([data-testid='entry-view-slack'][data-active='true']) .entry-main__inner--fullscreen {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
 
-.entry-main__inner--fullscreen > [data-testid='entry-view-mail'] {
+.entry-main__inner--fullscreen > [data-testid='entry-view-mail'],
+.entry-main__inner--fullscreen > [data-testid='entry-view-team'],
+.entry-main__inner--fullscreen > [data-testid='entry-view-slack'] {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Team chat / Slack: float the rail toggle over the canvas so the workspace
+   is edge-to-edge under the tab chrome. The opaque topbar strip would
+   otherwise steal a row above the aubergine sidebar. */
+.entry-main--scroll:has([data-testid='entry-view-team'][data-active='true']) .entry-main__topbar,
+.entry-main--scroll:has([data-testid='entry-view-slack'][data-active='true']) .entry-main__topbar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 20;
+  justify-content: flex-start;
+  padding: 10px 12px 0;
+  background: transparent;
+  pointer-events: none;
+}
+.entry-main--scroll:has([data-testid='entry-view-team'][data-active='true']) .entry-main__topbar > *,
+.entry-main--scroll:has([data-testid='entry-view-slack'][data-active='true']) .entry-main__topbar > * {
+  pointer-events: auto;
+}
+.entry-main--scroll:has([data-testid='entry-view-team'][data-active='true']) .entry-main__topbar::before,
+.entry-main--scroll:has([data-testid='entry-view-slack'][data-active='true']) .entry-main__topbar::before {
+  display: none;
 }
 
 /* Sticky top-right control strip inside the main scroll area.
@@ -2939,7 +2967,8 @@
 
 .onboarding-view__mini-button,
 .onboarding-view__field-row button,
-.onboarding-view__protocol-strip button {
+.onboarding-view__protocol-strip button,
+.onboarding-view__key-source button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2958,7 +2987,8 @@
 
 .onboarding-view__mini-button:hover,
 .onboarding-view__field-row button:hover,
-.onboarding-view__protocol-strip button:hover {
+.onboarding-view__protocol-strip button:hover,
+.onboarding-view__key-source button:hover {
   color: var(--text-strong);
   border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 }
@@ -3064,16 +3094,25 @@
   line-height: 1.45;
 }
 
-.onboarding-view__protocol-strip {
+.onboarding-view__protocol-strip,
+.onboarding-view__key-source {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.onboarding-view__protocol-strip button.is-selected {
+.onboarding-view__protocol-strip button.is-selected,
+.onboarding-view__key-source button.is-selected {
   color: var(--text-strong);
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
   background: color-mix(in srgb, var(--bg-panel) 90%, var(--accent) 10%);
+}
+
+.onboarding-view__default-key-copy {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .onboarding-view__inline-field {
@@ -3105,7 +3144,8 @@
 .onboarding-view__agent-chip:focus-visible,
 .onboarding-view__mini-button:focus-visible,
 .onboarding-view__field-row button:focus-visible,
-.onboarding-view__protocol-strip button:focus-visible {
+.onboarding-view__protocol-strip button:focus-visible,
+.onboarding-view__key-source button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

@@ -20,14 +20,20 @@ export type ChannelVisibility = 'public' | 'private';
 
 export type ChannelMemberRole = 'owner' | 'member';
 
+/** `channel` is a named room. `dm` is exactly two people. `group_dm` is a
+ * private conversation among three or more, without a public slug people join. */
+export type ChatChannelKind = 'channel' | 'dm' | 'group_dm';
+
 export interface ChatChannel {
   id: string;
   orgId: string;
   /** Machine name, lowercase and hyphenated, unique per organization —
-   * `#deals-emea`. What people type to reach it. */
+   * `#deals-emea`. What people type to reach it. Direct messages use a
+   * generated `dm-` / `gdm-` slug and are addressed by id in the UI. */
   slug: string;
   displayName: string;
   topic: string | null;
+  kind: ChatChannelKind;
   visibility: ChannelVisibility;
   archivedAt: number | null;
   createdBy: string;
@@ -56,17 +62,119 @@ export interface ChatChannelMember {
   lastReadAt: number;
 }
 
-/** A reference from a message to something in the organization's data. This is
- * the bridge that makes chat part of the ERP rather than a widget beside it. */
+export const TEAM_CHAT_ATTACHMENT_KINDS = [
+  'record',
+  'app',
+  'proposal',
+  'journal-entry',
+  'file',
+  'link',
+] as const;
+
+export type TeamChatAttachmentKind = (typeof TEAM_CHAT_ATTACHMENT_KINDS)[number];
+
+/** 25 MB — enough for a deck or a short clip, small enough that a laptop
+ * daemon does not become a file share. */
+export const CHAT_FILE_MAX_BYTES = 25 * 1024 * 1024;
+
+/** A reference from a message to something in the organization's data, a
+ * uploaded file, or a pasted link. Record/app/proposal/journal-entry keep
+ * chat inside the ERP; file/link are the media people actually send. */
 export interface TeamChatAttachment {
-  kind: 'record' | 'app' | 'proposal' | 'journal-entry';
-  /** The referenced id — record id, app id, proposal id, or entry id. */
+  kind: TeamChatAttachmentKind;
+  /** Record/app/proposal/journal-entry/file id, or the URL for a link. */
   id: string;
   /** Which table the record belongs to. Only set for `kind: 'record'`. */
   tableName?: string;
   /** Human label captured at post time, so the message still reads correctly
    * if the target is later renamed or deleted. */
   label: string;
+  /** Org-scoped file URL or the original http(s) link. */
+  url?: string;
+  mimeType?: string;
+  fileName?: string;
+  byteSize?: number;
+  thumbnailUrl?: string;
+}
+
+export interface ChatFileUploadResponse {
+  attachment: TeamChatAttachment;
+}
+
+const SAFE_HTTP = /^https?:\/\//i;
+const SAFE_CHAT_FILE = /^\/api\/orgs\/[A-Za-z0-9._-]+\/chat\/files\/file-[A-Za-z0-9-]+$/;
+
+function isSafeChatUrl(url: string): boolean {
+  if (SAFE_HTTP.test(url)) {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }
+  return SAFE_CHAT_FILE.test(url);
+}
+
+function asTrimmed(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** Drop unknown kinds, javascript: URLs, and incomplete file rows so a
+ * crafted payload cannot turn chat into an open redirect or XSS vector. */
+export function sanitizeTeamChatAttachments(raw: unknown): TeamChatAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TeamChatAttachment[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const rec = item as Record<string, unknown>;
+    const kind = asTrimmed(rec.kind);
+    if (!(TEAM_CHAT_ATTACHMENT_KINDS as readonly string[]).includes(kind)) continue;
+    const id = asTrimmed(rec.id);
+    const label = asTrimmed(rec.label);
+    if (kind === 'link') {
+      const url = asTrimmed(rec.url) || id;
+      if (!url || !isSafeChatUrl(url) || !SAFE_HTTP.test(url)) continue;
+      out.push({ kind: 'link', id: id || url, label: label || url, url });
+      continue;
+    }
+    if (kind === 'file') {
+      const url = asTrimmed(rec.url);
+      if (!id || !url || !isSafeChatUrl(url)) continue;
+      const byteSize = rec.byteSize;
+      out.push({
+        kind: 'file',
+        id,
+        label: label || asTrimmed(rec.fileName) || id,
+        url,
+        ...(asTrimmed(rec.mimeType) ? { mimeType: asTrimmed(rec.mimeType) } : {}),
+        ...(asTrimmed(rec.fileName) ? { fileName: asTrimmed(rec.fileName) } : {}),
+        ...(typeof byteSize === 'number' && Number.isFinite(byteSize) && byteSize >= 0
+          ? { byteSize }
+          : {}),
+        ...(asTrimmed(rec.thumbnailUrl) && isSafeChatUrl(asTrimmed(rec.thumbnailUrl))
+          ? { thumbnailUrl: asTrimmed(rec.thumbnailUrl) }
+          : {}),
+      });
+      continue;
+    }
+    if (!id || !label) continue;
+    out.push({
+      kind: kind as Exclude<TeamChatAttachmentKind, 'file' | 'link'>,
+      id,
+      label,
+      ...(kind === 'record' && asTrimmed(rec.tableName) ? { tableName: asTrimmed(rec.tableName) } : {}),
+    });
+  }
+  return out.slice(0, 16);
+}
+
+export interface ChatReaction {
+  emoji: string;
+  count: number;
+  /** True when the calling member is among the people who added this emoji. */
+  me: boolean;
+  memberIds: string[];
 }
 
 export interface TeamChatMessage {
@@ -88,6 +196,7 @@ export interface TeamChatMessage {
    * there is no separate thread object to keep in sync. */
   parentMessageId: string | null;
   replyCount: number;
+  reactions: ChatReaction[];
   editedAt: number | null;
   deletedAt: number | null;
   createdAt: number;
@@ -133,6 +242,31 @@ export interface ListMessagesQuery {
 export interface MarkReadRequest {
   /** Defaults to now. */
   readAt?: number;
+}
+
+export interface OpenDirectMessageRequest {
+  /** Organization member ids to open a DM with. The caller is always included. */
+  memberIds: string[];
+}
+
+export interface InviteChannelMembersRequest {
+  memberIds: string[];
+}
+
+export interface ToggleReactionRequest {
+  emoji: string;
+}
+
+export interface ChatSearchHit {
+  channelId: string;
+  channelSlug: string;
+  channelName: string;
+  kind: ChatChannelKind;
+  message: TeamChatMessage;
+}
+
+export interface ChatSearchResponse {
+  hits: ChatSearchHit[];
 }
 
 // --- Responses ------------------------------------------------------------

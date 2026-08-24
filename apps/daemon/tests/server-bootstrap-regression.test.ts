@@ -558,6 +558,7 @@ describe('static SPA fallback classification', () => {
     expect(isStaticSpaFallbackRequest(makeReq('/api/projects') as never)).toBe(false);
     expect(isStaticSpaFallbackRequest(makeReq('/artifacts/x') as never)).toBe(false);
     expect(isStaticSpaFallbackRequest(makeReq('/frames/x') as never)).toBe(false);
+    expect(isStaticSpaFallbackRequest(makeReq('/s/share-token') as never)).toBe(false);
     expect(isStaticSpaFallbackRequest(makeReq('/_next/static/app.js') as never)).toBe(false);
   });
 

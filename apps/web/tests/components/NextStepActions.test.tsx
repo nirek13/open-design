@@ -55,7 +55,7 @@ function renderActions(
     onDownload: vi.fn(),
     onToolboxAction: vi.fn(),
     onPickSkill: vi.fn(),
-    onShareToOpenDesign: vi.fn(),
+    onShareToSubstrate: vi.fn(),
   };
   const ui = (
     <NextStepActions
@@ -64,7 +64,7 @@ function renderActions(
       onDownload={handlers.onDownload}
       onToolboxAction={handlers.onToolboxAction}
       onPickSkill={handlers.onPickSkill}
-      onShareToOpenDesign={handlers.onShareToOpenDesign}
+      onShareToSubstrate={handlers.onShareToSubstrate}
       skills={[
         skill('creative-director', 'Creative Director'),
         skill('emilkowalski-motion', 'Emil Kowalski Motion', 'animation-motion'),
@@ -469,7 +469,7 @@ describe('NextStepActions', () => {
     fireEvent.mouseEnter(screen.getByTestId('next-step-toolbox-more'));
     fireEvent.mouseEnter(screen.getByTestId('next-step-more-share'));
     fireEvent.click(screen.getByTestId('next-step-share-contribute'));
-    expect(h.onShareToOpenDesign).toHaveBeenCalledTimes(1);
+    expect(h.onShareToSubstrate).toHaveBeenCalledTimes(1);
   });
 
   it('hides the toolbox rows when no toolbox handler is wired', () => {

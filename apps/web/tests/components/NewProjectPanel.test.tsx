@@ -36,6 +36,10 @@ const mockedIsHostAvailable = vi.mocked(isOpenDesignHostAvailable);
 const mockedPickHostWorkingDir = vi.mocked(pickHostWorkingDir);
 const mockedOpenFolderDialog = vi.mocked(openFolderDialog);
 
+function pickPrivateVisibility() {
+  fireEvent.click(screen.getByTestId('new-project-visibility-private'));
+}
+
 const skills: SkillSummary[] = [
   {
     id: 'prototype-skill',
@@ -175,7 +179,7 @@ describe('NewProjectPanel design system defaults', () => {
     });
   });
 
-  it('preserves prototype fidelity across tab switches and saves it into the create payload', () => {
+  it('creates prototypes at high fidelity without a wireframe option', () => {
     const onCreate = vi.fn();
     render(
       <NewProjectPanel
@@ -190,24 +194,19 @@ describe('NewProjectPanel design system defaults', () => {
     );
 
     fireEvent.change(screen.getByTestId('new-project-name'), {
-      target: { value: 'Wireframe fidelity payload' },
+      target: { value: 'Prototype payload' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Wireframe' }));
-    expect(screen.getByRole('button', { name: 'Wireframe' }).getAttribute('aria-pressed')).toBe('true');
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Slide deck' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Prototype' }));
-    expect(screen.getByRole('button', { name: 'Wireframe' }).getAttribute('aria-pressed')).toBe('true');
-
+    expect(screen.queryByRole('button', { name: 'Wireframe' })).toBeNull();
+    pickPrivateVisibility();
     fireEvent.click(screen.getByTestId('create-project'));
 
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'Wireframe fidelity payload',
+        name: 'Prototype payload',
         designSystemId: 'clay',
         metadata: expect.objectContaining({
           kind: 'prototype',
-          fidelity: 'wireframe',
+          fidelity: 'high-fidelity',
         }),
       }),
     );
@@ -352,8 +351,6 @@ describe('NewProjectPanel design system defaults', () => {
     fireEvent.change(screen.getByTestId('new-project-name'), {
       target: { value: 'Realtime artifact payload' },
     });
-    // Live artifact hides the fidelity picker — wireframe live artifacts
-    // don't make sense, so the surface is locked to high-fidelity.
     expect(screen.queryByRole('button', { name: 'Wireframe' })).toBeNull();
     fireEvent.click(screen.getByTestId('create-project'));
 
@@ -1026,6 +1023,22 @@ describe('NewProjectPanel start-from rail', () => {
     examplePrompt: '',
     aggregatesExamples: false,
   };
+  const wireframeTemplate: SkillSummary = {
+    id: 'wireframe-sketch',
+    name: 'Wireframe sketch',
+    description: 'Lo-fi wireframe template',
+    mode: 'prototype',
+    surface: 'web',
+    previewType: 'html',
+    designSystemRequired: true,
+    defaultFor: [],
+    triggers: [],
+    upstream: null,
+    hasBody: true,
+    examplePrompt: '',
+    aggregatesExamples: false,
+    fidelity: 'wireframe',
+  };
   const deckSkill: SkillSummary = {
     id: 'simple-deck',
     name: 'Simple deck',
@@ -1046,7 +1059,7 @@ describe('NewProjectPanel start-from rail', () => {
     render(
       <NewProjectPanel
         skills={[...skills, deckSkill]}
-        designTemplates={[deckTemplate, prototypeTemplate]}
+        designTemplates={[deckTemplate, prototypeTemplate, wireframeTemplate]}
         designSystems={designSystems}
         defaultDesignSystemId={null}
         templates={[]}
@@ -1055,6 +1068,7 @@ describe('NewProjectPanel start-from rail', () => {
         onCreate={onCreate}
       />,
     );
+    pickPrivateVisibility();
     return onCreate;
   }
 
@@ -1110,5 +1124,11 @@ describe('NewProjectPanel start-from rail', () => {
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({ skillId: 'simple-deck' }),
     );
+  });
+
+  it('hides wireframe design templates from the prototype start-from rail', () => {
+    renderPanel();
+    expect(screen.getByTestId('newproj-start-saas-landing')).toBeTruthy();
+    expect(screen.queryByTestId('newproj-start-wireframe-sketch')).toBeNull();
   });
 });

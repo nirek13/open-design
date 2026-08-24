@@ -91,13 +91,13 @@ server {
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header Authorization "Bearer ${PROXY_API_TOKEN}";
         proxy_buffering off;
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
+        proxy_read_timeout ${PROXY_READ_TIMEOUT};
+        proxy_send_timeout ${PROXY_READ_TIMEOUT};
         proxy_set_header Connection '';
     }
 }
 EOF
-envsubst '$PROXY_PORT $OD_BIND_HOST $OD_WEB_PORT $PROXY_API_TOKEN' < /tmp/default.conf.template > /etc/nginx/conf.d/default.conf
+envsubst '$PROXY_PORT $OD_BIND_HOST $OD_WEB_PORT $PROXY_API_TOKEN $PROXY_READ_TIMEOUT' < /tmp/default.conf.template > /etc/nginx/conf.d/default.conf
 exec nginx -g "daemon off;"
 NGINX
 )
@@ -132,10 +132,19 @@ redeploy_once() {
   docker push "$image"
 
   echo "==> Registering task definition (image=${tag}, origin=${ALLOWED_ORIGIN})"
-  local current_td task_json new_td new_arn
+  local current_td task_json new_td new_arn operating proxy_timeout
   current_td="$(aws ecs describe-services \
     --cluster "$CLUSTER" --services "$SERVICE" --region "$REGION" \
     --query 'services[0].taskDefinition' --output text)"
+  operating="$(aws cloudformation describe-stacks \
+    --stack-name "$STACK" --region "$REGION" \
+    --query "Stacks[0].Parameters[?ParameterKey=='OperatingMode'].ParameterValue" \
+    --output text)"
+  if [[ "$operating" == performance ]]; then
+    proxy_timeout="3600s"
+  else
+    proxy_timeout="600s"
+  fi
 
   task_json="$(aws ecs describe-task-definition \
     --task-definition "$current_td" --region "$REGION" \
@@ -144,6 +153,7 @@ redeploy_once() {
   # Heredoc would steal stdin from python `-`; use -c so the pipe is the JSON payload.
   new_td="$(printf '%s' "$task_json" | ALLOWED_ORIGIN="$ALLOWED_ORIGIN" IMAGE="$image" \
     PROXY_COMMAND="$PROXY_COMMAND" APP_COMMAND="$APP_COMMAND" \
+    PROXY_READ_TIMEOUT="$proxy_timeout" \
     OPENAI_SECRET_ARN="${OPENAI_SECRET_ARN:-}" \
     python3 -c '
 import json, os, sys
@@ -153,6 +163,7 @@ image = os.environ["IMAGE"]
 origin = os.environ["ALLOWED_ORIGIN"]
 proxy_cmd = os.environ["PROXY_COMMAND"]
 app_cmd = os.environ["APP_COMMAND"]
+proxy_timeout = os.environ.get("PROXY_READ_TIMEOUT", "600s")
 openai_arn = os.environ.get("OPENAI_SECRET_ARN", "").strip()
 
 for key in (
@@ -168,6 +179,7 @@ for c in td["containerDefinitions"]:
         c["command"] = [app_cmd]
         env = {e["name"]: e for e in c.get("environment") or []}
         env["OD_ALLOWED_ORIGINS"] = {"name": "OD_ALLOWED_ORIGINS", "value": origin}
+        env["OD_PUBLIC_BASE_URL"] = {"name": "OD_PUBLIC_BASE_URL", "value": origin}
         env.setdefault("OD_BIND_HOST", {"name": "OD_BIND_HOST", "value": "127.0.0.1"})
         env.setdefault("OD_PORT", {"name": "OD_PORT", "value": "7456"})
         c["environment"] = list(env.values())
@@ -179,6 +191,9 @@ for c in td["containerDefinitions"]:
     elif c["name"] == "auth-proxy":
         c["entryPoint"] = ["/bin/sh", "-c"]
         c["command"] = [proxy_cmd]
+        env = {e["name"]: e for e in c.get("environment") or []}
+        env["PROXY_READ_TIMEOUT"] = {"name": "PROXY_READ_TIMEOUT", "value": proxy_timeout}
+        c["environment"] = list(env.values())
 
 print(json.dumps(td))
 ')"

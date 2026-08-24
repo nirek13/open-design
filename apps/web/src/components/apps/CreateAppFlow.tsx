@@ -6,28 +6,32 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, Select } from '@open-design/components';
-import type { AppAccessMode, AppGrantRole, OrgApp, OrgMember, ProjectFile } from '@open-design/contracts';
+import type { AppAccessMode, AppGrantRole, OrgApp, OrgMember, OrgTeam, ProjectFile } from '@open-design/contracts';
 import { APP_GMAIL_SCOPE_TABLE } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
   fetchOrgMembers,
+  fetchOrgTeams,
   fetchProjectFiles,
   publishApp,
+  publishAppToWeb,
 } from '../../providers/registry';
-import { PublishPanel } from '../hosting/PublishPanel';
+import { SendAppPicker } from './SendAppPicker';
 import styles from './CreateAppFlow.module.css';
+
+type Mode = 'choose' | 'workspace' | 'public';
 
 export interface CreateAppFlowProps {
   orgId: string;
   projectId?: string;
   projectName?: string;
   filePath?: string;
+  /** Skip the audience chooser when the caller already knows the destination. */
+  initialMode?: Mode;
   onClose: () => void;
   onCreated?: (app: OrgApp) => void;
 }
-
-type Mode = 'choose' | 'workspace' | 'public';
 
 interface ProjectOption {
   id: string;
@@ -36,6 +40,11 @@ interface ProjectOption {
 
 interface DraftGrant {
   memberId: string;
+  role: AppGrantRole;
+}
+
+interface DraftTeamGrant {
+  teamId: string;
   role: AppGrantRole;
 }
 
@@ -53,6 +62,7 @@ export function CreateAppFlow({
   projectId: initialProjectId,
   projectName: initialProjectName,
   filePath: initialFilePath,
+  initialMode,
   onClose,
   onCreated,
 }: CreateAppFlowProps) {
@@ -63,7 +73,7 @@ export function CreateAppFlow({
   const lockedFile = Boolean(initialProjectId && initialFilePath);
   // Locked file (from the design you're looking at) → go straight to workspace
   // deploy form so "Deploy to workspace" is one confirm away.
-  const [mode, setMode] = useState<Mode>(lockedFile ? 'workspace' : 'choose');
+  const [mode, setMode] = useState<Mode>(initialMode ?? (lockedFile ? 'workspace' : 'choose'));
 
   const [name, setName] = useState(() => defaultAppName(initialFilePath));
   const [description, setDescription] = useState('');
@@ -77,9 +87,15 @@ export function CreateAppFlow({
   const [allowGmail, setAllowGmail] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [members, setMembers] = useState<OrgMember[]>([]);
+  const [teams, setTeams] = useState<OrgTeam[]>([]);
   const [grants, setGrants] = useState<DraftGrant[]>([]);
+  const [teamGrants, setTeamGrants] = useState<DraftTeamGrant[]>([]);
+  const [denials, setDenials] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [liveUrl, setLiveUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [createdApp, setCreatedApp] = useState<OrgApp | null>(null);
 
   useEffect(() => {
     if (lockedFile) return;
@@ -108,15 +124,20 @@ export function CreateAppFlow({
   }, [lockedFile, projectId]);
 
   useEffect(() => {
-    if (accessMode !== 'restricted') return;
+    if (!showAdvanced) return;
     void (async () => {
       try {
-        setMembers(await fetchOrgMembers(orgId));
+        const [nextMembers, nextTeams] = await Promise.all([
+          fetchOrgMembers(orgId),
+          fetchOrgTeams(orgId).catch(() => [] as OrgTeam[]),
+        ]);
+        setMembers(nextMembers);
+        setTeams(nextTeams);
       } catch (err) {
         setError(errorMessage(err));
       }
     })();
-  }, [accessMode, orgId]);
+  }, [orgId, showAdvanced]);
 
   const toggleGrant = (memberId: string, role: AppGrantRole) => {
     setGrants((prev) => {
@@ -125,6 +146,21 @@ export function CreateAppFlow({
       const without = prev.filter((g) => g.memberId !== memberId);
       return [...without, { memberId, role }];
     });
+    setDenials((prev) => prev.filter((id) => id !== memberId));
+  };
+
+  const toggleTeamGrant = (teamId: string, role: AppGrantRole) => {
+    setTeamGrants((prev) => {
+      const existing = prev.find((g) => g.teamId === teamId);
+      if (existing?.role === role) return prev.filter((g) => g.teamId !== teamId);
+      const without = prev.filter((g) => g.teamId !== teamId);
+      return [...without, { teamId, role }];
+    });
+  };
+
+  const toggleDenial = (memberId: string) => {
+    setDenials((prev) => (prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]));
+    setGrants((prev) => prev.filter((g) => g.memberId !== memberId));
   };
 
   const submitOrgApp = useCallback(async () => {
@@ -144,10 +180,11 @@ export function CreateAppFlow({
         accessMode,
         pinned,
         ...(allowGmail ? { dataScopes: [{ table: APP_GMAIL_SCOPE_TABLE, mode: 'write' as const }] } : {}),
-        ...(accessMode === 'restricted' ? { grants } : {}),
+        ...(accessMode === 'restricted' ? { grants, teamGrants } : {}),
+        ...(denials.length ? { denials: denials.map((memberId) => ({ memberId })) } : {}),
       });
       onCreated?.(app);
-      onClose();
+      setCreatedApp(app);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -156,14 +193,61 @@ export function CreateAppFlow({
   }, [
     accessMode,
     allowGmail,
+    denials,
     description,
     filePath,
     grants,
+    teamGrants,
     name,
-    onClose,
     onCreated,
     orgId,
     pinned,
+    projectId,
+    t,
+  ]);
+
+  const submitPublic = useCallback(async () => {
+    const resolvedProjectId = projectId || initialProjectId;
+    const resolvedFilePath = filePath || initialFilePath;
+    if (!resolvedProjectId || !resolvedFilePath) {
+      setError(t('apps.create.needFile'));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const app = await publishApp(orgId, {
+        name: name.trim() || defaultAppName(resolvedFilePath),
+        description: description.trim() || undefined,
+        projectId: resolvedProjectId,
+        filePath: resolvedFilePath,
+        visibility: 'link',
+        pinned: true,
+      });
+      const published = await publishAppToWeb(orgId, app.id);
+      setLiveUrl(published.url);
+      setCopied(false);
+      try {
+        await navigator.clipboard.writeText(published.url);
+        setCopied(true);
+      } catch {
+        // Clipboard is optional; the URL is still on screen.
+      }
+      onCreated?.(published.app);
+      setCreatedApp(published.app);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    description,
+    filePath,
+    initialFilePath,
+    initialProjectId,
+    name,
+    onCreated,
+    orgId,
     projectId,
     t,
   ]);
@@ -184,7 +268,25 @@ export function CreateAppFlow({
         </p>
       ) : null}
 
-      {mode === 'choose' ? (
+      {createdApp ? (
+        <div className={styles.form} data-testid="create-app-send">
+          {liveUrl ? (
+            <>
+              <p className={styles.hint}>{t('apps.create.liveUrl')}</p>
+              <code className={styles.liveUrl}>{liveUrl}</code>
+            </>
+          ) : null}
+          <SendAppPicker
+            orgId={orgId}
+            app={createdApp}
+            title={t('apps.send.created', { name: createdApp.name })}
+            lead={t('apps.send.createdLead')}
+            onSkip={onClose}
+          />
+        </div>
+      ) : null}
+
+      {!createdApp && mode === 'choose' ? (
         <div className={styles.choices}>
           <button
             type="button"
@@ -207,16 +309,54 @@ export function CreateAppFlow({
         </div>
       ) : null}
 
-      {mode === 'public' && (projectId || initialProjectId) && (filePath || initialFilePath) ? (
-        <PublishPanel
-          projectId={projectId || initialProjectId!}
-          projectName={projectName || initialProjectName || name || 'App'}
-          fileName={filePath || initialFilePath!}
-          onClose={onClose}
-        />
+      {!createdApp && mode === 'public' && (projectId || initialProjectId) && (filePath || initialFilePath) ? (
+        liveUrl ? (
+          <div className={styles.form} data-testid="create-app-live">
+            <p className={styles.hint}>{t('apps.create.liveUrl')}</p>
+            <code className={styles.liveUrl}>{liveUrl}</code>
+            <p className={styles.hint}>{t('apps.publishToWebHint')}</p>
+            <div className={styles.footer}>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  void navigator.clipboard.writeText(liveUrl).then(() => setCopied(true)).catch(() => {});
+                }}
+              >
+                {copied ? t('apps.copiedWebLink') : t('apps.copyWebLink')}
+              </Button>
+              <Button onClick={onClose}>{t('apps.dismiss')}</Button>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.form}>
+            <p className={styles.hint}>{t('apps.create.publishToWebHint')}</p>
+            <label className={styles.label}>
+              {t('apps.create.name')}
+              <Input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
+            </label>
+            <div className={styles.footer}>
+              {!lockedFile ? (
+                <Button variant="ghost" onClick={() => setMode('choose')}>
+                  {t('apps.create.back')}
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={() => setMode('workspace')}>
+                  {t('apps.create.audienceOrg')}
+                </Button>
+              )}
+              <Button
+                disabled={busy}
+                onClick={() => void submitPublic()}
+                data-testid="create-app-publish-web"
+              >
+                {busy ? t('apps.publishingToWeb') : t('apps.create.publishToWeb')}
+              </Button>
+            </div>
+          </div>
+        )
       ) : null}
 
-      {mode === 'public' && !(projectId && filePath) && !lockedFile ? (
+      {!createdApp && mode === 'public' && !(projectId && filePath) && !lockedFile ? (
         <div className={styles.form}>
           <p className={styles.hint}>{t('apps.create.pickFileFirst')}</p>
           <label className={styles.label}>
@@ -259,7 +399,7 @@ export function CreateAppFlow({
         </div>
       ) : null}
 
-      {mode === 'workspace' ? (
+      {!createdApp && mode === 'workspace' ? (
         <div className={styles.form}>
           <p className={styles.hint}>
             {t('apps.create.workspaceHint', { org: orgName || t('apps.create.thisOrg') })}
@@ -391,8 +531,55 @@ export function CreateAppFlow({
                       </div>
                     );
                   })}
+                  {teams.map((team) => {
+                    const grant = teamGrants.find((g) => g.teamId === team.id);
+                    return (
+                      <div key={team.id} className={styles.grantRow}>
+                        <span>{team.name}</span>
+                        <div className={styles.grantRoles}>
+                          <button
+                            type="button"
+                            className={grant?.role === 'view' ? styles.roleActive : styles.role}
+                            onClick={() => toggleTeamGrant(team.id, 'view')}
+                          >
+                            {t('apps.create.roleViewer')}
+                          </button>
+                          <button
+                            type="button"
+                            className={grant?.role === 'edit' ? styles.roleActive : styles.role}
+                            onClick={() => toggleTeamGrant(team.id, 'edit')}
+                          >
+                            {t('apps.create.roleEditor')}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null}
+              <fieldset className={styles.fieldset}>
+                <legend>{t('apps.except')}</legend>
+                <p className={styles.hint}>{t('apps.exceptHint')}</p>
+                <div className={styles.grants}>
+                  {members
+                    .filter((member) => member.status === 'active')
+                    .map((member) => {
+                      const on = denials.includes(member.id);
+                      return (
+                        <button
+                          key={member.id}
+                          type="button"
+                          className={on ? styles.exceptOn : styles.role}
+                          aria-pressed={on}
+                          data-testid={`create-app-except-${member.id}`}
+                          onClick={() => toggleDenial(member.id)}
+                        >
+                          {member.displayName || member.email || member.id}
+                        </button>
+                      );
+                    })}
+                </div>
+              </fieldset>
             </>
           ) : null}
 

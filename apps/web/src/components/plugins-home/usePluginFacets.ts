@@ -22,6 +22,7 @@ import {
   type FacetSelection,
 } from './facets';
 import { sortByVisualAppeal } from './visualScore';
+import { isHiddenWireframeCreatePlugin } from './curatedPriority';
 import { comparePluginGalleryOrder, isSunkToBottom } from './pluginPopularity';
 import {
   readStoredSortOrder,
@@ -104,7 +105,7 @@ export function usePluginFacets({
   const visiblePlugins = useMemo(
     () =>
       sortByVisualAppeal(
-        plugins.filter((p) => p.manifest?.od?.kind !== 'atom'),
+        plugins.filter((p) => p.manifest?.od?.kind !== 'atom' && !isHiddenWireframeCreatePlugin(p)),
       ),
     [plugins],
   );

@@ -81,7 +81,11 @@ import { PreviewSurface } from './plugins-home/cards/PreviewSurface';
 import { canDuplicatePluginPreview } from './plugins-home/duplicate';
 import { pluginCategoryLabel } from './plugins-home/categoryLabel';
 import { readHomeGuideStage, writeHomeGuideStage } from './home-hero/firstRunGuide';
-import { curatedPluginPriorityForChip } from './plugins-home/curatedPriority';
+import {
+  curatedPluginPriorityForChip,
+  isHiddenWireframeCreatePlugin,
+  isHiddenWireframeCreateSkill,
+} from './plugins-home/curatedPriority';
 import { comparePluginGalleryOrder } from './plugins-home/pluginPopularity';
 import { sortByVisualAppeal } from './plugins-home/visualScore';
 import { applyFacetSelection } from './plugins-home/facets';
@@ -499,19 +503,27 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         : [],
     [mentionActive, mentionQuery, stagedFiles],
   );
+  const createPluginOptions = useMemo(
+    () => pluginOptions.filter((plugin) => !isHiddenWireframeCreatePlugin(plugin)),
+    [pluginOptions],
+  );
+  const createSkillOptions = useMemo(
+    () => skillOptions.filter((skill) => !isHiddenWireframeCreateSkill(skill)),
+    [skillOptions],
+  );
   const pluginMatches = useMemo(
     () =>
       mentionActive
-        ? pluginOptions.filter((plugin) => pluginMatchesQuery(plugin, mentionQuery, locale))
+        ? createPluginOptions.filter((plugin) => pluginMatchesQuery(plugin, mentionQuery, locale))
         : [],
-    [locale, mentionActive, mentionQuery, pluginOptions],
+    [locale, mentionActive, mentionQuery, createPluginOptions],
   );
   const skillMatches = useMemo(
     () =>
       mentionActive
-        ? skillOptions.filter((skill) => skillMatchesQuery(skill, mentionQuery, locale))
+        ? createSkillOptions.filter((skill) => skillMatchesQuery(skill, mentionQuery, locale))
         : [],
-    [locale, mentionActive, mentionQuery, skillOptions],
+    [locale, mentionActive, mentionQuery, createSkillOptions],
   );
   const mcpMatches = useMemo(
     () =>
@@ -632,24 +644,24 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         activeSkillId,
         activeSkillTitle,
         mcpOptions,
-        pluginOptions,
+        pluginOptions: createPluginOptions,
         connectorOptions,
         contextWorkspaceItems,
         selectedPluginContexts,
         stagedFiles,
-        skillOptions,
+        skillOptions: createSkillOptions,
       }),
     [
       activePluginRecord,
       activeSkillId,
       activeSkillTitle,
       mcpOptions,
-      pluginOptions,
+      createPluginOptions,
       connectorOptions,
       contextWorkspaceItems,
       selectedPluginContexts,
       stagedFiles,
-      skillOptions,
+      createSkillOptions,
     ],
   );
   const fieldByName = useMemo(
@@ -683,9 +695,9 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   const activeExamplePlugins = useMemo(
     () =>
       activeChipId
-        ? homeHeroExamplePluginsForChip(activeChipId, pluginOptions, locale)
+        ? homeHeroExamplePluginsForChip(activeChipId, createPluginOptions, locale)
         : [],
-    [activeChipId, locale, pluginOptions],
+    [activeChipId, locale, createPluginOptions],
   );
   // Derive sub-category pills from the FULL install set so the rail mirrors the
   // Community section exactly — same sub-category set and same order. (Earlier
@@ -693,8 +705,8 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   // that left the rail showing fewer types than Community; the empty case is
   // now handled by the full-catalog fallback in `filteredExamplePlugins`.)
   const activeSubChips = useMemo(
-    () => subChipsForChip(activeChipId, pluginOptions),
-    [activeChipId, pluginOptions],
+    () => subChipsForChip(activeChipId, createPluginOptions),
+    [activeChipId, createPluginOptions],
   );
   // When a sub-category pill is active, show the SAME set the Community section
   // shows for that sub-category — every matching plugin from the full install
@@ -707,11 +719,11 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   // deck/image plugin that merely carries a "brand" tag is not pulled in.
   const filteredExamplePlugins = useMemo(() => {
     if (!selectedSubcategory || !isSubChipParent(activeChipId)) return activeExamplePlugins;
-    const pool = pluginOptions.filter((plugin) => plugin.manifest?.od?.kind !== 'atom');
+    const pool = createPluginOptions.filter((plugin) => plugin.manifest?.od?.kind !== 'atom');
     return sortByVisualAppeal(
       applyFacetSelection(pool, { category: activeChipId, subcategory: selectedSubcategory }),
     );
-  }, [activeExamplePlugins, activeChipId, selectedSubcategory, pluginOptions]);
+  }, [activeExamplePlugins, activeChipId, selectedSubcategory, createPluginOptions]);
 
   // First-run guide, beat 1: pulse the Prototype chip for brand-new users.
   // The settle delay lets the hero finish its entrance before the sheen.
@@ -1236,7 +1248,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     <section ref={homeHeroRef} className="home-hero" data-testid="home-hero">
       <div className="home-hero__brand" aria-hidden>
         <span className="home-hero__brand-mark od-brand-glyph" />
-        <span className="home-hero__brand-name">Open Design</span>
+        <span className="home-hero__brand-name">{t('app.brand')}</span>
       </div>
       <h1 className="home-hero__title">{t('homeHero.title')}</h1>
       <p className="home-hero__subtitle">
@@ -1779,7 +1791,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                 });
                 onAddConnector();
               }}
-              plugins={pluginOptions}
+              plugins={createPluginOptions}
               onPickPlugin={(record) => {
                 trackHomeChatComposerClick(analytics.track, {
                   page_name: 'home',
@@ -1799,7 +1811,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                 });
                 onAddPlugin();
               }}
-              skills={skillOptions}
+              skills={createSkillOptions}
               onPickSkill={(skill) => {
                 trackHomeChatComposerClick(analytics.track, {
                   page_name: 'home',
@@ -1890,7 +1902,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                 });
                 setFigmaHelpOpen(true);
               }}
-              onOpenDesignSystems={onDesignSystemChange ? () => {
+              onSubstrateSystems={onDesignSystemChange ? () => {
                 trackHomeChatComposerClick(analytics.track, {
                   page_name: 'home',
                   area: 'chat_composer',
@@ -3904,6 +3916,7 @@ export function homeHeroExamplePluginsForChip(
   // section's "Slides" count.
   const showcaseLimit = chipId === 'deck' ? Number.POSITIVE_INFINITY : 18;
   const presets = plugins
+    .filter((plugin) => !isHiddenWireframeCreatePlugin(plugin))
     .filter((plugin) => !EXAMPLE_PRESET_HIDDEN_PLUGIN_IDS.has(plugin.id))
     .filter((plugin) => (
       pluginMatchesExampleChip(plugin, chipId) ||

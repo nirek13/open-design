@@ -5,7 +5,7 @@
 //     title AND a one-line description.
 //   - The rail leads with Website clone, then the slide deck ("Slides"), per the
 //     curated create order.
-//   - The finer-grained scenarios (wireframe / mobile / document) exist and
+//   - The finer-grained scenarios (mobile / document) exist and
 //     route to a working scenario plugin.
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -89,18 +89,14 @@ describe('HomeHero scenario cards', () => {
 
   it('adds the finer-grained scenarios as create cards routed to a scenario plugin', () => {
     renderHero();
-    for (const id of ['wireframe', 'mobile', 'document']) {
+    for (const id of ['mobile', 'document']) {
       const card = screen.getByTestId(`home-hero-rail-${id}`);
       const tabs = screen.getByTestId('home-hero-type-tabs');
       expect(tabs.contains(card)).toBe(true);
       expect(findChip(id)?.action.kind).toBe('apply-scenario');
     }
-    // Wireframe reuses the web-prototype seed at lo-fi fidelity.
-    expect(findChip('wireframe')?.action).toMatchObject({
-      pluginId: 'example-web-prototype',
-      projectKind: 'prototype',
-      projectMetadata: { kind: 'prototype', fidelity: 'wireframe' },
-    });
+    expect(screen.queryByTestId('home-hero-rail-wireframe')).toBeNull();
+    expect(findChip('wireframe')).toBeUndefined();
     expect(findChip('document')?.action).toMatchObject({
       pluginId: 'od-new-generation',
       projectKind: 'other',

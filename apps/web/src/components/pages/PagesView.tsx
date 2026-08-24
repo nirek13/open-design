@@ -32,6 +32,7 @@ import {
   type PageIndexEntry,
 } from './BlockEditor';
 import { composePagesWikiPrompt, draftBlocksPlainText } from './wiki-prompt';
+import { pageMakeAction, type PageMakeKind } from '../../runtime/page-make';
 import { PageContextChip } from './PageContextChip';
 import { PagesAgentBuilder, type PagesAgentSession } from './PagesAgentBuilder';
 import styles from './PagesView.module.css';
@@ -486,28 +487,32 @@ export function PagesView({
     }
   };
 
-  const askWikiAgent = async (request: string) => {
+  const askWikiAgent = async (request: string, options?: { makeKind?: PageMakeKind }) => {
     const trimmed = request.trim();
     if (!trimmed || aiBusy) return;
     setAiBusy(true);
     try {
       const pageTitle = (titleRef.current || '').trim() || undefined;
+      const makeKind = options?.makeKind;
       const seedPrompt = composePagesWikiPrompt({
         request: trimmed,
         pageId: currentId,
         pageTitle,
         pageIcon: iconRef.current,
         pageExcerpt: currentId ? draftBlocksPlainText(draftRef.current) : null,
+        ...(makeKind ? { make: { kind: makeKind, prompt: trimmed } } : {}),
       });
       const created = await createProject({
-        name: pageTitle ? `${pageTitle}: ${trimmed}`.slice(0, 60) : trimmed.slice(0, 60),
+        name: pageTitle
+          ? `${pageTitle}: ${makeKind ? `Make ${pageMakeAction(makeKind).noun}` : trimmed}`.slice(0, 60)
+          : (makeKind ? `Make ${pageMakeAction(makeKind).noun}: ${trimmed}` : trimmed).slice(0, 60),
         pendingPrompt: seedPrompt,
         skillId: null,
         designSystemId: null,
         ...(currentId
           ? {
               metadata: {
-                kind: 'other' as const,
+                kind: makeKind ? pageMakeAction(makeKind).projectKind : ('other' as const),
                 pageContext: {
                   pageId: currentId,
                   title: pageTitle || 'Untitled',
@@ -515,7 +520,9 @@ export function PagesView({
                 },
               },
             }
-          : {}),
+          : makeKind
+            ? { metadata: { kind: pageMakeAction(makeKind).projectKind } }
+            : {}),
       });
       if (created?.project && created.conversationId) {
         setAiPrompt('');
@@ -1027,6 +1034,9 @@ export function PagesView({
                     return created
                       ? { id: created.id, title: created.title || t('pages.untitled'), icon: created.icon }
                       : null;
+                  }}
+                  onMake={(kind, prompt) => {
+                    void askWikiAgent(prompt, { makeKind: kind });
                   }}
                   onChange={(next) => {
                     setDraft(next);

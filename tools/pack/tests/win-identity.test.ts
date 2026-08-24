@@ -14,49 +14,49 @@ const execFileAsync = promisify(execFile);
 describe("resolveWinInstallIdentity", () => {
   it("keeps the default namespace on the canonical Windows display name", () => {
     expect(resolveWinInstallIdentity({ namespace: "default" })).toMatchObject({
-      displayName: "Open Design",
-      shortcutName: "Open Design.lnk",
-      uninstallerName: "Uninstall Open Design.exe",
+      displayName: "Substrate",
+      shortcutName: "Substrate.lnk",
+      uninstallerName: "Uninstall Substrate.exe",
     });
   });
 
   it("uses the canonical Windows display name for stable release namespaces", () => {
     expect(resolveWinInstallIdentity({ namespace: "release-stable-win" })).toMatchObject({
-      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Open Design.exe",
-      displayName: "Open Design",
-      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Open Design-release-stable-win",
-      shortcutName: "Open Design.lnk",
-      uninstallerName: "Uninstall Open Design.exe",
+      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Substrate.exe",
+      displayName: "Substrate",
+      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Substrate-release-stable-win",
+      shortcutName: "Substrate.lnk",
+      uninstallerName: "Uninstall Substrate.exe",
     });
   });
 
   it("uses first-class beta display identity for beta release namespaces", () => {
     expect(resolveWinInstallIdentity({ namespace: "release-beta-win" })).toMatchObject({
-      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Open Design Beta.exe",
-      displayName: "Open Design Beta",
-      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Open Design-release-beta-win",
-      shortcutName: "Open Design Beta.lnk",
-      uninstallerName: "Uninstall Open Design Beta.exe",
+      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Substrate Beta.exe",
+      displayName: "Substrate Beta",
+      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Substrate-release-beta-win",
+      shortcutName: "Substrate Beta.lnk",
+      uninstallerName: "Uninstall Substrate Beta.exe",
     });
   });
 
   it("keeps non-release beta-like namespaces isolated from the real beta channel identity", () => {
     expect(resolveWinInstallIdentity({ namespace: "beta-local-flow" })).toMatchObject({
-      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Open Design beta-local-flow.exe",
-      displayName: "Open Design beta-local-flow",
-      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Open Design-beta-local-flow",
-      shortcutName: "Open Design beta-local-flow.lnk",
-      uninstallerName: "Uninstall Open Design beta-local-flow.exe",
+      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Substrate beta-local-flow.exe",
+      displayName: "Substrate beta-local-flow",
+      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Substrate-beta-local-flow",
+      shortcutName: "Substrate beta-local-flow.lnk",
+      uninstallerName: "Uninstall Substrate beta-local-flow.exe",
     });
   });
 
   it("uses first-class preview display identity for preview release namespaces", () => {
     expect(resolveWinInstallIdentity({ namespace: "release-preview-win" })).toMatchObject({
-      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Open Design Preview.exe",
-      displayName: "Open Design Preview",
-      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Open Design-release-preview-win",
-      shortcutName: "Open Design Preview.lnk",
-      uninstallerName: "Uninstall Open Design Preview.exe",
+      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Substrate Preview.exe",
+      displayName: "Substrate Preview",
+      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Substrate-release-preview-win",
+      shortcutName: "Substrate Preview.lnk",
+      uninstallerName: "Uninstall Substrate Preview.exe",
     });
   });
 
@@ -65,15 +65,15 @@ describe("resolveWinInstallIdentity", () => {
       appVersion: "0.8.0-prerelease.2",
       namespace: "release-stable-win",
     })).toMatchObject({
-      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Open Design Prerelease.exe",
-      displayName: "Open Design Prerelease",
-      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Open Design-release-stable-win",
-      shortcutName: "Open Design Prerelease.lnk",
-      uninstallerName: "Uninstall Open Design Prerelease.exe",
+      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Substrate Prerelease.exe",
+      displayName: "Substrate Prerelease",
+      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Substrate-release-stable-win",
+      shortcutName: "Substrate Prerelease.lnk",
+      uninstallerName: "Uninstall Substrate Prerelease.exe",
     });
     expect(resolveWinInstallIdentity({ namespace: "release-prerelease-win" })).toMatchObject({
-      displayName: "Open Design Prerelease",
-      shortcutName: "Open Design Prerelease.lnk",
+      displayName: "Substrate Prerelease",
+      shortcutName: "Substrate Prerelease.lnk",
     });
   });
 

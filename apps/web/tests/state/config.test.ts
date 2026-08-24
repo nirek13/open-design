@@ -16,6 +16,7 @@ import {
   loadConfig,
   migrateLegacyByokCredentialsToDaemon,
   mergeDaemonConfig,
+  findEnvOpenAiByokProfile,
   mergeByokCredentialProfiles,
   mergeDaemonMediaProviders,
   persistByokCredentialProfileToDaemon,
@@ -1864,7 +1865,7 @@ describe('secure BYOK profiles', () => {
     });
   });
 
-  it('auto-binds an OpenAI env profile when no CLI agent is selected', () => {
+  it('does not auto-complete onboarding when an OpenAI env profile is present', () => {
     const merged = mergeByokCredentialProfiles({
       ...DEFAULT_CONFIG,
       onboardingCompleted: false,
@@ -1873,7 +1874,32 @@ describe('secure BYOK profiles', () => {
       backend: 'env-openai',
       profiles: [{
         id: 'byok-env-openai',
-        label: 'OpenAI (environment)',
+        label: 'Default OpenAI key',
+        protocol: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o-mini',
+        requiresApiKey: true,
+        configured: true,
+        keyTail: 'test',
+        createdAt: 0,
+        updatedAt: 0,
+      }],
+    });
+
+    expect(merged.onboardingCompleted).toBe(false);
+    expect(merged.byokProfileId).toBeUndefined();
+  });
+
+  it('auto-binds an OpenAI env profile after onboarding when no CLI agent is selected', () => {
+    const merged = mergeByokCredentialProfiles({
+      ...DEFAULT_CONFIG,
+      onboardingCompleted: true,
+    }, {
+      available: false,
+      backend: 'env-openai',
+      profiles: [{
+        id: 'byok-env-openai',
+        label: 'Default OpenAI key',
         protocol: 'openai',
         baseUrl: 'https://api.openai.com/v1',
         model: 'gpt-4o-mini',

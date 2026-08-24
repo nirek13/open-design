@@ -506,7 +506,7 @@ const COMMUNITY_PAGE_PRESETS: ProjectPagePreset[] = [
   {
     id: 'community-open-design-landing',
     category: 'prototype',
-    title: pageText('Open Design Landing', 'Open Design 落地页', 'Open Design 落地頁'),
+    title: pageText('Substrate Landing', 'Substrate 落地页', 'Substrate 落地頁'),
     description: pageText(
       'Editorial landing page with a strong hero, proof points, and product narrative.',
       '带强主视觉、信任证明和产品叙事的编辑风落地页。',
@@ -997,7 +997,7 @@ const PROJECT_PAGE_CATEGORIES: Array<{
   { id: 'audio', icon: 'volume', labelKey: 'homeHero.chip.audio' },
   { id: 'liveArtifact', icon: 'kanban', labelKey: 'homeHero.chip.liveArtifact' },
 ];
-const PAGE_CREATOR_HIDDEN_CATEGORIES = new Set<ProjectPageKind>(['image', 'video', 'audio']);
+const PAGE_CREATOR_HIDDEN_CATEGORIES = new Set<ProjectPageKind>(['image', 'video', 'audio', 'wireframe']);
 const PAGE_CREATOR_CATEGORIES = PROJECT_PAGE_CATEGORIES.filter((item) =>
   pageCreatorCategoryVisible(item.id),
 );
@@ -2308,7 +2308,8 @@ export function FileWorkspace({
         return;
       }
 
-      if (primaryModifier && !e.shiftKey && /^[1-9]$/u.test(key)) {
+      // Cmd/Ctrl+1 is organization search; 2–9 still jump to file tabs.
+      if (primaryModifier && !e.shiftKey && /^[2-9]$/u.test(key)) {
         consumeFileWorkspaceTabShortcut(e);
         const index = key === '9' ? workspaceTabIds.length - 1 : Number(key) - 1;
         activateWorkspaceTabByIndex(index);
@@ -3641,7 +3642,7 @@ export function FileWorkspace({
               onRequestBrowserUsePrompt={onRequestBrowserUsePrompt}
               onPageSnapshotToast={handleBrowserPageSnapshotToast}
               onRefreshFiles={onRefreshFiles}
-              onOpenDesignFiles={() => setPersistedActive(DESIGN_FILES_TAB)}
+              onSubstrateFiles={() => setPersistedActive(DESIGN_FILES_TAB)}
               onOpenFile={openFile}
               onPageInfoChange={(info) => updateBrowserTabInfo(browserTab.id, info)}
             />
@@ -6306,7 +6307,7 @@ function initialPrototypePage(title: string, body = DEFAULT_PROTOTYPE_PAGE_BODY)
   <main>
     <section class="hero">
       <div>
-        <div class="eyebrow">Open Design</div>
+        <div class="eyebrow">Substrate</div>
         <h1>${safeTitle}</h1>
         <p>${safeBody}</p>
       </div>
@@ -6448,7 +6449,7 @@ function initialSlidesPage(title: string, body = DEFAULT_SLIDES_PAGE_BODY): stri
   <div class="deck-shell">
     <main class="deck-stage" id="deck-stage">
       <section class="slide active cover" data-screen-label="01 Cover">
-        <div class="kicker">Open Design deck</div>
+        <div class="kicker">Substrate deck</div>
         <h1>${safeTitle}</h1>
         <p class="body">${safeBody}</p>
         <div class="num">01</div>
@@ -6586,7 +6587,7 @@ function initialDocumentPage(title: string, body = DEFAULT_DOCUMENT_PAGE_BODY): 
 </head>
 <body>
   <article>
-    <div class="meta">Open Design document</div>
+    <div class="meta">Substrate document</div>
     <h1>${safeTitle}</h1>
     <p>${safeBody}</p>
     <h2>Purpose</h2>
@@ -6948,7 +6949,9 @@ function isDesignSystemPreviewAppRootRef(ref: string): boolean {
     || pathOnly === '/artifacts'
     || pathOnly.startsWith('/artifacts/')
     || pathOnly === '/frames'
-    || pathOnly.startsWith('/frames/');
+    || pathOnly.startsWith('/frames/')
+    || pathOnly === '/s'
+    || pathOnly.startsWith('/s/');
 }
 
 function rewriteDesignSystemPreviewCssUrls(css: string, projectId: string, stylesheetFileName: string): string {

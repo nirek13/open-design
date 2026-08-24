@@ -259,7 +259,7 @@ interface DesignBrowserPanelProps {
   projectId: string;
   resolvedDir?: string | null;
   onOpenFile: (name: string) => void;
-  onOpenDesignFiles?: () => void;
+  onSubstrateFiles?: () => void;
   onRefreshFiles: () => Promise<void> | void;
   onPageInfoChange?: (info: BrowserPageInfo) => void;
   previewComments?: PreviewComment[];
@@ -728,7 +728,7 @@ export function browserUsePrompt(action: BrowserUseAction, context: BrowserUsePr
   return [
     '@agent-browser',
     '',
-    'Use the selected Open Design Browser tab as the bound target.',
+    'Use the selected Substrate Browser tab as the bound target.',
     'Browser tab context:',
     `- tab: ${tabLabel}`,
     `- title: ${title}`,
@@ -799,7 +799,7 @@ export function DesignBrowserPanel({
   projectId,
   resolvedDir,
   onOpenFile,
-  onOpenDesignFiles,
+  onSubstrateFiles,
   onPageInfoChange,
   onRefreshFiles,
   previewComments = EMPTY_PREVIEW_COMMENTS,
@@ -1695,13 +1695,13 @@ export function DesignBrowserPanel({
       if (options.openAfterSave !== false) onOpenFile(manifestFile);
       const message = t('designBrowser.status.pageSnapshotSaved');
       const elapsedSeconds = pageSnapshotRunElapsedSeconds(run);
-      const canOpenDesignFiles = Boolean(onOpenDesignFiles);
+      const canSubstrateFiles = Boolean(onSubstrateFiles);
       setStatusMessage({
         actionFileName: manifestFile,
-        actionLabel: canOpenDesignFiles
+        actionLabel: canSubstrateFiles
           ? t('designBrowser.status.viewDesignFiles')
           : t('workspace.designFiles'),
-        actionTarget: canOpenDesignFiles ? 'design-files' : 'file',
+        actionTarget: canSubstrateFiles ? 'design-files' : 'file',
         message,
         source: 'page-snapshot',
       });
@@ -2396,8 +2396,8 @@ export function DesignBrowserPanel({
               type="button"
               className="db-status-action"
               onClick={() => {
-                if (statusAction.actionTarget === 'design-files' && onOpenDesignFiles) {
-                  onOpenDesignFiles();
+                if (statusAction.actionTarget === 'design-files' && onSubstrateFiles) {
+                  onSubstrateFiles();
                 } else {
                   onOpenFile(statusAction.actionFileName ?? '');
                 }
@@ -3375,7 +3375,7 @@ export function normalizeBrowserAddress(rawAddress: string): string {
   if (/^localhost(:\d+)?(\/.*)?$/i.test(value)) return `http://${value}`;
   if (/^(127\.0\.0\.1|0\.0\.0\.0)(:\d+)?(\/.*)?$/i.test(value)) return `http://${value}`;
   if (value.startsWith('/')) {
-    if (/^\/(api|artifacts|frames)(\/|$)/.test(value) && typeof window !== 'undefined') {
+    if (/^\/(api|artifacts|frames|s)(\/|$)/.test(value) && typeof window !== 'undefined') {
       return new URL(value, window.location.origin).toString();
     }
     return `file://${encodeURI(value)}`;

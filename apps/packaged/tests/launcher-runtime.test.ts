@@ -26,6 +26,8 @@ function fakeConfig(root: string, appVersion = "1.2.3-beta.4"): PackagedConfig {
     namespace: "release-beta",
     namespaceBaseRoot: join(root, "namespaces"),
     nodeCommand: null,
+    clerkIssuer: null,
+    clerkPublishableKey: null,
     posthogHost: null,
     posthogKey: null,
     resourceRoot: join(root, "installed", "resources", "open-design"),

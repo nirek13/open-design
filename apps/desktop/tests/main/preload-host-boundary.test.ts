@@ -37,6 +37,9 @@ describe("desktop preload host boundary", () => {
     expect(source).toContain("od:app-config-changed");
     expect(source).toContain("open-design:app-config-changed");
     expect(source).toContain("window.dispatchEvent(new CustomEvent(APP_CONFIG_CHANGED_EVENT))");
+    expect(source).toContain("od:toggle-search");
+    expect(source).toContain("open-design:toggle-search");
+    expect(source).toContain("window.dispatchEvent(new CustomEvent(TOGGLE_SEARCH_EVENT))");
     expect(source).not.toContain("@open-design/contracts");
     expect(source).not.toContain("exposeInMainWorld('electronAPI'");
     expect(source).not.toContain('exposeInMainWorld("__odDesktop"');

@@ -35,8 +35,8 @@ import { processWebSourcemaps } from "./web-sourcemaps.js";
 
 const execFileAsync = promisify(execFile);
 
-const PRODUCT_NAME = "Open Design";
-const APP_IMAGE_PRODUCT_NAME = "Open-Design";
+const PRODUCT_NAME = "Substrate";
+const APP_IMAGE_PRODUCT_NAME = "Substrate";
 const DESKTOP_LOG_ECHO_ENV = "OD_DESKTOP_LOG_ECHO";
 // The containerized build sets this to the standalone pnpm binary fetched by
 // buildDockerArgs; runProductionInstall reads it to avoid invoking `npm` inside
@@ -586,6 +586,10 @@ async function writeAssembledApp(
         ...(config.telemetryRelayUrl == null ? {} : { telemetryRelayUrl: config.telemetryRelayUrl }),
         ...(config.posthogKey == null ? {} : { posthogKey: config.posthogKey }),
         ...(config.posthogHost == null ? {} : { posthogHost: config.posthogHost }),
+        ...(config.clerkIssuer == null ? {} : { clerkIssuer: config.clerkIssuer }),
+        ...(config.clerkPublishableKey == null
+          ? {}
+          : { clerkPublishableKey: config.clerkPublishableKey }),
         ...(config.portable ? {} : { namespaceBaseRoot: config.roots.runtime.namespaceBaseRoot }),
       },
       null,
@@ -657,7 +661,7 @@ async function writeLinuxBuilderConfig(config: ToolPackConfig, paths: LinuxPaths
       target,
       icon: linuxResources.icon,
       category: "Development",
-      synopsis: "Open Design",
+      synopsis: "Substrate",
       maintainer: "Open Design Contributors",
     },
     // Keep the AppImage launch fallback explicit. Our top-level AppRun wrapper

@@ -5,6 +5,7 @@ export type InlineMentionKind =
   | 'file'
   | 'workspace'
   | 'connector'
+  | 'person'
   | 'unknown';
 
 export interface InlineMentionEntity {

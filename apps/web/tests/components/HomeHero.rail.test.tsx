@@ -171,14 +171,14 @@ describe('HomeHero intent rail', () => {
 
   it('does not reserve an empty active-context row for a hidden chip-bound plugin', () => {
     renderHero({
-      activeChipId: 'wireframe',
-      activePluginTitle: 'Wireframe',
+      activeChipId: 'prototype',
+      activePluginTitle: 'Prototype',
       showActivePluginChip: false,
       contextItemCount: 3,
     });
 
     expect(document.querySelector('.home-hero__active')).toBeNull();
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Wireframe');
+    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
   });
 
   it('lets the active creation chip be removed from the composer', () => {

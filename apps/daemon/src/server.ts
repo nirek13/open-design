@@ -654,8 +654,11 @@ import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerErpRoutes } from './routes/erp.js';
 import { registerTeamChatRoutes } from './routes/team-chat.js';
 import { registerPagesRoutes } from './routes/pages.js';
+import { registerOrgSearchRoutes } from './routes/org-search.js';
 import { registerCalendarRoutes } from './routes/calendar.js';
 import { registerMailRoutes } from './routes/mail.js';
+import { registerSlackRoutes } from './routes/slack.js';
+import { registerGithubRoutes } from './routes/github.js';
 import { WorkspaceDbManager } from './storage/workspace-db.js';
 import { WorkspaceDataEvents } from './workspace-data/events.js';
 import { ensureDefaultOrganization } from './workspace-data/tenancy.js';
@@ -1248,8 +1251,9 @@ export function createAgentRuntimeToolPrompt(
         '- The organization has a Notion-shaped wiki: nested pages with typed blocks. This is the durable file system for notes, handbooks, and docs — not project HTML files. Prefer `tools pages` over inventing markdown files when the user wants a wiki, knowledge base, handbook, or nested notes.',
         '- Discover first: `"$OD_NODE_BIN" "$OD_BIN" tools pages list --tree`, then `tools pages search --query <text>` and `tools pages get --page <id>`. Reuse existing pages before creating parallel ones.',
         '- Scaffold a whole tree in one call: `tools pages scaffold --input tree.json` with nested `{title, icon, blocks, children}`. Creating a child with `parentPageId` also embeds it on the parent (a page-in-a-page) unless `linkOnParent` is false.',
-        '- Write content with `tools pages upsert --input page.json` (create or replace) or `tools pages append --page <id> --input blocks.json`. Block types: paragraph, heading_1/2/3, bulleted_list_item, numbered_list_item, to_do, toggle, callout, quote, code, divider, bookmark, table, database, artifact, page, record.',
-        '- Embed inside a page with `tools pages embed --page <id> --type page|database|record|artifact|bookmark` plus `--target` (page id), `--table`, `--record`, `--path`, or `--url`. Nested pages (`type=page`) are how you put pages inside pages; `database` embeds a live workspace table; `artifact` points at a design file you built.',
+        '- Write content with `tools pages upsert --input page.json` (create or replace) or `tools pages append --page <id> --input blocks.json`. Block types: paragraph, heading_1/2/3, bulleted_list_item, numbered_list_item, to_do, toggle, callout, quote, code, divider, bookmark, embed, table, database, artifact, page, record.',
+        '- Embed inside a page with `tools pages embed --page <id> --type page|database|record|artifact|bookmark|embed` plus `--target` (page id), `--table`, `--record`, `--path`, or `--url`. Use `type=embed --url` for a live YouTube, Figma, Notion, Google Doc, or any preview — including apps, pictures, videos, and HTML slides you created, via `--url /api/projects/<projectId>/raw/<file>`; nested pages (`type=page`) put pages inside pages; `database` embeds a live workspace table; `artifact` can use that same `/raw/` path.',
+        '- When asked to make a unique app, picture, video, or slides for a page, generate the file in this project (customize it — do not reuse a generic template unchanged) and embed it with `tools pages embed --page <id> --type embed --url /api/projects/<this project id>/raw/<file>`. Do not stop at a description.',
         '- Duplicate with `tools pages duplicate --page <id> [--recursive]`. Archive with `tools pages archive --page <id>`. See `tools pages --help` for payload shapes.',
       ].join('\n')
     : '';
@@ -2431,6 +2435,7 @@ export async function startServer({
     manager: workspaceDbManager,
     identity: identityService,
     connectors: connectorService,
+    dataDir: RUNTIME_DATA_DIR,
     // Serves one file of a shared app to an anonymous link visitor.
     //
     // The headers below are the security line for link sharing: the same
@@ -3356,12 +3361,18 @@ export async function startServer({
   registerTeamChatRoutes(app, {
     db,
     auth: authDeps,
+    paths: pathDeps,
     chat: { manager: workspaceDbManager, identity: identityService },
   });
   registerPagesRoutes(app, {
     db,
     auth: authDeps,
     pages: { manager: workspaceDbManager, identity: identityService },
+  });
+  registerOrgSearchRoutes(app, {
+    db,
+    paths: pathDeps,
+    orgSearch: { manager: workspaceDbManager, identity: identityService },
   });
   registerCalendarRoutes(app, {
     db,
@@ -3376,6 +3387,24 @@ export async function startServer({
     db,
     auth: authDeps,
     mail: {
+      manager: workspaceDbManager,
+      identity: identityService,
+      connectors: connectorService,
+    },
+  });
+  registerSlackRoutes(app, {
+    db,
+    auth: authDeps,
+    slack: {
+      manager: workspaceDbManager,
+      identity: identityService,
+      connectors: connectorService,
+    },
+  });
+  registerGithubRoutes(app, {
+    db,
+    auth: authDeps,
+    github: {
       manager: workspaceDbManager,
       identity: identityService,
       connectors: connectorService,

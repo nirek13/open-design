@@ -21,6 +21,13 @@ function logMacBuildProgress(message: string, fields: Record<string, unknown> = 
 export async function packMac(config: ToolPackConfig): Promise<MacPackResult> {
   const paths = resolveMacPaths(config);
   const targets = resolveElectronBuilderTargets(config.to as MacBuildOutput);
+  if (config.clerkIssuer == null || config.clerkPublishableKey == null) {
+    logMacBuildProgress(
+      "warning: OD_CLERK_ISSUER / OD_CLERK_PUBLISHABLE_KEY are unset; packaged sign-in will show the Clerk setup screen. tools-pack loads .env.local, or set the vars in CI.",
+    );
+  } else {
+    logMacBuildProgress("clerk: baked issuer into packaged config", { issuer: config.clerkIssuer });
+  }
   const cache = new ToolPackCache(config.roots.cacheRoot);
   const timings: MacPackTiming[] = [];
   const runPhase = async <T>(phase: string, task: () => Promise<T>): Promise<T> => {

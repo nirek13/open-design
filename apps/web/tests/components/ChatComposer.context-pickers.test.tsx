@@ -361,6 +361,7 @@ describe('ChatComposer context pickers', () => {
     await waitFor(() => expect(screen.getByTestId('mention-popover')).toBeTruthy());
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'All',
+      'People',
       'Design files',
       'Tabs',
       'Plugins',
@@ -374,7 +375,10 @@ describe('ChatComposer context pickers', () => {
     expect(screen.getByRole('tab', { name: 'Connectors' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Design files' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Tabs' })).toBeTruthy();
-    expect(screen.getByText('Search Design Files, tabs, plugins, skills, MCP servers, and connectors.')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'People' })).toBeTruthy();
+    expect(
+      screen.getByText('Search people, Design Files, tabs, plugins, skills, MCP servers, and connectors.'),
+    ).toBeTruthy();
   });
 
   it('localizes @ panel tabs and empty states in Chinese mode', async () => {
@@ -389,6 +393,7 @@ describe('ChatComposer context pickers', () => {
     await waitFor(() => expect(screen.getByRole('tab', { name: '全部' })).toBeTruthy());
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       '全部',
+      '人员',
       '设计文件',
       '标签页',
       '插件',
@@ -402,7 +407,8 @@ describe('ChatComposer context pickers', () => {
     expect(screen.getByRole('tab', { name: '连接器' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: '设计文件' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: '标签页' })).toBeTruthy();
-    expect(screen.getByText('搜索设计文件、标签页、插件、技能、MCP 服务器和连接器。')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '人员' })).toBeTruthy();
+    expect(screen.getByText('搜索人员、设计文件、标签页、插件、技能、MCP 服务器和连接器。')).toBeTruthy();
 
     await typeAndSettle('@missing');
 

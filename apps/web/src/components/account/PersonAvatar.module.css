@@ -1,0 +1,21 @@
+.root {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--od-accent, #611f69);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

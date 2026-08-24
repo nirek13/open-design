@@ -11,6 +11,24 @@ describe('shared API error codes', () => {
     expect(API_ERROR_CODES).toContain('AGENT_RUNTIME_DEF_INVALID');
   });
 
+  it('exposes USERNAME_TAKEN for unique public handles', () => {
+    expect(API_ERROR_CODES).toContain('USERNAME_TAKEN');
+    const code: ApiErrorCode = 'USERNAME_TAKEN';
+    expect(code).toBe('USERNAME_TAKEN');
+  });
+
+  it('exposes ORG_TEAM_NOT_FOUND for named org groups', () => {
+    expect(API_ERROR_CODES).toContain('ORG_TEAM_NOT_FOUND');
+    const code: ApiErrorCode = 'ORG_TEAM_NOT_FOUND';
+    expect(code).toBe('ORG_TEAM_NOT_FOUND');
+  });
+
+  it('exposes ORG_REPORTS_CYCLE for org-chart loops', () => {
+    expect(API_ERROR_CODES).toContain('ORG_REPORTS_CYCLE');
+    const code: ApiErrorCode = 'ORG_REPORTS_CYCLE';
+    expect(code).toBe('ORG_REPORTS_CYCLE');
+  });
+
   it('keeps AGENT_RUNTIME_DEF_INVALID assignable to ApiErrorCode', () => {
     const code: ApiErrorCode = 'AGENT_RUNTIME_DEF_INVALID';
     expect(code).toBe('AGENT_RUNTIME_DEF_INVALID');

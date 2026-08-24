@@ -78,6 +78,7 @@ export function WorkspaceHome({ active }: Props) {
 
   const [editing, setEditing] = useState<{ tableRef: string; recordId?: string } | null>(null);
   const [buildingTool, setBuildingTool] = useState(false);
+  const [builderMode, setBuilderMode] = useState<'choose' | 'import'>('choose');
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
@@ -217,7 +218,24 @@ export function WorkspaceHome({ active }: Props) {
           <Button variant="ghost" onClick={() => navigate({ kind: 'home', view: 'database' })}>
             {t('workspace.openDatabase')}
           </Button>
-          <Button variant="primary" onClick={() => setBuildingTool(true)} data-testid="workspace-build-tool">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setBuilderMode('import');
+              setBuildingTool(true);
+            }}
+            data-testid="workspace-magic-import"
+          >
+            {t('workspace.magicImport')}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setBuilderMode('choose');
+              setBuildingTool(true);
+            }}
+            data-testid="workspace-build-tool"
+          >
             {t('workspace.buildTool')}
           </Button>
         </>
@@ -451,6 +469,7 @@ export function WorkspaceHome({ active }: Props) {
 
       {buildingTool ? (
         <ToolBuilder
+          initialMode={builderMode}
           onClose={() => setBuildingTool(false)}
           onCreated={async () => {
             setBuildingTool(false);

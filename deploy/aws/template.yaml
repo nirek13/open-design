@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Open Design ECS/Fargate Deployment (VPC, ALB, EFS, Private Access)'
+Description: 'Open Design ECS/Fargate (VPC, ALB, EFS). Default economy mode skips NAT Gateways; switch OperatingMode=performance before a demo.'
 
 Parameters:
   CustomDomainName:
@@ -58,13 +58,24 @@ Parameters:
   TaskSize:
     Type: String
     Default: small
-    AllowedValues: [small, medium, large]
-    Description: 'The compute size for the Open Design application.'
+    AllowedValues: [small, medium, large, xlarge]
+    Description: 'Fargate size used in economy mode. Ignored while OperatingMode=performance (always xlarge). small=0.25vCPU/1GB, medium=0.5/2, large=1/4, xlarge=4/16.'
   TaskCpuArchitecture:
     Type: String
     Default: X86_64
     AllowedValues: [ARM64, X86_64]
     Description: 'The CPU architecture for the Fargate task. Must match how your DockerImage was built (e.g., use X86_64 for standard linux/amd64 images).'
+  OperatingMode:
+    Type: String
+    Default: economy
+    AllowedValues: [economy, performance]
+    Description: 'economy (default) = lowest bill, public-IP Fargate, no NAT. performance = 4 vCPU / 16 GB, 4000s ALB idle timeout, 100 GB ephemeral — flip this on for VC demos, then back to economy.'
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 1
+    Description: 'ECS desired count. Must stay 0 or 1 — SQLite on EFS is single-writer. 0 parks the task (ALB still bills).'
 
 Mappings:
   TaskSizes:
@@ -77,9 +88,13 @@ Mappings:
     large:
       Cpu: '1024'
       Memory: '4096'
+    xlarge:
+      Cpu: '4096'
+      Memory: '16384'
 
 Conditions:
   UseCustomDomain: !Not [!Equals [!Ref CustomDomainName, '']]
+  IsPerformance: !Equals [!Ref OperatingMode, performance]
 
 Rules:
   RequireCertificateWithDomain:
@@ -90,7 +105,11 @@ Rules:
 
 
 Resources:
-  # NETWORKING (VPC, Subnets, NAT)
+  # NETWORKING (VPC, Subnets)
+  # Fargate sits in public subnets with a public IP so it can pull images and
+  # reach AWS APIs without a NAT Gateway (~$32/mo each). Inbound is still only
+  # the ALB security group — the public IP is not a listener. Private subnets
+  # remain solely for EFS mount targets (no internet route required).
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -142,26 +161,6 @@ Resources:
       CidrBlock: !Ref PrivateSubnet2Cidr
       AvailabilityZone: !Select [ 1, !GetAZs '' ]
 
-  NatGatewayEIP:
-    Type: AWS::EC2::EIP
-    Properties:
-      Domain: vpc
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGatewayEIP.AllocationId
-      SubnetId: !Ref PublicSubnet
-
-  NatGateway2EIP:
-    Type: AWS::EC2::EIP
-    Properties:
-      Domain: vpc
-  NatGateway2:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGateway2EIP.AllocationId
-      SubnetId: !Ref PublicSubnet2
-
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -183,12 +182,6 @@ Resources:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
   PrivateSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -199,13 +192,6 @@ Resources:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
-  PrivateRoute2:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable2
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway2
-
   PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -298,6 +284,11 @@ Resources:
       SecurityGroups:
         - !Ref AlbSecurityGroup
       Scheme: internet-facing
+      LoadBalancerAttributes:
+        # Agent streams can run longer than the ALB default (60s). Economy
+        # matches the proxy's 10-minute timeout; performance holds for ~1 hour.
+        - Key: idle_timeout.timeout_seconds
+          Value: !If [IsPerformance, '4000', '600']
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -401,8 +392,18 @@ Resources:
       RequiresCompatibilities:
         - FARGATE
       NetworkMode: awsvpc
-      Cpu: !FindInMap [TaskSizes, !Ref TaskSize, Cpu]
-      Memory: !FindInMap [TaskSizes, !Ref TaskSize, Memory]
+      Cpu:
+        Fn::FindInMap:
+          - TaskSizes
+          - !If [IsPerformance, xlarge, !Ref TaskSize]
+          - Cpu
+      Memory:
+        Fn::FindInMap:
+          - TaskSizes
+          - !If [IsPerformance, xlarge, !Ref TaskSize]
+          - Memory
+      EphemeralStorage:
+        SizeInGiB: !If [IsPerformance, 100, 21]
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       RuntimePlatform:
@@ -421,6 +422,11 @@ Resources:
           Image: !Ref DockerImage
           Environment:
             - Name: OD_ALLOWED_ORIGINS
+              Value: !If
+                - UseCustomDomain
+                - !Sub 'https://${CustomDomainName}'
+                - !Sub 'http://${LoadBalancer.DNSName}'
+            - Name: OD_PUBLIC_BASE_URL
               Value: !If
                 - UseCustomDomain
                 - !Sub 'https://${CustomDomainName}'
@@ -452,6 +458,8 @@ Resources:
               Value: "127.0.0.1"
             - Name: OD_WEB_PORT
               Value: "7456"
+            - Name: PROXY_READ_TIMEOUT
+              Value: !If [IsPerformance, '3600s', '600s']
           Secrets:
             - Name: PROXY_API_TOKEN
               ValueFrom: !Ref ApiTokenSecret
@@ -488,13 +496,13 @@ Resources:
                       proxy_set_header Authorization "Bearer ${PROXY_API_TOKEN}";
 
                       proxy_buffering off;
-                      proxy_read_timeout 600s;
-                      proxy_send_timeout 600s;
+                      proxy_read_timeout ${PROXY_READ_TIMEOUT};
+                      proxy_send_timeout ${PROXY_READ_TIMEOUT};
                       proxy_set_header Connection '';
                   }
               }
               EOF
-              envsubst '$PROXY_PORT $OD_BIND_HOST $OD_WEB_PORT $PROXY_API_TOKEN' < /tmp/default.conf.template > /etc/nginx/conf.d/default.conf
+              envsubst '$PROXY_PORT $OD_BIND_HOST $OD_WEB_PORT $PROXY_API_TOKEN $PROXY_READ_TIMEOUT' < /tmp/default.conf.template > /etc/nginx/conf.d/default.conf
               exec nginx -g "daemon off;"
           LogConfiguration:
             LogDriver: awslogs
@@ -509,14 +517,14 @@ Resources:
       Cluster: !Ref EcsCluster
       TaskDefinition: !Ref TaskDefinition
       LaunchType: FARGATE
-      DesiredCount: 1
+      DesiredCount: !Ref DesiredCount
       HealthCheckGracePeriodSeconds: 60
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: DISABLED
+          AssignPublicIp: ENABLED
           Subnets:
-            - !Ref PrivateSubnet1
-            - !Ref PrivateSubnet2
+            - !Ref PublicSubnet
+            - !Ref PublicSubnet2
           SecurityGroups:
             - !Ref FargateSecurityGroup
       LoadBalancers:
@@ -528,7 +536,7 @@ Resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: !Sub '/ecs/${AWS::StackName}/opendesign-app'
-        RetentionInDays: 7
+        RetentionInDays: !If [IsPerformance, 14, 3]
 
   # SECRETS (Secrets Manager)
   ApiTokenSecret:
@@ -547,3 +555,6 @@ Outputs:
   AlbDnsName:
     Description: 'The raw DNS name of the Application Load Balancer (use as the target for custom domain CNAME/Alias records).'
     Value: !GetAtt LoadBalancer.DNSName
+  OperatingMode:
+    Description: 'economy (low bill) or performance (VC demo sizing). Flip with deploy/aws/set-mode.sh.'
+    Value: !Ref OperatingMode

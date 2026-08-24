@@ -5,14 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 
 const signInProps: Record<string, unknown>[] = [];
+const clerkProviderProps: Record<string, unknown>[] = [];
 let signedIn = false;
 let authLoaded = true;
 const getToken = vi.fn(async () => 'session-token');
 
 vi.mock('@clerk/clerk-react', () => ({
-  ClerkProvider: ({ children }: { children: ReactNode }) => (
-    <div data-testid="clerk-provider">{children}</div>
-  ),
+  ClerkProvider: (props: Record<string, unknown> & { children: ReactNode }) => {
+    clerkProviderProps.push(props);
+    return <div data-testid="clerk-provider">{props.children}</div>;
+  },
   SignedOut: ({ children }: { children: ReactNode }) => (signedIn ? null : <>{children}</>),
   SignedIn: ({ children }: { children: ReactNode }) => (signedIn ? <>{children}</> : null),
   SignIn: (props: Record<string, unknown>) => {
@@ -43,13 +45,16 @@ describe('ClerkSession', () => {
     signedIn = false;
     authLoaded = true;
     signInProps.length = 0;
+    clerkProviderProps.length = 0;
     getToken.mockClear();
     setSessionTokenProvider(null);
+    document.cookie = 'od_session=; Path=/; Max-Age=0; SameSite=Lax';
   });
 
   afterEach(() => {
     cleanup();
     setSessionTokenProvider(null);
+    document.cookie = 'od_session=; Path=/; Max-Age=0; SameSite=Lax';
   });
 
   it('shows a sign-in-or-up card that stays on this page after success', () => {
@@ -62,7 +67,7 @@ describe('ClerkSession', () => {
     );
     expect(screen.getByTestId('clerk-sign-in')).toBeInTheDocument();
     expect(screen.getByTestId('clerk-sign-in-widget')).toBeInTheDocument();
-    expect(screen.getByText('Sign in to Open Design')).toBeInTheDocument();
+    expect(screen.getByText('Sign in to Substrate')).toBeInTheDocument();
     expect(screen.getByText('Sign in or create a new account to continue.')).toBeInTheDocument();
     expect(screen.queryByTestId('app')).toBeNull();
     expect(signInProps[0]).toMatchObject({
@@ -101,5 +106,37 @@ describe('ClerkSession', () => {
     );
     expect(await screen.findByTestId('app')).toBeInTheDocument();
     expect(screen.queryByTestId('clerk-sign-in')).toBeNull();
+    expect(document.cookie).toContain('od_session=session-token');
+  });
+
+  it('maps packaged od:// windows onto an http Clerk redirect and stays in-app', () => {
+    const href = 'od://app/';
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: {
+        protocol: 'od:',
+        pathname: '/',
+        search: '',
+        href,
+        origin: 'od://app',
+      },
+    });
+    render(
+      <I18nProvider initial="en">
+        <ClerkSession appOrigin="http://127.0.0.1:17573" publishableKey="pk_test_x">
+          <div data-testid="app">app</div>
+        </ClerkSession>
+      </I18nProvider>,
+    );
+    expect(signInProps[0]).toMatchObject({
+      oauthFlow: 'popup',
+      fallbackRedirectUrl: 'http://127.0.0.1:17573/',
+    });
+    expect(clerkProviderProps[0]).toMatchObject({
+      allowedRedirectProtocols: ['http', 'https', 'od'],
+      signInFallbackRedirectUrl: 'http://127.0.0.1:17573/',
+    });
+    expect(typeof clerkProviderProps[0]?.routerPush).toBe('function');
+    expect(typeof clerkProviderProps[0]?.routerReplace).toBe('function');
   });
 });

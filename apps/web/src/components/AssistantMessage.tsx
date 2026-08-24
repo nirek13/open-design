@@ -279,7 +279,7 @@ function SkillPluginCandidateCard({
         { action },
       );
       setNotice({
-        message: `Open Design contribution task started for ${data?.path ?? "the draft"}.`,
+        message: `Substrate contribution task started for ${data?.path ?? "the draft"}.`,
       });
     } catch (err) {
       setNotice({ message: err instanceof Error ? err.message : String(err) });
@@ -363,10 +363,10 @@ interface Props {
   ) => Promise<{ message?: string; url?: string } | void> | { message?: string; url?: string } | void;
   activePluginActionPaths?: Set<string>;
   hiddenPluginActionPaths?: Set<string>;
-  // Click handler for the post-completion "Share to Open Design" submission
+  // Click handler for the post-completion "Share to Substrate" submission
   // action. ProjectView wires this to handleSend with the bundled
   // `od-share-to-community` trigger prompt.
-  onShareToOpenDesign?: () => void;
+  onShareToSubstrate?: () => void;
   shareToOpenDesignBusy?: boolean;
   // Consecutive messages from the same assistant share one identity header.
   // ChatPane sets this false after the first item in a contiguous run.
@@ -507,7 +507,7 @@ function AssistantMessageImpl({
   onRequestPluginFolderAgentAction,
   activePluginActionPaths = new Set(),
   hiddenPluginActionPaths = new Set(),
-  onShareToOpenDesign,
+  onShareToSubstrate,
   shareToOpenDesignBusy = false,
   showRole = true,
   isLast,
@@ -766,9 +766,9 @@ function AssistantMessageImpl({
     hasEmptyResponse ||
     !!copyMarkdown ||
     canFork;
-  const canShowOpenDesignSubmission = !!onShareToOpenDesign && showFeedback && runSucceeded;
-  const showOpenDesignSubmission =
-    canShowOpenDesignSubmission && (!!isLast || shareToOpenDesignBusy);
+  const canShowSubstrateSubmission = !!onShareToSubstrate && showFeedback && runSucceeded;
+  const showSubstrateSubmission =
+    canShowSubstrateSubmission && (!!isLast || shareToOpenDesignBusy);
   const effectiveNextStepVariant: NextStepActionsVariant =
     nextStepVariant === 'brand-extraction' && (!runSucceeded || !nextStepArtifactName)
       ? 'brand-programmatic-incomplete'
@@ -831,7 +831,7 @@ function AssistantMessageImpl({
     !hasPendingQuestionForm &&
     ((!!isLast && hasNextStepPrimary &&
       ((runSucceeded && hasTurnDeliverable) || isBrandExtractionRecovery)) ||
-      showOpenDesignSubmission);
+      showSubstrateSubmission);
   // Pre-output vs working: before any real content (text / thinking / tools /
   // files) the footer shimmers "Preparing…"; the moment content lands it
   // flips to "Working". The elapsed clock stays anchored to the persisted run
@@ -1103,7 +1103,7 @@ function AssistantMessageImpl({
             onDownload={isLast && nextStepFileName ? onArtifactDownload : undefined}
             skills={isLast ? nextStepSkills : undefined}
             toolboxSkillNames={isLast ? toolboxSkillNames : undefined}
-            onShareToOpenDesign={showOpenDesignSubmission ? onShareToOpenDesign : undefined}
+            onShareToSubstrate={showSubstrateSubmission ? onShareToSubstrate : undefined}
             shareToOpenDesignBusy={shareToOpenDesignBusy}
             variant={effectiveNextStepVariant}
           />
@@ -2270,7 +2270,7 @@ function PluginActionPanel({
                   <span>
                     {actionBusy && busyKey === `contribute:${folder.path}`
                       ? "Sending..."
-                      : "Open Design PR"}
+                      : "Substrate PR"}
                   </span>
                 </button>
                 {onRequestOpenFile ? (
@@ -2366,7 +2366,7 @@ function pathMatchesFolderFileBasename(
 }
 
 function hasPluginFinalActionHint(content: string): boolean {
-  return /\b(Add to My plugins|Open Design PR|Publish repo|plugin publish|ready to publish|ready to add)\b/i.test(
+  return /\b(Add to My plugins|Substrate PR|Publish repo|plugin publish|ready to publish|ready to add)\b/i.test(
     content,
   );
 }

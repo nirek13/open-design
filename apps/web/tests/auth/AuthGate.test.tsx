@@ -12,8 +12,16 @@ import { AuthGate } from '../../src/auth/AuthGate';
 import * as registry from '../../src/providers/registry';
 
 vi.mock('../../src/auth/ClerkSession', () => ({
-  default: ({ publishableKey, children }: { publishableKey: string; children: React.ReactNode }) => (
-    <div data-testid="clerk-session" data-pk={publishableKey}>
+  default: ({
+    appOrigin,
+    publishableKey,
+    children,
+  }: {
+    appOrigin?: string;
+    publishableKey: string;
+    children: React.ReactNode;
+  }) => (
+    <div data-testid="clerk-session" data-pk={publishableKey} data-app-origin={appOrigin ?? ''}>
       {children}
     </div>
   ),
@@ -21,7 +29,7 @@ vi.mock('../../src/auth/ClerkSession', () => ({
 
 const LOCAL = {
   mode: 'local-owner' as const,
-  viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null },
+  viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
   organizations: [],
 };
 
@@ -47,6 +55,7 @@ describe('AuthGate', () => {
     vi.spyOn(registry, 'fetchAuthContext').mockResolvedValue({
       mode: 'clerk',
       publishableKey: 'pk_test_x',
+      appOrigin: 'http://127.0.0.1:17573',
       viewer: null,
       organizations: [],
     });
@@ -57,6 +66,7 @@ describe('AuthGate', () => {
     );
     const session = await screen.findByTestId('clerk-session');
     expect(session).toHaveAttribute('data-pk', 'pk_test_x');
+    expect(session).toHaveAttribute('data-app-origin', 'http://127.0.0.1:17573');
   });
 
   it('refuses to start Clerk without a publishable key', async () => {
@@ -82,7 +92,7 @@ describe('AuthGate', () => {
         <div data-testid="app">app</div>
       </AuthGate>,
     );
-    expect(await screen.findByText(/cannot reach open design/i)).toBeInTheDocument();
+    expect(await screen.findByText(/cannot reach substrate/i)).toBeInTheDocument();
     expect(screen.queryByTestId('app')).toBeNull();
   });
 

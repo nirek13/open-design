@@ -19,7 +19,12 @@ import {
 } from '@clerk/clerk-react';
 import { useT } from '../i18n';
 import { AuthActionsProvider } from './AuthActions';
-import { installSessionFetch, setSessionTokenProvider } from './session';
+import {
+  clerkRedirectUrl,
+  isHttpLocation,
+  stayOnPackagedApp,
+} from './clerk-redirect-url';
+import { installSessionFetch, plantSessionCookie, setSessionTokenProvider } from './session';
 import styles from './AuthGate.module.css';
 
 /** Clerk's hosted UI, tinted to match the product chrome. */
@@ -50,14 +55,20 @@ export function isClerkOAuthReturn(search: string): boolean {
   );
 }
 
-function stayOnThisPage(): string {
+function stayOnThisPage(appOrigin?: string): string {
   if (typeof window === 'undefined') return '/';
-  return `${window.location.pathname}${window.location.search}` || '/';
+  return clerkRedirectUrl(window.location, appOrigin);
 }
 
 /** Registers Clerk's token getter with the fetch wrapper. Must render inside
  * ClerkProvider — that is the only place `useAuth` is valid. */
-function SessionBridge({ children }: { children: ReactNode }) {
+function SessionBridge({
+  children,
+  redirectUrl,
+}: {
+  children: ReactNode;
+  redirectUrl: string;
+}) {
   const { getToken, isLoaded } = useAuth();
   const { signOut } = useClerk();
   const [ready, setReady] = useState(false);
@@ -65,8 +76,33 @@ function SessionBridge({ children }: { children: ReactNode }) {
   useEffect(() => {
     installSessionFetch();
     setSessionTokenProvider(() => getToken());
-    setReady(true);
-    return () => setSessionTokenProvider(null);
+    let cancelled = false;
+    void getToken()
+      .then((token) => {
+        if (!cancelled) plantSessionCookie(token);
+      })
+      .catch(() => {
+        // A token we cannot mint is the same as no token: render the app and
+        // let API calls 401 rather than hang the shell on Clerk.
+      })
+      .finally(() => {
+        if (!cancelled) setReady(true);
+      });
+    // Clerk session JWTs expire in about a minute. Refresh the cookie so an
+    // idle preview iframe can still authenticate on reload.
+    const refresh = window.setInterval(() => {
+      void getToken()
+        .then((token) => {
+          if (!cancelled && token) plantSessionCookie(token);
+        })
+        .catch(() => {});
+    }, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(refresh);
+      setSessionTokenProvider(null);
+      plantSessionCookie(null);
+    };
   }, [getToken]);
 
   // Holding the first render until the token provider is registered avoids a
@@ -75,7 +111,8 @@ function SessionBridge({ children }: { children: ReactNode }) {
   return (
     <AuthActionsProvider
       signOut={async () => {
-        await signOut({ redirectUrl: '/' });
+        plantSessionCookie(null);
+        await signOut({ redirectUrl });
       }}
     >
       {children}
@@ -83,9 +120,14 @@ function SessionBridge({ children }: { children: ReactNode }) {
   );
 }
 
-function SignInScreen() {
+function SignInScreen({
+  oauthFlow,
+  redirect,
+}: {
+  oauthFlow: 'auto' | 'popup';
+  redirect: string;
+}) {
   const t = useT();
-  const redirect = useMemo(() => stayOnThisPage(), []);
   const oauthReturn = typeof window !== 'undefined' && isClerkOAuthReturn(window.location.search);
 
   if (oauthReturn) {
@@ -107,7 +149,7 @@ function SignInScreen() {
         <SignIn
           routing="virtual"
           withSignUp
-          oauthFlow="auto"
+          oauthFlow={oauthFlow}
           fallbackRedirectUrl={redirect}
           signUpFallbackRedirectUrl={redirect}
           fallback={<p className={styles.body}>Loading sign-in…</p>}
@@ -118,20 +160,54 @@ function SignInScreen() {
 }
 
 export default function ClerkSession({
+  appOrigin,
   publishableKey,
   children,
 }: {
+  appOrigin?: string;
   publishableKey: string;
   children: ReactNode;
 }) {
-  return (
-    <ClerkProvider publishableKey={publishableKey} appearance={CLERK_APPEARANCE} afterSignOutUrl="/">
+  const customScheme = typeof window !== 'undefined' && !isHttpLocation(window.location);
+  const redirect = useMemo(() => stayOnThisPage(appOrigin), [appOrigin]);
+  const session = (
+    <>
       <SignedOut>
-        <SignInScreen />
+        <SignInScreen oauthFlow={customScheme ? 'popup' : 'auto'} redirect={redirect} />
       </SignedOut>
       <SignedIn>
-        <SessionBridge>{children}</SessionBridge>
+        <SessionBridge redirectUrl={redirect}>{children}</SessionBridge>
       </SignedIn>
+    </>
+  );
+
+  if (customScheme) {
+    const navigate = (to: string) => stayOnPackagedApp(to, window.location);
+    return (
+      <ClerkProvider
+        publishableKey={publishableKey}
+        appearance={CLERK_APPEARANCE}
+        afterSignOutUrl={redirect}
+        signInFallbackRedirectUrl={redirect}
+        signUpFallbackRedirectUrl={redirect}
+        allowedRedirectProtocols={['http', 'https', 'od']}
+        routerPush={navigate}
+        routerReplace={navigate}
+      >
+        {session}
+      </ClerkProvider>
+    );
+  }
+
+  return (
+    <ClerkProvider
+      publishableKey={publishableKey}
+      appearance={CLERK_APPEARANCE}
+      afterSignOutUrl={redirect}
+      signInFallbackRedirectUrl={redirect}
+      signUpFallbackRedirectUrl={redirect}
+    >
+      {session}
     </ClerkProvider>
   );
 }

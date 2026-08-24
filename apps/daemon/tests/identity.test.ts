@@ -9,8 +9,13 @@ import type { Request } from 'express';
 
 import { closeDatabase, openDatabase } from '../src/db.js';
 import { WorkspaceDbManager } from '../src/storage/workspace-db.js';
-import { IdentityService, readAuthConfig } from '../src/auth/identity.js';
-import { personalOrganizationName } from '../src/workspace-data/tenancy.js';
+import { IdentityService, readAuthConfig, SESSION_COOKIE_NAME } from '../src/auth/identity.js';
+import {
+  createOrganization,
+  personalOrganizationName,
+  setUserUsername,
+  updateUserProfile,
+} from '../src/workspace-data/tenancy.js';
 
 const ISSUER = 'https://example.clerk.accounts.dev';
 
@@ -31,13 +36,19 @@ function signRs256(
   return `${signingInput}.${signer.sign(privateKey).toString('base64url')}`;
 }
 
-function reqWithBearer(token: string | null): Request {
+function reqWithAuth(opts: { bearer?: string | null; cookie?: string | null }): Request {
   return {
     get(name: string) {
-      if (name.toLowerCase() === 'authorization' && token) return `Bearer ${token}`;
+      const key = name.toLowerCase();
+      if (key === 'authorization' && opts.bearer) return `Bearer ${opts.bearer}`;
+      if (key === 'cookie' && opts.cookie) return opts.cookie;
       return undefined;
     },
   } as Request;
+}
+
+function reqWithBearer(token: string | null): Request {
+  return reqWithAuth({ bearer: token });
 }
 
 describe('readAuthConfig', () => {
@@ -86,6 +97,8 @@ describe('personalOrganizationName', () => {
     expect(personalOrganizationName('Ada')).toBe("Ada's Organization");
     expect(personalOrganizationName('ada@co.com')).toBe('My Organization');
     expect(personalOrganizationName('')).toBe('My Organization');
+    expect(personalOrganizationName('user_abc123')).toBe('My Organization');
+    expect(personalOrganizationName('Member')).toBe('My Organization');
   });
 });
 
@@ -121,6 +134,78 @@ describe('IdentityService clerk mode', () => {
     expect(await identity.resolveViewer(reqWithBearer(null), manager.directoryExecutor)).toBeNull();
   });
 
+  it('maps a session cookie so iframe and img navigations can authenticate', async () => {
+    const token = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_cookie',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        name: 'Ivy',
+        email: 'ivy@co.com',
+      },
+      privateKey,
+    );
+    const viewer = await identity.resolveViewer(
+      reqWithAuth({ cookie: `${SESSION_COOKIE_NAME}=${token}` }),
+      manager.directoryExecutor,
+    );
+    expect(viewer).toMatchObject({
+      displayName: 'Ivy',
+      email: 'ivy@co.com',
+      mode: 'clerk',
+    });
+  });
+
+  it('accepts Clerk __session as a fallback cookie name', async () => {
+    const token = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_clerk_cookie',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        name: 'Kai',
+      },
+      privateKey,
+    );
+    const viewer = await identity.resolveViewer(
+      reqWithAuth({ cookie: `__session=${token}` }),
+      manager.directoryExecutor,
+    );
+    expect(viewer?.displayName).toBe('Kai');
+  });
+
+  it('prefers a Bearer token over a leftover session cookie', async () => {
+    const cookieTok = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_cookie',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        name: 'Cookie Person',
+      },
+      privateKey,
+    );
+    const bearerTok = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_bearer',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        name: 'Bearer Person',
+      },
+      privateKey,
+    );
+    const viewer = await identity.resolveViewer(
+      reqWithAuth({
+        bearer: bearerTok,
+        cookie: `${SESSION_COOKIE_NAME}=${cookieTok}`,
+      }),
+      manager.directoryExecutor,
+    );
+    expect(viewer?.displayName).toBe('Bearer Person');
+  });
+
   it('maps a verified session onto a directory user', async () => {
     const token = signRs256(
       { alg: 'RS256', typ: 'JWT', kid },
@@ -148,7 +233,7 @@ describe('IdentityService clerk mode', () => {
         WHERE m.user_id = ?`,
       [viewer!.userId],
     );
-    expect(orgs).toEqual([{ name: "Ada's Organization", role: 'owner' }]);
+    expect(orgs).toEqual([]);
 
     await identity.resolveViewer(reqWithBearer(token), manager.directoryExecutor);
     const again = await manager.directoryExecutor.all<{ name: string }>(
@@ -158,7 +243,70 @@ describe('IdentityService clerk mode', () => {
         WHERE m.user_id = ?`,
       [viewer!.userId],
     );
-    expect(again).toHaveLength(1);
+    expect(again).toHaveLength(0);
+  });
+
+  it('does not store a Clerk subject as a display name or workspace name', async () => {
+    const token = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_abc123xyz',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      },
+      privateKey,
+    );
+    const viewer = await identity.resolveViewer(reqWithBearer(token), manager.directoryExecutor);
+    expect(viewer?.displayName).toBe('Member');
+    expect(viewer?.displayName).not.toMatch(/^user_/);
+
+    const orgs = await manager.directoryExecutor.all<{ name: string }>(
+      `SELECT w.name
+         FROM od_workspaces w
+         JOIN od_workspace_members m ON m.workspace_id = w.id
+        WHERE m.user_id = ?`,
+      [viewer!.userId],
+    );
+    expect(orgs).toEqual([]);
+  });
+
+  it('renames a personal org that was generated from a Clerk user id', async () => {
+    const token = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_abc123xyz',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      },
+      privateKey,
+    );
+    const viewer = await identity.resolveViewer(reqWithBearer(token), manager.directoryExecutor);
+    await createOrganization(manager.directoryExecutor, {
+      name: "user_abc123xyz's Organization",
+      ownerUserId: viewer!.userId,
+    });
+
+    const named = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_abc123xyz',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        username: 'nirek',
+      },
+      privateKey,
+    );
+    const again = await identity.resolveViewer(reqWithBearer(named), manager.directoryExecutor);
+    expect(again?.displayName).toBe('nirek');
+
+    const orgs = await manager.directoryExecutor.all<{ name: string }>(
+      `SELECT w.name
+         FROM od_workspaces w
+         JOIN od_workspace_members m ON m.workspace_id = w.id
+        WHERE m.user_id = ?`,
+      [viewer!.userId],
+    );
+    expect(orgs).toEqual([{ name: "nirek's Organization" }]);
   });
 
   it('stores a Clerk username so teammates can be invited by it', async () => {
@@ -180,6 +328,60 @@ describe('IdentityService clerk mode', () => {
       [viewer!.userId],
     );
     expect(row?.username).toBe('ada');
+  });
+
+  it('does not overwrite a claimed username when Clerk later sends a different handle', async () => {
+    const claims = {
+      sub: 'user_ada',
+      iss: ISSUER,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      email: 'ada@co.com',
+      name: 'Ada Lovelace',
+    };
+    const first = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      { ...claims, username: 'ada' },
+      privateKey,
+    );
+    const viewer = await identity.resolveViewer(reqWithBearer(first), manager.directoryExecutor);
+    expect(viewer?.username).toBe('ada');
+
+    const second = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      { ...claims, username: 'ada-new' },
+      privateKey,
+    );
+    const again = await identity.resolveViewer(reqWithBearer(second), manager.directoryExecutor);
+    expect(again?.username).toBe('ada');
+
+    await setUserUsername(manager.directoryExecutor, viewer!.userId, 'jane');
+    const third = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      { ...claims, username: 'ada' },
+      privateKey,
+    );
+    const afterClaim = await identity.resolveViewer(reqWithBearer(third), manager.directoryExecutor);
+    expect(afterClaim?.username).toBe('jane');
+  });
+
+  it('does not replace a chosen display name with Clerk Member', async () => {
+    const claims = {
+      sub: 'user_nirek',
+      iss: ISSUER,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      email: 'nirek@co.com',
+      name: 'Member',
+      username: 'nirek',
+    };
+    const token = signRs256({ alg: 'RS256', typ: 'JWT', kid }, claims, privateKey);
+    const viewer = await identity.resolveViewer(reqWithBearer(token), manager.directoryExecutor);
+    expect(viewer?.displayName).toBe('nirek');
+
+    await updateUserProfile(manager.directoryExecutor, viewer!.userId, {
+      displayName: 'Ada Lovelace',
+    });
+    const again = await identity.resolveViewer(reqWithBearer(token), manager.directoryExecutor);
+    expect(again?.displayName).toBe('Ada Lovelace');
   });
 
   it('refuses a token from the wrong issuer', async () => {

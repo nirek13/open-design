@@ -192,7 +192,7 @@ export interface ComposerPlusMenuProps {
   /** Opens the "how to download a .fig" guide. */
   onShowFigmaHelp?: () => void;
   /** Opens the design-system picker/surface. */
-  onOpenDesignSystems?: () => void;
+  onSubstrateSystems?: () => void;
 
   /**
    * Optional "Design toolbox" row, rendered LAST. Only the project composer
@@ -297,7 +297,7 @@ export function ComposerPlusMenu({
   onSelectFromLibrary,
   onImportFigma,
   onShowFigmaHelp,
-  onOpenDesignSystems,
+  onSubstrateSystems,
   renderToolbox,
   toolboxLabel,
   triggerTestId,
@@ -655,7 +655,7 @@ export function ComposerPlusMenu({
             </PlusMenuGroup>
           ) : null}
 
-          {(onImportFigma || onOpenDesignSystems) ? (
+          {(onImportFigma || onSubstrateSystems) ? (
             <PlusMenuGroup label={t('chat.plus.group.designs')}>
           {onImportFigma ? (
             <div className="plus-menu__split-row" role="none">
@@ -687,7 +687,7 @@ export function ComposerPlusMenu({
               ) : null}
             </div>
           ) : null}
-          {onOpenDesignSystems ? (
+          {onSubstrateSystems ? (
             <button
               type="button"
               role="menuitem"
@@ -695,7 +695,7 @@ export function ComposerPlusMenu({
               data-testid="composer-plus-design-system"
               onClick={() => {
                 close();
-                onOpenDesignSystems();
+                onSubstrateSystems();
               }}
             >
               <Icon name="blocks" size={14} className="plus-menu__item-icon" />

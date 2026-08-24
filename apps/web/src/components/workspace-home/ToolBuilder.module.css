@@ -6,10 +6,9 @@
 .panel {
   display: flex; flex-direction: column; width: 100%; max-width: 620px; max-height: 88vh; overflow: hidden;
   border: 1px solid var(--od-border, rgba(127,127,127,0.28)); border-radius: 14px;
-  background: var(--od-surface-1, #14141a); box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  background: var(--od-surface-1); box-shadow: var(--shadow-lg);
   animation: rise 200ms cubic-bezier(0.23,1,0.32,1);
 }
-@media (prefers-color-scheme: light) { .panel { background: var(--od-surface-1, #fff); } }
 @keyframes rise { from { opacity: 0; transform: translateY(8px) scale(0.98) } to { opacity: 1; transform: none } }
 .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px 8px; }
 .title { margin: 0; font-size: 16px; font-weight: 600; }

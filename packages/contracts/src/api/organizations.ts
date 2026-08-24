@@ -35,6 +35,12 @@ export interface Organization {
   createdBy: string;
   createdAt: number;
   updatedAt: number;
+  /** Public website used to scrape workspace branding. */
+  websiteUrl?: string | null;
+  /** Design system extracted from the website; new work defaults to this. */
+  defaultDesignSystemId?: string | null;
+  /** When first-run brand setup finished (or was skipped). Null means pending. */
+  setupCompletedAt?: number | null;
 }
 
 /** An organization as seen by the signed-in caller, carrying their standing
@@ -44,14 +50,60 @@ export interface OrganizationMembershipView extends Organization {
   memberCount: number;
 }
 
+/** A named group of members inside an organization — Finance, contractors,
+ * the design pod. Privilege stays on OrgRole (owner/admin/member); a team is
+ * how you talk about a subset of people when granting or sending an app. */
+export interface OrgTeam {
+  id: string;
+  orgId: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  memberIds: string[];
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateOrgTeamRequest {
+  name: string;
+  description?: string;
+  memberIds?: string[];
+}
+
+export interface UpdateOrgTeamRequest {
+  name?: string;
+  description?: string;
+  /** Replace membership. Omit to leave members unchanged. */
+  memberIds?: string[];
+}
+
+export interface OrgTeamsResponse {
+  teams: OrgTeam[];
+}
+
+export interface OrgTeamResponse {
+  team: OrgTeam;
+}
+
 export interface OrgMember {
   id: string;
   orgId: string;
   userId: string;
   displayName: string;
   email: string | null;
+  /** Unique public handle teammates use to @mention and invite this person. */
+  username: string | null;
+  bio: string | null;
+  /** Authenticated image URL when this person has uploaded a photo. */
+  avatarUrl: string | null;
   role: OrgRole;
   status: OrgMemberStatus;
+  /** Member id of this person's manager. Null if they sit at the top of the
+   * org chart or have not been placed yet. Search (and any other hierarchy
+   * scope) treats "above" as walking this pointer and "below" as everyone
+   * who eventually points here. */
+  reportsTo: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -67,11 +119,19 @@ export interface AuthContextResponse {
   mode: AuthMode;
   /** Present when mode is 'clerk' — the browser SDK needs it to start a session. */
   publishableKey?: string;
+  /**
+   * HTTP(S) origin of the SPA. Packaged Electron windows load `od://app`,
+   * which Clerk rejects as `redirect_url`; the client substitutes this origin.
+   */
+  appOrigin?: string;
   /** Null when the caller is not signed in (only possible when mode is 'clerk'). */
   viewer: {
     userId: string;
     displayName: string;
     email: string | null;
+    username: string | null;
+    bio: string | null;
+    avatarUrl: string | null;
   } | null;
   organizations: OrganizationMembershipView[];
 }
@@ -80,9 +140,43 @@ export interface CreateOrganizationRequest {
   name: string;
 }
 
+export interface UpdateOrganizationRequest {
+  name?: string;
+  websiteUrl?: string | null;
+  defaultDesignSystemId?: string | null;
+  /** Set true to mark first-run brand setup finished. */
+  setupCompleted?: boolean;
+}
+
+/**
+ * Turn a pasted invite into the raw token the accept endpoint expects.
+ * Accepts a full `/join/<token>` URL, a path, or the token/code itself.
+ */
+export function parseJoinInput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    const parts = url.pathname.split('/').filter(Boolean);
+    const joinAt = parts.lastIndexOf('join');
+    const token = joinAt >= 0 ? parts[joinAt + 1] : undefined;
+    if (token) {
+      return decodeURIComponent(token.replace(/\/+$/, ''));
+    }
+  } catch {
+    // Not an absolute URL — fall through to path / bare token handling.
+  }
+  const pathMatch = /(?:^|\/)join\/([^/?#]+)/i.exec(trimmed);
+  if (pathMatch?.[1]) return decodeURIComponent(pathMatch[1].replace(/\/+$/, ''));
+  return trimmed;
+}
+
 export interface UpdateOrgMemberRequest {
   role?: OrgRole;
   status?: OrgMemberStatus;
+  /** Set the manager. Null clears it. Must be another active member and must
+   * not create a reporting cycle. */
+  reportsTo?: string | null;
 }
 
 /** How an invite chooses its recipient. `link` is anyone who has the URL;
@@ -99,7 +193,7 @@ export interface OrgInvite {
   kind: OrgInviteKind;
   /** Lowercased email when `kind` is `email`. */
   targetEmail: string | null;
-  /** Username or display name as entered when `kind` is `username`. */
+  /** Public username as entered when `kind` is `username`. */
   targetUsername: string | null;
   /** Directory user the invite was bound to, when one already existed. */
   targetUserId: string | null;
@@ -121,7 +215,7 @@ export interface CreateOrgInviteRequest {
   maxUses?: number;
   /** Invite this address. Mutually exclusive with `username`. */
   email?: string;
-  /** Invite this username or display name. Mutually exclusive with `email`. */
+  /** Invite this public username. Mutually exclusive with `email`. */
   username?: string;
   /** When inviting by email, send the join link through the connected Gmail
    * account. Defaults to true. Creation still succeeds if sending fails. */
@@ -195,3 +289,52 @@ export const ORG_HEADER = 'x-od-org';
  * unauthenticated interactive requests resolve to this identity, so audit
  * attribution stays coherent when real authentication is switched on later. */
 export const LOCAL_OWNER_USER_ID = 'user-local-owner';
+
+/** Clerk subject ids look like `user_2abc…`. They are identifiers, not names. */
+const OPAQUE_USER_ID = /^user_[A-Za-z0-9]+$/;
+
+export function isOpaqueUserId(value: string | null | undefined): boolean {
+  const trimmed = value?.trim() ?? '';
+  return !trimmed || OPAQUE_USER_ID.test(trimmed);
+}
+
+/** Clerk-less accounts are stored as "Member" / "Someone". Those are
+ * placeholders, not names a teammate can use to tell people apart. */
+const PLACEHOLDER_PERSON_NAMES = new Set(['member', 'someone']);
+
+export function isPlaceholderPersonName(value: string | null | undefined): boolean {
+  return PLACEHOLDER_PERSON_NAMES.has((value?.trim() ?? '').toLowerCase());
+}
+
+/** Pick a name a teammate can read. Never returns a Clerk user id or a
+ * generic placeholder when a username or email is available. */
+export function personLabel(
+  input: {
+    displayName?: string | null;
+    username?: string | null;
+    email?: string | null;
+  },
+  fallback = 'Member',
+): string {
+  const display = input.displayName?.trim() ?? '';
+  if (display && !isOpaqueUserId(display) && !isPlaceholderPersonName(display)) {
+    const at = display.indexOf('@');
+    if (at > 0) return display.slice(0, at);
+    return display;
+  }
+  const username = input.username?.trim() ?? '';
+  if (username && !isOpaqueUserId(username)) return username;
+  const email = input.email?.trim() ?? '';
+  const at = email.indexOf('@');
+  if (at > 0) return email.slice(0, at);
+  if (email) return email;
+  return fallback;
+}
+
+/** Sidebar / switcher label. Personal orgs created from a Clerk id look like
+ * `user_abc… Organization` and should not be shown as a workspace name. */
+export function workspaceLabel(name: string | null | undefined, fallback = 'Workspace'): string {
+  const trimmed = name?.trim() ?? '';
+  if (!trimmed || trimmed.startsWith('user_')) return fallback;
+  return trimmed;
+}

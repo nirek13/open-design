@@ -139,6 +139,61 @@ const DIRECTORY_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
         WHERE target_user_id IS NOT NULL;
     `);
   },
+  // v4 — profile copy and a photo content-type so teammates can tell people
+  // apart by more than a username. The image bytes live under the daemon
+  // data root, not in this table.
+  (db) => {
+    db.exec(`
+      ALTER TABLE od_users ADD COLUMN bio TEXT;
+      ALTER TABLE od_users ADD COLUMN avatar_mime TEXT;
+    `);
+  },
+  // v5 — named teams inside an organization. Privilege stays on member.role
+  // (owner/admin/member); a team is a subset you grant or send an app to.
+  (db) => {
+    db.exec(`
+      CREATE TABLE od_org_teams (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES od_workspaces(id),
+        slug TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX odx_org_teams_slug
+        ON od_org_teams(workspace_id, slug);
+      CREATE TABLE od_org_team_members (
+        team_id TEXT NOT NULL REFERENCES od_org_teams(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (team_id, member_id)
+      );
+      CREATE INDEX odx_org_team_members_member
+        ON od_org_team_members(workspace_id, member_id);
+    `);
+  },
+  // v6 — first-run website branding on the organization itself.
+  (db) => {
+    db.exec(`
+      ALTER TABLE od_workspaces ADD COLUMN website_url TEXT;
+      ALTER TABLE od_workspaces ADD COLUMN default_design_system_id TEXT;
+      ALTER TABLE od_workspaces ADD COLUMN setup_completed_at INTEGER;
+      UPDATE od_workspaces SET setup_completed_at = created_at WHERE setup_completed_at IS NULL;
+    `);
+  },
+  // v7 — reporting hierarchy. Search (and any other "who can see whose
+  // work" rule) walks this pointer: above = managers, below = reports.
+  (db) => {
+    db.exec(`
+      ALTER TABLE od_workspace_members ADD COLUMN reports_to TEXT;
+      CREATE INDEX odx_members_reports_to
+        ON od_workspace_members(workspace_id, reports_to)
+        WHERE reports_to IS NOT NULL;
+    `);
+  },
 ];
 
 const WORKSPACE_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
@@ -644,6 +699,53 @@ const WORKSPACE_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
         value TEXT NOT NULL,
         PRIMARY KEY (workspace_id, key)
       );
+    `);
+  },
+
+  // Direct messages, group DMs, and per-message emoji reactions.
+  (db) => {
+    db.exec(`
+      ALTER TABLE od_chat_channels ADD COLUMN kind TEXT NOT NULL DEFAULT 'channel';
+      CREATE TABLE od_chat_reactions (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES od_chat_messages(id) ON DELETE CASCADE,
+        member_id TEXT NOT NULL,
+        emoji TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX odx_chat_reaction_unique
+        ON od_chat_reactions(message_id, member_id, emoji);
+      CREATE INDEX odx_chat_reaction_message ON od_chat_reactions(message_id);
+    `);
+  },
+
+  // Lasting public URL for one-click app-to-web publish.
+  (db) => {
+    db.exec(`ALTER TABLE od_apps ADD COLUMN web_url TEXT;`);
+  },
+
+  // v15 — team grants and per-person denials on org apps.
+  (db) => {
+    db.exec(`
+      CREATE TABLE od_app_team_grants (
+        app_id TEXT NOT NULL REFERENCES od_apps(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        team_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (app_id, team_id)
+      );
+      CREATE INDEX odx_app_team_grants_team
+        ON od_app_team_grants(workspace_id, team_id);
+      CREATE TABLE od_app_denials (
+        app_id TEXT NOT NULL REFERENCES od_apps(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (app_id, member_id)
+      );
+      CREATE INDEX odx_app_denials_member
+        ON od_app_denials(workspace_id, member_id);
     `);
   },
 ];

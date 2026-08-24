@@ -12,9 +12,16 @@
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
+  BIO_MAX_LENGTH,
+  DISPLAY_NAME_MAX_LENGTH,
   LOCAL_OWNER_USER_ID,
+  isOpaqueUserId,
+  isPlaceholderPersonName,
+  parseUsername,
   roleAtLeast,
+  usernameParseMessage,
   type CreateOrgInviteRequest,
+  type CreateOrgTeamRequest,
   type Organization,
   type OrganizationMembershipView,
   type OrgInvite,
@@ -22,17 +29,22 @@ import {
   type OrgMember,
   type OrgPendingInvite,
   type OrgRole,
+  type OrgTeam,
+  type UpdateOrgTeamRequest,
 } from '@open-design/contracts';
 import { WorkspaceDataError } from './errors.js';
+import { reportsToWouldCycle } from './hierarchy.js';
 import type { SqlExecutor } from '../storage/sql.js';
 
 const ORG_COLS =
-  'id, name, created_by AS "createdBy", created_at AS "createdAt", updated_at AS "updatedAt"';
+  'id, name, created_by AS "createdBy", created_at AS "createdAt", updated_at AS "updatedAt", website_url AS "websiteUrl", default_design_system_id AS "defaultDesignSystemId", setup_completed_at AS "setupCompletedAt"';
 
 const MEMBER_COLS = `
   m.id, m.workspace_id AS "orgId", m.user_id AS "userId",
-  u.display_name AS "displayName", u.email,
-  m.role, m.status, m.created_at AS "createdAt", m.updated_at AS "updatedAt"
+  u.display_name AS "displayName", u.email, u.username, u.bio,
+  u.avatar_mime AS "avatarMime",
+  m.role, m.status, m.reports_to AS "reportsTo",
+  m.created_at AS "createdAt", m.updated_at AS "updatedAt"
 `;
 
 const INVITE_COLS = `
@@ -63,13 +75,34 @@ function num(value: unknown): number {
 }
 
 function normalizeOrg(row: Record<string, any>): Organization {
-  return { ...(row as Organization), createdAt: num(row.createdAt), updatedAt: num(row.updatedAt) };
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    createdBy: String(row.createdBy),
+    createdAt: num(row.createdAt),
+    updatedAt: num(row.updatedAt),
+    websiteUrl: typeof row.websiteUrl === 'string' && row.websiteUrl.trim() ? row.websiteUrl.trim() : null,
+    defaultDesignSystemId:
+      typeof row.defaultDesignSystemId === 'string' && row.defaultDesignSystemId.trim()
+        ? row.defaultDesignSystemId.trim()
+        : null,
+    setupCompletedAt: row.setupCompletedAt == null || row.setupCompletedAt === '' ? null : num(row.setupCompletedAt),
+  };
 }
 
 function normalizeMember(row: Record<string, any>): OrgMember {
   return {
-    ...(row as OrgMember),
+    id: String(row.id),
+    orgId: String(row.orgId),
+    userId: String(row.userId),
+    displayName: String(row.displayName),
     email: row.email ?? null,
+    username: row.username ?? null,
+    bio: row.bio ?? null,
+    avatarUrl: profileAvatarUrl(String(row.userId), row.avatarMime ?? null),
+    role: row.role,
+    status: row.status,
+    reportsTo: typeof row.reportsTo === 'string' && row.reportsTo.trim() ? String(row.reportsTo) : null,
     createdAt: num(row.createdAt),
     updatedAt: num(row.updatedAt),
   };
@@ -117,14 +150,17 @@ function assertEmail(raw: string): string {
 }
 
 function assertUsername(raw: string): string {
-  const username = raw.trim();
-  if (username.length < 2 || username.length > 64) {
-    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'username must be between 2 and 64 characters');
+  const parsed = parseUsername(raw);
+  if (!parsed.ok) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, usernameParseMessage(parsed.error));
   }
-  if (username.includes('@')) {
-    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'username cannot be an email address');
-  }
-  return username;
+  return parsed.username;
+}
+
+function seedUsername(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null;
+  const parsed = parseUsername(raw);
+  return parsed.ok ? parsed.username : null;
 }
 
 export function hashInviteToken(token: string): string {
@@ -146,9 +182,16 @@ export interface DirectoryUser {
   displayName: string;
   email: string | null;
   username: string | null;
+  bio: string | null;
+  avatarMime: string | null;
 }
 
-const USER_COLS = 'id, display_name AS "displayName", email, username';
+const USER_COLS =
+  'id, display_name AS "displayName", email, username, bio, avatar_mime AS "avatarMime"';
+
+export function profileAvatarUrl(userId: string, avatarMime: string | null | undefined): string | null {
+  return avatarMime ? `/api/users/${encodeURIComponent(userId)}/avatar` : null;
+}
 
 function normalizeUser(row: DirectoryUser): DirectoryUser {
   return {
@@ -156,7 +199,19 @@ function normalizeUser(row: DirectoryUser): DirectoryUser {
     displayName: row.displayName,
     email: row.email ?? null,
     username: row.username ?? null,
+    bio: row.bio ?? null,
+    avatarMime: row.avatarMime ?? null,
   };
+}
+
+/** Keep a chosen name when Clerk only has a generic fallback like "Member". */
+function chooseDisplayName(existing: string | undefined, incoming: string): string {
+  const incomingPlaceholder =
+    !incoming.trim() || isOpaqueUserId(incoming) || isPlaceholderPersonName(incoming);
+  const existingReal =
+    Boolean(existing) && !isOpaqueUserId(existing) && !isPlaceholderPersonName(existing);
+  if (incomingPlaceholder && existingReal) return existing!;
+  return incoming.trim() || existing || 'Member';
 }
 
 async function usernameTakenByOther(
@@ -204,39 +259,171 @@ export async function upsertExternalUser(
     [input.externalId],
   );
   const now = Date.now();
-  const nextUsername = input.username?.trim() || null;
+  const seededUsername = seedUsername(input.username);
   if (existing) {
-    const username =
-      nextUsername && !(await usernameTakenByOther(directory, nextUsername, existing.id))
-        ? nextUsername
+    // A claimed handle is the person's public alias. Clerk may send a
+    // username on every request; never overwrite one they already chose.
+    const username = existing.username
+      ? existing.username
+      : seededUsername && !(await usernameTakenByOther(directory, seededUsername, existing.id))
+        ? seededUsername
         : existing.username;
-    // Profile edits upstream should show up here without a separate sync.
+    const displayName = chooseDisplayName(existing.displayName, input.displayName);
     if (
-      existing.displayName !== input.displayName ||
+      existing.displayName !== displayName ||
       (existing.email ?? null) !== input.email ||
       (existing.username ?? null) !== (username ?? null)
     ) {
       await directory.run(
         'UPDATE od_users SET display_name = ?, email = ?, username = ?, updated_at = ? WHERE id = ?',
-        [input.displayName, input.email, username, now, existing.id],
+        [displayName, input.email, username, now, existing.id],
       );
     }
-    return { id: existing.id, displayName: input.displayName, email: input.email, username };
+    return {
+      id: existing.id,
+      displayName,
+      email: input.email,
+      username,
+      bio: existing.bio,
+      avatarMime: existing.avatarMime,
+    };
   }
   const id = `user-${randomUUID()}`;
   const username =
-    nextUsername && !(await usernameTakenByOther(directory, nextUsername, id)) ? nextUsername : null;
+    seededUsername && !(await usernameTakenByOther(directory, seededUsername, id))
+      ? seededUsername
+      : null;
+  const displayName = chooseDisplayName(undefined, input.displayName);
   await directory.run(
     `INSERT INTO od_users (id, clerk_user_id, display_name, email, username, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, input.externalId, input.displayName, input.email, username, now, now],
+    [id, input.externalId, displayName, input.email, username, now, now],
   );
-  return { id, displayName: input.displayName, email: input.email, username };
+  return { id, displayName, email: input.email, username, bio: null, avatarMime: null };
 }
 
 export async function getUser(directory: SqlExecutor, userId: string): Promise<DirectoryUser | null> {
   const row = await directory.get<DirectoryUser>(`SELECT ${USER_COLS} FROM od_users WHERE id = ?`, [userId]);
   return row ? normalizeUser(row) : null;
+}
+
+export async function getUserByUsername(
+  directory: SqlExecutor,
+  username: string,
+): Promise<DirectoryUser | null> {
+  const parsed = parseUsername(username);
+  if (!parsed.ok) return null;
+  const row = await directory.get<DirectoryUser>(
+    `SELECT ${USER_COLS} FROM od_users WHERE username IS NOT NULL AND lower(username) = ?`,
+    [parsed.username],
+  );
+  return row ? normalizeUser(row) : null;
+}
+
+/** Claim or change the caller's public username. Unique across the directory. */
+export async function setUserUsername(
+  directory: SqlExecutor,
+  userId: string,
+  raw: string,
+): Promise<DirectoryUser> {
+  const username = assertUsername(raw);
+  const existing = await getUser(directory, userId);
+  if (!existing) {
+    throw new WorkspaceDataError('NOT_FOUND', 404, `user ${userId} not found`);
+  }
+  if (existing.username === username) return existing;
+  if (await usernameTakenByOther(directory, username, userId)) {
+    throw new WorkspaceDataError('USERNAME_TAKEN', 409, `@${username} is already taken`);
+  }
+  const now = Date.now();
+  try {
+    await directory.run('UPDATE od_users SET username = ?, updated_at = ? WHERE id = ?', [
+      username,
+      now,
+      userId,
+    ]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/UNIQUE constraint failed|duplicate key value|odx_users_username/i.test(message)) {
+      throw new WorkspaceDataError('USERNAME_TAKEN', 409, `@${username} is already taken`);
+    }
+    throw err;
+  }
+  return { ...existing, username };
+}
+
+export async function updateUserProfile(
+  directory: SqlExecutor,
+  userId: string,
+  patch: { username?: string; displayName?: string; bio?: string | null },
+): Promise<DirectoryUser> {
+  let user = await getUser(directory, userId);
+  if (!user) {
+    throw new WorkspaceDataError('NOT_FOUND', 404, `user ${userId} not found`);
+  }
+  if (typeof patch.username === 'string') {
+    user = await setUserUsername(directory, userId, patch.username);
+  }
+
+  const updates: string[] = [];
+  const params: unknown[] = [];
+  if (typeof patch.displayName === 'string') {
+    const displayName = patch.displayName.trim();
+    if (!displayName) {
+      throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'display name is required');
+    }
+    if (displayName.length > DISPLAY_NAME_MAX_LENGTH) {
+      throw new WorkspaceDataError(
+        'VALIDATION_FAILED',
+        422,
+        `display name must be at most ${DISPLAY_NAME_MAX_LENGTH} characters`,
+      );
+    }
+    if (isOpaqueUserId(displayName)) {
+      throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'display name cannot be a user id');
+    }
+    updates.push('display_name = ?');
+    params.push(displayName);
+    user = { ...user, displayName };
+  }
+  if (patch.bio !== undefined) {
+    const bio = (patch.bio ?? '').trim();
+    if (bio.length > BIO_MAX_LENGTH) {
+      throw new WorkspaceDataError(
+        'VALIDATION_FAILED',
+        422,
+        `bio must be at most ${BIO_MAX_LENGTH} characters`,
+      );
+    }
+    const stored = bio || null;
+    updates.push('bio = ?');
+    params.push(stored);
+    user = { ...user, bio: stored };
+  }
+  if (updates.length > 0) {
+    const now = Date.now();
+    updates.push('updated_at = ?');
+    params.push(now, userId);
+    await directory.run(`UPDATE od_users SET ${updates.join(', ')} WHERE id = ?`, params);
+  }
+  return user;
+}
+
+export async function setUserAvatarMime(
+  directory: SqlExecutor,
+  userId: string,
+  mime: string | null,
+): Promise<DirectoryUser> {
+  const existing = await getUser(directory, userId);
+  if (!existing) {
+    throw new WorkspaceDataError('NOT_FOUND', 404, `user ${userId} not found`);
+  }
+  await directory.run('UPDATE od_users SET avatar_mime = ?, updated_at = ? WHERE id = ?', [
+    mime,
+    Date.now(),
+    userId,
+  ]);
+  return { ...existing, avatarMime: mime };
 }
 
 async function findUsersByEmail(directory: SqlExecutor, email: string): Promise<DirectoryUser[]> {
@@ -248,16 +435,8 @@ async function findUsersByEmail(directory: SqlExecutor, email: string): Promise<
 }
 
 async function findUsersByUsername(directory: SqlExecutor, username: string): Promise<DirectoryUser[]> {
-  const needle = username.trim().toLowerCase();
-  const rows = await directory.all<DirectoryUser>(
-    `SELECT ${USER_COLS} FROM od_users
-     WHERE (username IS NOT NULL AND lower(username) = ?)
-        OR lower(display_name) = ?`,
-    [needle, needle],
-  );
-  const byId = new Map<string, DirectoryUser>();
-  for (const row of rows) byId.set(row.id, normalizeUser(row));
-  return [...byId.values()];
+  const match = await getUserByUsername(directory, username);
+  return match ? [match] : [];
 }
 
 // --- Organizations --------------------------------------------------------
@@ -304,6 +483,9 @@ export async function listOrganizationsForUser(
   const rows = await directory.all<Record<string, any>>(
     `SELECT w.id, w.name, w.created_by AS "createdBy",
             w.created_at AS "createdAt", w.updated_at AS "updatedAt",
+            w.website_url AS "websiteUrl",
+            w.default_design_system_id AS "defaultDesignSystemId",
+            w.setup_completed_at AS "setupCompletedAt",
             m.role,
             (SELECT COUNT(*) FROM od_workspace_members mc
               WHERE mc.workspace_id = w.id AND mc.status = 'active') AS "memberCount"
@@ -329,6 +511,53 @@ export async function getOrganization(directory: SqlExecutor, orgId: string): Pr
     throw new WorkspaceDataError('ORG_NOT_FOUND', 404, `organization ${orgId} not found`);
   }
   return normalizeOrg(row);
+}
+
+export async function updateOrganization(
+  directory: SqlExecutor,
+  orgId: string,
+  patch: {
+    name?: string;
+    websiteUrl?: string | null;
+    defaultDesignSystemId?: string | null;
+    setupCompleted?: boolean;
+  },
+): Promise<Organization> {
+  await getOrganization(directory, orgId);
+  const now = Date.now();
+  if (patch.name !== undefined) {
+    const trimmed = patch.name.trim();
+    if (!trimmed) {
+      throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'organization name is required');
+    }
+    await directory.run('UPDATE od_workspaces SET name = ?, updated_at = ? WHERE id = ?', [
+      trimmed,
+      now,
+      orgId,
+    ]);
+  }
+  if (patch.websiteUrl !== undefined) {
+    const websiteUrl = patch.websiteUrl?.trim() ? patch.websiteUrl.trim() : null;
+    await directory.run('UPDATE od_workspaces SET website_url = ?, updated_at = ? WHERE id = ?', [
+      websiteUrl,
+      now,
+      orgId,
+    ]);
+  }
+  if (patch.defaultDesignSystemId !== undefined) {
+    const designSystemId = patch.defaultDesignSystemId?.trim() ? patch.defaultDesignSystemId.trim() : null;
+    await directory.run(
+      'UPDATE od_workspaces SET default_design_system_id = ?, updated_at = ? WHERE id = ?',
+      [designSystemId, now, orgId],
+    );
+  }
+  if (patch.setupCompleted === true) {
+    await directory.run(
+      'UPDATE od_workspaces SET setup_completed_at = ?, updated_at = ? WHERE id = ?',
+      [now, now, orgId],
+    );
+  }
+  return getOrganization(directory, orgId);
 }
 
 export async function renameOrganization(
@@ -413,11 +642,12 @@ export async function updateOrgMember(
   directory: SqlExecutor,
   orgId: string,
   memberId: string,
-  patch: { role?: OrgRole; status?: 'active' | 'removed' },
+  patch: { role?: OrgRole; status?: 'active' | 'removed'; reportsTo?: string | null },
 ): Promise<OrgMember> {
   const member = await getOrgMember(directory, orgId, memberId);
   const nextRole = patch.role === undefined ? member.role : assertRole(patch.role);
   const nextStatus = patch.status ?? member.status;
+  const nextReportsTo = patch.reportsTo === undefined ? member.reportsTo : patch.reportsTo;
   const losesOwnership =
     member.role === 'owner' && member.status === 'active' && (nextRole !== 'owner' || nextStatus !== 'active');
   if (losesOwnership && (await countActiveOwners(directory, orgId, memberId)) === 0) {
@@ -427,12 +657,34 @@ export async function updateOrgMember(
       'this is the only owner; promote another member to owner first',
     );
   }
-  await directory.run('UPDATE od_workspace_members SET role = ?, status = ?, updated_at = ? WHERE id = ?', [
-    nextRole,
-    nextStatus,
-    Date.now(),
-    memberId,
-  ]);
+  if (nextReportsTo) {
+    const manager = await getOrgMember(directory, orgId, nextReportsTo);
+    if (manager.status !== 'active') {
+      throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'manager must be an active member of this organization');
+    }
+    const roster = await listOrgMembers(directory, orgId);
+    if (reportsToWouldCycle(roster, memberId, nextReportsTo)) {
+      throw new WorkspaceDataError(
+        'ORG_REPORTS_CYCLE',
+        409,
+        'that manager would create a reporting cycle',
+      );
+    }
+  }
+  await directory.run(
+    'UPDATE od_workspace_members SET role = ?, status = ?, reports_to = ?, updated_at = ? WHERE id = ?',
+    [nextRole, nextStatus, nextReportsTo, Date.now(), memberId],
+  );
+  if (nextStatus === 'removed' && member.status === 'active') {
+    await directory.run('DELETE FROM od_org_team_members WHERE workspace_id = ? AND member_id = ?', [
+      orgId,
+      memberId,
+    ]);
+    await directory.run(
+      'UPDATE od_workspace_members SET reports_to = NULL, updated_at = ? WHERE workspace_id = ? AND reports_to = ?',
+      [Date.now(), orgId, memberId],
+    );
+  }
   return getOrgMember(directory, orgId, memberId);
 }
 
@@ -453,6 +705,215 @@ export function assertMemberRole(member: OrgMember | null, minimum: OrgRole, org
     );
   }
   return member;
+}
+
+// --- Teams ----------------------------------------------------------------
+
+const TEAM_COLS = `
+  id, workspace_id AS "orgId", slug, name, description,
+  created_by AS "createdBy", created_at AS "createdAt", updated_at AS "updatedAt"
+`;
+
+function slugifyTeamName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return slug || 'team';
+}
+
+function normalizeTeam(row: Record<string, any>, memberIds: string[]): OrgTeam {
+  return {
+    id: String(row.id),
+    orgId: String(row.orgId),
+    slug: String(row.slug),
+    name: String(row.name),
+    description: row.description ?? null,
+    memberIds,
+    createdBy: String(row.createdBy),
+    createdAt: num(row.createdAt),
+    updatedAt: num(row.updatedAt),
+  };
+}
+
+async function memberIdsForTeams(
+  directory: SqlExecutor,
+  orgId: string,
+  teamIds: string[],
+): Promise<Map<string, string[]>> {
+  const grouped = new Map<string, string[]>();
+  for (const id of teamIds) grouped.set(id, []);
+  if (teamIds.length === 0) return grouped;
+  const placeholders = teamIds.map(() => '?').join(', ');
+  const rows = await directory.all<{ teamId: string; memberId: string }>(
+    `SELECT team_id AS "teamId", member_id AS "memberId" FROM od_org_team_members
+      WHERE workspace_id = ? AND team_id IN (${placeholders})
+      ORDER BY member_id`,
+    [orgId, ...teamIds],
+  );
+  for (const row of rows) {
+    grouped.get(row.teamId)?.push(row.memberId);
+  }
+  return grouped;
+}
+
+async function uniqueTeamSlug(
+  directory: SqlExecutor,
+  orgId: string,
+  name: string,
+  exceptId?: string,
+): Promise<string> {
+  const base = slugifyTeamName(name);
+  for (let n = 0; n < 50; n += 1) {
+    const slug = n === 0 ? base : `${base.slice(0, 40)}-${n + 1}`;
+    const row = await directory.get<{ id: string }>(
+      'SELECT id FROM od_org_teams WHERE workspace_id = ? AND slug = ?',
+      [orgId, slug],
+    );
+    if (!row || row.id === exceptId) return slug;
+  }
+  return `${base.slice(0, 24)}-${randomUUID().slice(0, 8)}`;
+}
+
+async function replaceTeamMembers(
+  directory: SqlExecutor,
+  orgId: string,
+  teamId: string,
+  memberIds: string[] | undefined,
+): Promise<void> {
+  if (memberIds === undefined) return;
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of memberIds) {
+    if (typeof raw !== 'string' || !raw.trim()) continue;
+    const id = raw.trim();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const member = await getOrgMember(directory, orgId, id);
+    if (member.status !== 'active') continue;
+    unique.push(id);
+  }
+  await directory.run('DELETE FROM od_org_team_members WHERE team_id = ? AND workspace_id = ?', [teamId, orgId]);
+  const now = Date.now();
+  for (const memberId of unique) {
+    await directory.run(
+      `INSERT INTO od_org_team_members (team_id, workspace_id, member_id, created_at)
+       VALUES (?, ?, ?, ?)`,
+      [teamId, orgId, memberId, now],
+    );
+  }
+}
+
+export async function listOrgTeams(directory: SqlExecutor, orgId: string): Promise<OrgTeam[]> {
+  await getOrganization(directory, orgId);
+  const rows = await directory.all<Record<string, any>>(
+    `SELECT ${TEAM_COLS} FROM od_org_teams WHERE workspace_id = ? ORDER BY name ASC, created_at ASC`,
+    [orgId],
+  );
+  const grouped = await memberIdsForTeams(
+    directory,
+    orgId,
+    rows.map((row) => String(row.id)),
+  );
+  return rows.map((row) => normalizeTeam(row, grouped.get(String(row.id)) ?? []));
+}
+
+export async function getOrgTeam(directory: SqlExecutor, orgId: string, teamId: string): Promise<OrgTeam> {
+  const row = await directory.get<Record<string, any>>(
+    `SELECT ${TEAM_COLS} FROM od_org_teams WHERE workspace_id = ? AND id = ?`,
+    [orgId, teamId],
+  );
+  if (!row) {
+    throw new WorkspaceDataError('ORG_TEAM_NOT_FOUND', 404, `team ${teamId} not found`);
+  }
+  const grouped = await memberIdsForTeams(directory, orgId, [String(row.id)]);
+  return normalizeTeam(row, grouped.get(String(row.id)) ?? []);
+}
+
+export async function listTeamIdsForMember(
+  directory: SqlExecutor,
+  orgId: string,
+  memberId: string,
+): Promise<string[]> {
+  const rows = await directory.all<{ teamId: string }>(
+    `SELECT team_id AS "teamId" FROM od_org_team_members
+      WHERE workspace_id = ? AND member_id = ?`,
+    [orgId, memberId],
+  );
+  return rows.map((row) => row.teamId);
+}
+
+export async function createOrgTeam(
+  directory: SqlExecutor,
+  orgId: string,
+  createdByMemberId: string,
+  input: CreateOrgTeamRequest,
+): Promise<OrgTeam> {
+  await getOrganization(directory, orgId);
+  const name = typeof input.name === 'string' ? input.name.trim() : '';
+  if (!name) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'team name is required');
+  }
+  if (name.length > 80) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'team name must be 80 characters or fewer');
+  }
+  const description =
+    typeof input.description === 'string' && input.description.trim() ? input.description.trim() : null;
+  if (description && description.length > 280) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'team description must be 280 characters or fewer');
+  }
+  await getOrgMember(directory, orgId, createdByMemberId);
+  const now = Date.now();
+  const id = `team-${randomUUID()}`;
+  const slug = await uniqueTeamSlug(directory, orgId, name);
+  await directory.run(
+    `INSERT INTO od_org_teams
+       (id, workspace_id, slug, name, description, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, orgId, slug, name, description, createdByMemberId, now, now],
+  );
+  await replaceTeamMembers(directory, orgId, id, input.memberIds);
+  return getOrgTeam(directory, orgId, id);
+}
+
+export async function updateOrgTeam(
+  directory: SqlExecutor,
+  orgId: string,
+  teamId: string,
+  patch: UpdateOrgTeamRequest,
+): Promise<OrgTeam> {
+  const current = await getOrgTeam(directory, orgId, teamId);
+  const name = patch.name === undefined ? current.name : patch.name.trim();
+  if (!name) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'team name is required');
+  }
+  if (name.length > 80) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'team name must be 80 characters or fewer');
+  }
+  const description =
+    patch.description === undefined
+      ? current.description
+      : patch.description.trim()
+        ? patch.description.trim()
+        : null;
+  if (description && description.length > 280) {
+    throw new WorkspaceDataError('VALIDATION_FAILED', 422, 'team description must be 280 characters or fewer');
+  }
+  const slug = name === current.name ? current.slug : await uniqueTeamSlug(directory, orgId, name, teamId);
+  await directory.run(
+    `UPDATE od_org_teams SET name = ?, slug = ?, description = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`,
+    [name, slug, description, Date.now(), teamId, orgId],
+  );
+  await replaceTeamMembers(directory, orgId, teamId, patch.memberIds);
+  return getOrgTeam(directory, orgId, teamId);
+}
+
+export async function deleteOrgTeam(directory: SqlExecutor, orgId: string, teamId: string): Promise<OrgTeam> {
+  const team = await getOrgTeam(directory, orgId, teamId);
+  await directory.run('DELETE FROM od_org_teams WHERE id = ? AND workspace_id = ?', [teamId, orgId]);
+  return team;
 }
 
 // --- Invites --------------------------------------------------------------
@@ -805,30 +1266,32 @@ export async function ensureDefaultOrganization(directory: SqlExecutor): Promise
 /** Default name for the organization a new account lands in. */
 export function personalOrganizationName(displayName: string): string {
   const name = displayName.trim();
-  if (!name || name.includes('@') || name.length > 48) return 'My Organization';
+  if (
+    !name ||
+    name.includes('@') ||
+    name.length > 48 ||
+    isOpaqueUserId(name) ||
+    name.toLowerCase() === 'member'
+  ) {
+    return 'My Organization';
+  }
   return `${name}'s Organization`;
 }
 
-/** Every signed-in person needs somewhere to stand. A new account, or one
- * that has left every organization, gets a personal org they own — they can
- * still join others from invites. Cheap and idempotent: a membership check
- * then maybe one insert. */
+/** Rename a leftover personal org whose name was derived from a Clerk user id.
+ * Does not create an organization — after sign-up the person chooses join or
+ * create, so a brand-new account is allowed to have none. */
 export async function ensurePersonalOrganization(
   directory: SqlExecutor,
   input: { userId: string; displayName: string },
-): Promise<Organization> {
+): Promise<Organization | null> {
   const existing = await listOrganizationsForUser(directory, input.userId);
-  if (existing[0]) {
-    return {
-      id: existing[0].id,
-      name: existing[0].name,
-      createdBy: existing[0].createdBy,
-      createdAt: existing[0].createdAt,
-      updatedAt: existing[0].updatedAt,
-    };
+  if (!existing[0]) return null;
+  if (existing[0].name.startsWith('user_')) {
+    const next = personalOrganizationName(input.displayName);
+    if (next !== existing[0].name) {
+      return renameOrganization(directory, existing[0].id, next);
+    }
   }
-  return createOrganization(directory, {
-    name: personalOrganizationName(input.displayName),
-    ownerUserId: input.userId,
-  });
+  return getOrganization(directory, existing[0].id);
 }

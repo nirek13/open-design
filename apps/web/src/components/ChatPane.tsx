@@ -522,10 +522,10 @@ interface Props {
   ) => Promise<{ message?: string; url?: string } | void> | { message?: string; url?: string } | void;
   activePluginActionPaths?: Set<string>;
   hiddenPluginActionPaths?: Set<string>;
-  // "Share to Open Design" button on each completed assistant message —
+  // "Share to Substrate" button on each completed assistant message —
   // wired by ProjectView to handleSend with the bundled
   // `od-share-to-community` scenario's trigger prompt.
-  onShareToOpenDesign?: (assistantMessageId: string) => void;
+  onShareToSubstrate?: (assistantMessageId: string) => void;
   shareToOpenDesignBusyMessageId?: string | null;
   forceStreamingMessageIds?: Set<string>;
   // Live-only streaming tool-input partials keyed by tool-use id. Threaded to
@@ -828,7 +828,7 @@ export function ChatPane({
   onRequestPluginFolderAgentAction,
   activePluginActionPaths,
   hiddenPluginActionPaths,
-  onShareToOpenDesign,
+  onShareToSubstrate,
   shareToOpenDesignBusyMessageId,
   forceStreamingMessageIds,
   liveToolInput,
@@ -1005,7 +1005,7 @@ export function ChatPane({
     onBrandBrowserAssistConfirm,
     onArtifactShare,
     onForkFromMessage,
-    onShareToOpenDesign,
+    onShareToSubstrate,
     onNextStepAiOptimize: onContinueBrandEnrichment,
     onNextStepContinueExtraction: onContinueBrandExtraction,
     onNextStepContinueAiExtraction: onContinueBrandAgentExtraction,
@@ -1019,7 +1019,7 @@ export function ChatPane({
     onBrandBrowserAssistConfirm,
     onArtifactShare,
     onForkFromMessage,
-    onShareToOpenDesign,
+    onShareToSubstrate,
     onNextStepAiOptimize: onContinueBrandEnrichment,
     onNextStepContinueExtraction: onContinueBrandExtraction,
     onNextStepContinueAiExtraction: onContinueBrandAgentExtraction,
@@ -2391,7 +2391,7 @@ export function ChatPane({
                 onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
                 activePluginActionPaths={activePluginActionPaths}
                 hiddenPluginActionPaths={hiddenPluginActionPaths}
-                onShareToOpenDesign={onShareToOpenDesign}
+                onShareToSubstrate={onShareToSubstrate}
                 shareToOpenDesignBusyMessageId={shareToOpenDesignBusyMessageId}
                 forceStreamingMessageIds={forceStreamingMessageIds}
                 lastAssistantId={lastAssistantId}
@@ -2773,7 +2773,7 @@ interface AssistantCallbacks {
   onBrandBrowserAssistConfirm: BrandBrowserAssistConfirm | undefined;
   onArtifactShare: ((fileName: string) => void) | undefined;
   onForkFromMessage: ((message: ChatMessage) => void) | undefined;
-  onShareToOpenDesign: ((assistantMessageId: string) => void) | undefined;
+  onShareToSubstrate: ((assistantMessageId: string) => void) | undefined;
   onNextStepAiOptimize: (() => void) | undefined;
   onNextStepContinueExtraction: (() => void) | undefined;
   onNextStepContinueAiExtraction: (() => void) | undefined;
@@ -2828,7 +2828,7 @@ function ChatRows({
   onRequestPluginFolderAgentAction,
   activePluginActionPaths,
   hiddenPluginActionPaths,
-  onShareToOpenDesign,
+  onShareToSubstrate,
   shareToOpenDesignBusyMessageId,
   forceStreamingMessageIds,
   lastAssistantId,
@@ -2884,7 +2884,7 @@ function ChatRows({
   onRequestPluginFolderAgentAction?: (relativePath: string, action: PluginFolderAgentAction) => void;
   activePluginActionPaths?: Set<string>;
   hiddenPluginActionPaths?: Set<string>;
-  onShareToOpenDesign?: (assistantMessageId: string) => void;
+  onShareToSubstrate?: (assistantMessageId: string) => void;
   shareToOpenDesignBusyMessageId?: string | null;
   forceStreamingMessageIds?: Set<string>;
   lastAssistantId: string | undefined;
@@ -3046,9 +3046,9 @@ function ChatRows({
         onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
         activePluginActionPaths={activePluginActionPaths}
         hiddenPluginActionPaths={hiddenPluginActionPaths}
-        onShareToOpenDesign={
-          onShareToOpenDesign
-            ? () => assistantCallbacksRef.current.onShareToOpenDesign?.(m.id)
+        onShareToSubstrate={
+          onShareToSubstrate
+            ? () => assistantCallbacksRef.current.onShareToSubstrate?.(m.id)
             : undefined
         }
         shareToOpenDesignBusy={shareToOpenDesignBusyMessageId === m.id}
@@ -3916,7 +3916,7 @@ export function buildRunErrorDiagnosticText(input: RunErrorDiagnosticInput): str
   }
 
   lines.push(
-    'Open Design run error diagnostics',
+    'Substrate run error diagnostics',
     `trace_id: ${input.traceId ?? 'n/a'}`,
     `run_id: ${input.traceId ?? 'n/a'}`,
     `error_code: ${input.errorCode ?? 'n/a'}`,
@@ -4105,7 +4105,7 @@ function UserMessageImpl({
               items={appliedContextItems}
               t={t}
               onOpenPlugin={onRequestPluginDetails}
-              onOpenDesignSystem={onRequestDesignSystemDetails}
+              onSubstrateSystem={onRequestDesignSystemDetails}
             />
           ) : null}
         </div>
@@ -4194,12 +4194,12 @@ function AppliedContextDisclosure({
   items,
   t,
   onOpenPlugin,
-  onOpenDesignSystem,
+  onSubstrateSystem,
 }: {
   items: AppliedContextItem[];
   t: TranslateFn;
   onOpenPlugin?: (pluginId: string) => void;
-  onOpenDesignSystem?: (system: DesignSystemSummary) => void;
+  onSubstrateSystem?: (system: DesignSystemSummary) => void;
 }) {
   const [open, setOpen] = useState(false);
   const names = items.map((item) => item.title).join(' · ');
@@ -4231,7 +4231,7 @@ function AppliedContextDisclosure({
                   ? 'Skill'
                   : 'Design System';
               const canOpenPlugin = item.kind === 'plugin' && !!onOpenPlugin;
-              const canOpenSystem = item.kind === 'design-system' && !!item.system && !!onOpenDesignSystem;
+              const canOpenSystem = item.kind === 'design-system' && !!item.system && !!onSubstrateSystem;
               const content = (
                 <>
                   <span className="msg-applied-context__kind">{label}</span>
@@ -4246,7 +4246,7 @@ function AppliedContextDisclosure({
                   onClick={() => {
                     if (item.kind === 'plugin') onOpenPlugin?.(item.pluginId);
                     if (item.kind === 'design-system' && item.system) {
-                      onOpenDesignSystem?.(item.system);
+                      onSubstrateSystem?.(item.system);
                     }
                   }}
                 >

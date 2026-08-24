@@ -17,6 +17,9 @@ const ORG = {
   createdBy: 'wsm-1',
   createdAt: 1,
   updatedAt: 1,
+  websiteUrl: null,
+  defaultDesignSystemId: null,
+  setupCompletedAt: 1,
   role: 'owner' as const,
   memberCount: 1,
 };
@@ -27,8 +30,12 @@ const OWNER = {
   userId: 'user-local-owner',
   displayName: 'Local Owner',
   email: null,
+  username: null,
+  bio: null,
+  avatarUrl: null,
   role: 'owner' as const,
   status: 'active' as const,
+  reportsTo: null,
   createdAt: 1,
   updatedAt: 1,
 };
@@ -47,10 +54,11 @@ describe('OrgMembersView invites', () => {
   beforeEach(() => {
     vi.spyOn(registry, 'fetchAuthContext').mockResolvedValue({
       mode: 'local-owner',
-      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null },
+      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
       organizations: [ORG],
     });
     vi.spyOn(registry, 'fetchOrgMembers').mockResolvedValue([OWNER]);
+    vi.spyOn(registry, 'fetchOrgTeams').mockResolvedValue([]);
     vi.spyOn(registry, 'fetchOrgInvites').mockResolvedValue([]);
     vi.spyOn(registry, 'fetchPendingInvites').mockResolvedValue([]);
   });
@@ -122,5 +130,26 @@ describe('OrgMembersView invites', () => {
       expect(registry.createOrgInvite).toHaveBeenCalledWith('ws-1', { role: 'member' });
     });
     expect(await screen.findByText(/shown once/i)).toBeTruthy();
+  });
+
+  it('creates a named team from the members view', async () => {
+    vi.spyOn(registry, 'createOrgTeam').mockResolvedValue({
+      id: 'team-1',
+      orgId: 'ws-1',
+      slug: 'finance',
+      name: 'Finance',
+      description: null,
+      memberIds: [],
+      createdBy: 'wsm-1',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    renderMembers();
+    await screen.findByTestId('org-team-name');
+    fireEvent.change(screen.getByTestId('org-team-name'), { target: { value: 'Finance' } });
+    fireEvent.click(screen.getByTestId('org-create-team'));
+    await waitFor(() => {
+      expect(registry.createOrgTeam).toHaveBeenCalledWith('ws-1', { name: 'Finance' });
+    });
   });
 });

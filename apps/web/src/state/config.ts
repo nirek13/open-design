@@ -112,7 +112,7 @@ export interface KnownProvider {
   baseUrl: string;
   /** Ranked provider-owned preferences, matched against the live account catalogue. */
   preferredModels: string[];
-  /** Model ids that Open Design previously preselected but the provider retired. */
+  /** Model ids that Substrate previously preselected but the provider retired. */
   retiredModels?: string[];
   /** Optional provider-specific key console link shown in Settings. */
   apiKeyConsoleLink?: { host: string; url: string };
@@ -842,10 +842,30 @@ export async function fetchByokCredentialProfilesFromDaemon(): Promise<
   try {
     const response = await fetch('/api/byok/profiles');
     if (!response.ok) return null;
-    return await response.json() as ByokCredentialProfilesResponse;
+    const payload = await response.json() as unknown;
+    if (!isByokCredentialProfilesResponse(payload)) return null;
+    return payload;
   } catch {
     return null;
   }
+}
+
+function isByokCredentialProfilesResponse(
+  value: unknown,
+): value is ByokCredentialProfilesResponse {
+  if (!value || typeof value !== 'object') return false;
+  return Array.isArray((value as { profiles?: unknown }).profiles);
+}
+
+export function findEnvOpenAiByokProfile(
+  profiles: readonly ByokCredentialProfile[] | undefined,
+): ByokCredentialProfile | null {
+  if (!profiles) return null;
+  return profiles.find((candidate) =>
+    candidate.configured
+    && candidate.protocol === 'openai'
+    && /api\.openai\.com/i.test(candidate.baseUrl),
+  ) ?? null;
 }
 
 export class ByokCredentialProfileHttpError extends Error {
@@ -1202,10 +1222,27 @@ export async function migrateLegacyByokCredentialsToDaemon(
   }
 }
 
+export function applyDefaultOpenAiByokProfile(
+  config: AppConfig,
+  profile: ByokCredentialProfile,
+): AppConfig {
+  return {
+    ...applySavedByokCredentialProfile(config, profile),
+    mode: 'api',
+    apiKey: '',
+    baseUrl: profile.baseUrl,
+    model: profile.model || config.model || 'gpt-4o-mini',
+    apiProtocol: 'openai',
+    apiProviderBaseUrl: 'https://api.openai.com/v1',
+    agentId: null,
+  };
+}
+
 /**
  * Reconciles a locally selected non-secret profile reference with the daemon.
- * When no profile is selected yet but a configured OpenAI (api.openai.com) BYOK
- * profile exists, bind it so a saved API key is used without another setup step.
+ * After onboarding, bind a configured OpenAI (api.openai.com) profile so a
+ * host-provided default key is used without another setup step. First-run
+ * onboarding asks the user to opt in instead of auto-completing.
  */
 export function mergeByokCredentialProfiles(
   config: AppConfig,
@@ -1217,23 +1254,10 @@ export function mergeByokCredentialProfiles(
     if (config.mode === 'daemon' && config.agentId && config.agentId !== 'byok-opencode') {
       return config;
     }
-    const openAiProfile = response.profiles.find(
-      (candidate) =>
-        candidate.configured
-        && candidate.protocol === 'openai'
-        && /api\.openai\.com/i.test(candidate.baseUrl),
-    );
+    if (!config.onboardingCompleted) return config;
+    const openAiProfile = findEnvOpenAiByokProfile(response.profiles);
     if (openAiProfile) {
-      return {
-        ...applySavedByokCredentialProfile(config, openAiProfile),
-        mode: 'api',
-        onboardingCompleted: true,
-        baseUrl: openAiProfile.baseUrl,
-        model: openAiProfile.model || config.model || 'gpt-4o-mini',
-        apiProtocol: 'openai',
-        apiProviderBaseUrl: 'https://api.openai.com/v1',
-        agentId: null,
-      };
+      return applyDefaultOpenAiByokProfile(config, openAiProfile);
     }
     return config;
   }

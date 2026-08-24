@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom';
 import { Button } from '@open-design/components';
 import { useI18n } from '../i18n';
 import { localizePluginDescription, localizePluginTitle } from './plugins-home/localization';
+import { isHiddenWireframeCreatePlugin } from './plugins-home/curatedPriority';
 import type { Dict, Locale } from '../i18n/types';
 import {
   localizeSkillDescription,
@@ -36,7 +37,8 @@ import type {
 } from '@open-design/contracts/analytics';
 import { sessionModeToTracking } from '@open-design/contracts/analytics';
 import { deriveUploadCohort } from '../analytics/upload-tracking';
-import { projectRawUrl, uploadProjectFiles, openFolderDialog, fetchRecentLinkedDirs, pushRecentLinkedDir, dirExists, applyLibraryAsset, fetchLibraryAssetElementHtml } from "../providers/registry";
+import { fetchOrgMembers, projectRawUrl, uploadProjectFiles, openFolderDialog, fetchRecentLinkedDirs, pushRecentLinkedDir, dirExists, applyLibraryAsset, fetchLibraryAssetElementHtml } from "../providers/registry";
+import { useOptionalOrg } from '../org/OrgContext';
 import { WorkingDirPicker } from './WorkingDirPicker';
 import { duplicatePluginAsProject, patchProject } from "../state/projects";
 import { navigate } from '../router';
@@ -51,11 +53,13 @@ import type {
   ChatSessionMode,
   ConnectorDetail,
   InstalledPluginRecord,
+  OrgMember,
   PluginSourceKind,
   ResearchOptions,
   RunContextSelection,
   WorkspaceContextItem,
 } from '@open-design/contracts';
+import { personLabel } from '@open-design/contracts';
 import { buildVisualAnnotationAttachment, commentTargetDisplayName } from '../comments';
 import { Icon, type IconName } from "./Icon";
 import { PageContextChip } from './pages/PageContextChip';
@@ -144,7 +148,7 @@ function trackedWorkspaceLinkedDirsForContexts(
 
 type ToolsTab = 'plugins' | 'skills' | 'mcp' | 'import';
 
-type MentionTab = 'all' | 'tabs' | 'files' | 'plugins' | 'skills' | 'mcp' | 'connectors';
+type MentionTab = 'all' | 'people' | 'tabs' | 'files' | 'plugins' | 'skills' | 'mcp' | 'connectors';
 
 const USER_PLUGIN_SOURCE_KINDS = new Set<PluginSourceKind>([
   'user',
@@ -520,6 +524,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // identity or tab changes; drives the visual highlight + Enter/Tab target.
     const [mentionIndex, setMentionIndex] = useState(0);
     const [mentionTab, setMentionTab] = useState<MentionTab>('all');
+    const org = useOptionalOrg();
+    const [people, setPeople] = useState<OrgMember[]>([]);
     // Viewport caret box the floating popover anchors against. Sampled by the
     // editor at trigger-detection time; null when no trigger is live.
     const [caretRect, setCaretRect] = useState<CaretRect | null>(null);
@@ -608,6 +614,24 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         cancelled = true;
       };
     }, []);
+    useEffect(() => {
+      const orgId = org?.activeOrgId;
+      if (!orgId) {
+        setPeople([]);
+        return;
+      }
+      let cancelled = false;
+      void fetchOrgMembers(orgId)
+        .then((members) => {
+          if (!cancelled) setPeople(members.filter((member) => member.status === 'active' && member.username));
+        })
+        .catch(() => {
+          if (!cancelled) setPeople([]);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [org?.activeOrgId]);
     const rememberRecentDir = useCallback(async (dir: string) => {
       setRecentDirs((prev) => [dir, ...prev.filter((d) => d !== dir)].slice(0, 5));
       const persisted = await pushRecentLinkedDir(dir);
@@ -804,7 +828,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       const allowedKinds = new Set(['skill', 'scenario', 'bundle']);
       return installedPlugins.filter((p) => {
         const k = p.manifest?.od?.kind;
-        return !k || allowedKinds.has(k);
+        if (k && !allowedKinds.has(k)) return false;
+        return !isHiddenWireframeCreatePlugin(p);
       });
     }, [installedPlugins]);
 
@@ -843,12 +868,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           connectors,
           files: projectFiles,
           mcpServers: enabledMcpServers,
+          people,
           plugins: pluginsForComposer,
           skills,
           staged,
           workspaceContexts: selectedWorkspaceContexts,
         }),
-      [connectors, enabledMcpServers, pluginsForComposer, projectFiles, selectedWorkspaceContexts, skills, staged],
+      [connectors, enabledMcpServers, people, pluginsForComposer, projectFiles, selectedWorkspaceContexts, skills, staged],
     );
     // Resolve which tabs to surface in the consolidated tools popover.
     // Plugins is always visible while a project is active so users can
@@ -2252,8 +2278,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       }
       if (mention) {
         // Drive a single index over the visible section union. MentionPopover
-        // renders the same files-first section order and highlights the
+        // renders the same people-first section order and highlights the
         // matching row from activeIndex.
+        const showPeople = mentionTab === 'all' || mentionTab === 'people';
         const showFiles = mentionTab === 'all' || mentionTab === 'files';
         const showTabs = mentionTab === 'all' || mentionTab === 'tabs';
         const showPlugins = mentionTab === 'all' || mentionTab === 'plugins';
@@ -2261,6 +2288,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         const showMcp = mentionTab === 'all' || mentionTab === 'mcp';
         const showConnectors = mentionTab === 'all' || mentionTab === 'connectors';
         const total =
+          (showPeople ? filteredPeople.length : 0) +
           (showFiles ? filteredFiles.length : 0) +
           (showTabs ? filteredWorkspaceContexts.length : 0) +
           (showPlugins ? filteredPlugins.length : 0) +
@@ -2286,11 +2314,18 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     }
 
     // Resolve a flat visible-section index to the right insert call. Section
-    // order MUST match MentionPopover's render order (files→tabs→plugins
+    // order MUST match MentionPopover's render order (people→files→tabs→plugins
     // →skills→mcp→connectors); the activeIndex highlight and Enter target stay in
     // lockstep across "All" and individual tabs.
     function pickMentionByFlatIndex(flat: number) {
       let i = flat;
+      if (mentionTab === 'all' || mentionTab === 'people') {
+        if (i < filteredPeople.length) {
+          insertPersonMention(filteredPeople[i]!);
+          return;
+        }
+        i -= filteredPeople.length;
+      }
       if (mentionTab === 'all' || mentionTab === 'files') {
         if (i < filteredFiles.length) {
           insertMention(filteredFiles[i]!.path ?? filteredFiles[i]!.name);
@@ -2373,6 +2408,16 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       editorRef.current?.insertMention({
         token: inlineMentionToken(connector.name),
         entity: { id: connector.id, kind: 'connector', label: connector.name },
+      });
+      setMention(null);
+    }
+
+    function insertPersonMention(member: OrgMember) {
+      const username = member.username;
+      if (!username) return;
+      editorRef.current?.insertMention({
+        token: inlineMentionToken(username),
+        entity: { id: member.userId, kind: 'person', label: username },
       });
       setMention(null);
     }
@@ -2562,6 +2607,20 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               .slice(0, 8)
           : [],
       [mention, mentionQuery, connectors],
+    );
+    const filteredPeople = useMemo(
+      () =>
+        mention
+          ? people.filter((member) => {
+              if (!member.username) return false;
+              if (!mentionQuery) return true;
+              return (
+                member.username.toLowerCase().includes(mentionQuery) ||
+                personLabel(member).toLowerCase().includes(mentionQuery)
+              );
+            }).slice(0, 8)
+          : [],
+      [mention, mentionQuery, people],
     );
     // Already-staged skills drop out of the suggestion list (carried over
     // from main) so the @-popover keeps moving forward as the user picks.
@@ -2789,6 +2848,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             <MentionPopover
               files={filteredFiles}
               workspaceContexts={filteredWorkspaceContexts}
+              people={filteredPeople}
               plugins={filteredPlugins}
               skills={filteredSkills}
               mcpServers={filteredMcpServers}
@@ -2803,6 +2863,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               currentSkillId={currentSkillId}
               onPickFile={insertMention}
               onPickWorkspaceContext={insertWorkspaceMention}
+              onPickPerson={insertPersonMention}
               onPickPlugin={(record) => void insertPluginMention(record)}
               onPickSkill={(skill) => void insertSkillMention(skill)}
               onPickMcp={insertMcpMention}
@@ -2955,7 +3016,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                 });
                 setFigmaHelpOpen(true);
               }}
-              onOpenDesignSystems={projectId && designSystemPicker ? () => {
+              onSubstrateSystems={projectId && designSystemPicker ? () => {
                 trackComposerBar({ element: 'design_system_open' });
                 openDesignSystemPicker();
               } : undefined}
@@ -3220,6 +3281,7 @@ function buildComposerMentionEntities({
   connectors,
   files,
   mcpServers,
+  people,
   plugins,
   skills,
   staged,
@@ -3228,12 +3290,23 @@ function buildComposerMentionEntities({
   connectors: ConnectorDetail[];
   files: ProjectFile[];
   mcpServers: McpServerConfig[];
+  people: OrgMember[];
   plugins: InstalledPluginRecord[];
   skills: SkillSummary[];
   staged: ChatAttachment[];
   workspaceContexts: WorkspaceContextItem[];
 }): InlineMentionEntity[] {
   const entities: InlineMentionEntity[] = [];
+  for (const member of people) {
+    if (!member.username) continue;
+    entities.push({
+      id: member.userId,
+      kind: 'person',
+      label: member.username,
+      token: inlineMentionToken(member.username),
+      title: personLabel(member),
+    });
+  }
   const workspaceSeen = new Set<string>();
   for (const item of workspaceContexts) {
     if (!item.id || !item.label) continue;
@@ -3838,7 +3911,7 @@ function ToolsPluginsPanel({
   const [source, setSource] = useState<'community' | 'mine'>('community');
   const [query, setQuery] = useState('');
   const communityPlugins = useMemo(
-    () => plugins.filter((p) => p.sourceKind === 'bundled'),
+    () => plugins.filter((p) => p.sourceKind === 'bundled' && !isHiddenWireframeCreatePlugin(p)),
     [plugins],
   );
   const userPlugins = useMemo(
@@ -5286,6 +5359,7 @@ function SlashPopover({
 function MentionPopover({
   files,
   workspaceContexts,
+  people,
   connectors,
   plugins,
   skills,
@@ -5297,6 +5371,7 @@ function MentionPopover({
   currentSkillId,
   onPickFile,
   onPickWorkspaceContext,
+  onPickPerson,
   onPickPlugin,
   onPickSkill,
   onPickMcp,
@@ -5304,6 +5379,7 @@ function MentionPopover({
 }: {
   files: ProjectFile[];
   workspaceContexts: WorkspaceContextItem[];
+  people: OrgMember[];
   connectors: ConnectorDetail[];
   plugins: InstalledPluginRecord[];
   skills: SkillSummary[];
@@ -5315,6 +5391,7 @@ function MentionPopover({
   currentSkillId: string | null;
   onPickFile: (path: string) => void;
   onPickWorkspaceContext: (item: WorkspaceContextItem) => void;
+  onPickPerson: (member: OrgMember) => void;
   onPickPlugin: (record: InstalledPluginRecord) => void;
   onPickSkill: (skill: SkillSummary) => void;
   onPickMcp: (server: McpServerConfig) => void;
@@ -5324,6 +5401,7 @@ function MentionPopover({
   const ref = useRef<HTMLDivElement | null>(null);
   const tabs: Array<{ id: MentionTab; label: string }> = [
     { id: 'all', label: t('chat.mentionTabAll') },
+    { id: 'people', label: t('chat.mentionTabPeople') },
     { id: 'files', label: t('chat.mentionTabFiles') },
     { id: 'tabs', label: t('chat.mentionTabTabs') },
     { id: 'plugins', label: t('chat.mentionTabPlugins') },
@@ -5331,6 +5409,7 @@ function MentionPopover({
     { id: 'mcp', label: t('chat.mentionTabMcp') },
     { id: 'connectors', label: t('chat.mentionTabConnectors') },
   ];
+  const showPeople = tab === 'all' || tab === 'people';
   const showTabs = tab === 'all' || tab === 'tabs';
   const showFiles = tab === 'all' || tab === 'files';
   const showPlugins = tab === 'all' || tab === 'plugins';
@@ -5338,6 +5417,7 @@ function MentionPopover({
   const showMcp = tab === 'all' || tab === 'mcp';
   const showConnectors = tab === 'all' || tab === 'connectors';
   const hasVisibleResults =
+    (showPeople && people.length > 0) ||
     (showFiles && files.length > 0) ||
     (showTabs && workspaceContexts.length > 0) ||
     (showPlugins && plugins.length > 0) ||
@@ -5346,7 +5426,7 @@ function MentionPopover({
     (showConnectors && connectors.length > 0);
   useEffect(() => {
     if (ref.current) ref.current.scrollTop = 0;
-  }, [connectors, files, plugins, skills, mcpServers, tab, workspaceContexts]);
+  }, [connectors, files, people, plugins, skills, mcpServers, tab, workspaceContexts]);
   let optionIndex = 0;
   return (
     <div className="mention-popover" data-testid="mention-popover">
@@ -5374,6 +5454,35 @@ function MentionPopover({
               <>{t('chat.mentionSearchPrompt')}</>
             )}
           </div>
+        ) : null}
+        {showPeople && people.length > 0 ? (
+          <>
+            <div className="mention-section-label">{t('chat.mentionSectionPeople')}</div>
+            {people.map((member) => {
+              const flat = optionIndex;
+              optionIndex += 1;
+              const active = flat === activeIndex;
+              return (
+                <button
+                  key={`person-${member.userId}`}
+                  id={`mention-opt-${flat}`}
+                  role="option"
+                  aria-selected={active}
+                  className={`mention-item mention-item--person${active ? ' is-active' : ''}`}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => onPickPerson(member)}
+                  title={personLabel(member)}
+                >
+                  <Icon name="handshake" size={12} />
+                  <span className="mention-item-body">
+                    <strong>@{member.username}</strong>
+                    <span className="mention-meta mention-meta--desc">{personLabel(member)}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </>
         ) : null}
         {showFiles && files.length > 0 ? (
           <>

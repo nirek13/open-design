@@ -147,26 +147,6 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
     },
   },
   {
-    id: 'wireframe',
-    label: 'Wireframe',
-    icon: 'layout',
-    group: 'create',
-    description: 'Lo-fi screens & flows',
-    hint: 'Sketch lo-fi screens and flows to validate structure before visual design.',
-    // Wireframe reuses the battle-tested web-prototype seed but stamps a
-    // lo-fi fidelity so the agent stays in structural/greybox territory
-    // instead of jumping to high-fidelity styling.
-    action: {
-      kind: 'apply-scenario',
-      pluginId: 'example-web-prototype',
-      projectKind: 'prototype',
-      projectMetadata: {
-        kind: 'prototype',
-        fidelity: 'wireframe',
-      },
-    },
-  },
-  {
     id: 'mobile',
     label: 'Mobile app',
     icon: 'smartphone',
@@ -357,7 +337,7 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
     label: 'Create plugin',
     icon: 'edit',
     group: 'migrate',
-    hint: 'Author a reusable Open Design plugin and add it to My plugins.',
+    hint: 'Author a reusable Substrate plugin and add it to My plugins.',
     action: { kind: 'create-plugin' },
   },
   {
@@ -393,7 +373,7 @@ export function chipsForGroup(group: ChipGroup): HomeHeroChip[] {
 // Display order for the inline `create` scenario rail. The composer leads with
 // Website clone (the fastest "paste a URL, get a site" on-ramp), then the slide
 // deck ("Slides") and the core build scenarios in decreasing generality
-// (Prototype → Wireframe → Mobile → Document → Animation), then the media
+// (Prototype → Mobile → Document → Animation), then the media
 // scenarios. Brand Kit is intentionally omitted here so it trails the scenario
 // set — it dispatches into the Brand Kit tab rather than seeding a scenario
 // plugin. Any create chip not listed keeps its catalog order after the explicit
@@ -402,7 +382,6 @@ export const CREATE_RAIL_ORDER = [
   'web-clone',
   'deck',
   'prototype',
-  'wireframe',
   'mobile',
   'document',
   'wiki',

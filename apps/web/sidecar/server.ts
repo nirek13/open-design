@@ -224,7 +224,9 @@ function isDaemonProxyPathname(pathname: string): boolean {
     pathname === "/artifacts" ||
     pathname.startsWith("/artifacts/") ||
     pathname === "/frames" ||
-    pathname.startsWith("/frames/")
+    pathname.startsWith("/frames/") ||
+    pathname === "/s" ||
+    pathname.startsWith("/s/")
   );
 }
 

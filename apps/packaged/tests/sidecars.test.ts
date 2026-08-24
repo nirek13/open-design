@@ -596,6 +596,32 @@ describe('buildPackagedDaemonSpawnEnv', () => {
     expect(env.POSTHOG_KEY).toBeUndefined();
     expect(env.POSTHOG_HOST).toBeUndefined();
   });
+
+  it('forwards OD_CLERK_ISSUER/OD_CLERK_PUBLISHABLE_KEY to the daemon spawn env when baked into the bundle', () => {
+    const env = buildPackagedDaemonSpawnEnv(fakePaths(), {
+      appVersion: null,
+      daemonCliEntry: null,
+      legacyDataDir: null,
+      requireDesktopAuth: true,
+      clerkIssuer: 'https://clean-jay-54.clerk.accounts.dev',
+      clerkPublishableKey: 'pk_test_packaged',
+    });
+    expect(env.OD_CLERK_ISSUER).toBe('https://clean-jay-54.clerk.accounts.dev');
+    expect(env.OD_CLERK_PUBLISHABLE_KEY).toBe('pk_test_packaged');
+  });
+
+  it('omits Clerk env for packs that were built without an issuer or publishable key', () => {
+    const env = buildPackagedDaemonSpawnEnv(fakePaths(), {
+      appVersion: null,
+      daemonCliEntry: null,
+      legacyDataDir: null,
+      requireDesktopAuth: true,
+      clerkIssuer: null,
+      clerkPublishableKey: null,
+    });
+    expect(env.OD_CLERK_ISSUER).toBeUndefined();
+    expect(env.OD_CLERK_PUBLISHABLE_KEY).toBeUndefined();
+  });
 });
 
 describe('waitForStatus child-exit fast-fail', () => {

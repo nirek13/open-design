@@ -1254,7 +1254,7 @@ export function DesignFilesPanel({
                               void handlePluginFolderAgentAction(folder.path, 'contribute')
                             }
                           >
-                            {sharingFolder === `contribute:${folder.path}` ? 'Sending…' : 'Open Design PR'}
+                            {sharingFolder === `contribute:${folder.path}` ? 'Sending…' : 'Substrate PR'}
                           </button>
                         </div>
                       ) : null}

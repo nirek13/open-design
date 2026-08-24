@@ -567,6 +567,13 @@ function embedToBlock(input: EmbedPageBlockRequest): PageBlockInput {
       }
       return { type: 'bookmark', content: url, props: { url } };
     }
+    case 'embed': {
+      const url = input.url?.trim() || input.path?.trim();
+      if (!url) {
+        throw workspaceValidationError([{ path: 'url', message: 'required for live embeds' }]);
+      }
+      return { type: 'embed', content: url, props: { url } };
+    }
     default:
       throw workspaceValidationError([{ path: 'type', message: 'unsupported embed type' }]);
   }

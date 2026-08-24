@@ -96,7 +96,7 @@ type PlatformCase = {
   expectedPayloadExecutablePath: (root: string, namespace: string) => string;
   expectedResourceRoot: (root: string, namespace: string) => string;
   fixturePlatformKey: "mac" | "win";
-  productName: "Open Design" | "Open Design Beta" | "Open Design Prerelease";
+  productName: "Substrate" | "Substrate Beta" | "Substrate Prerelease";
   namespace: "release-beta" | "release-beta-win" | "release-prerelease";
   payloadArchiveName: string;
   payloadPath: string;
@@ -292,12 +292,12 @@ const platformCases: PlatformCase[] = [
     channel: "beta",
     currentVersion: "1.2.3-beta.4",
     expectedPayloadExecutablePath: (root, namespace) =>
-      join(root, "launcher", "channels", "beta", "namespaces", namespace, "versions", "1.2.3-beta.5", "payload", "Open Design.exe"),
+      join(root, "launcher", "channels", "beta", "namespaces", namespace, "versions", "1.2.3-beta.5", "payload", "Substrate.exe"),
     expectedResourceRoot: (root, namespace) =>
       join(root, "launcher", "channels", "beta", "namespaces", namespace, "versions", "1.2.3-beta.5", "payload", "resources", "open-design"),
     fixturePlatformKey: "win",
     namespace: "release-beta-win",
-    productName: "Open Design",
+    productName: "Substrate",
     payloadArchiveName: "open-design-1.2.3-beta.5-win-x64-payload.7z",
     payloadPath: "/payload.7z",
     platform: "win32",
@@ -309,12 +309,12 @@ const platformCases: PlatformCase[] = [
     channel: "beta",
     currentVersion: "1.2.3-beta.4",
     expectedPayloadExecutablePath: (root, namespace) =>
-      join(root, "launcher", "channels", "beta", "namespaces", namespace, "versions", "1.2.3-beta.5", "payload", "Open Design Beta.app", "Contents", "MacOS", "Open Design Beta"),
+      join(root, "launcher", "channels", "beta", "namespaces", namespace, "versions", "1.2.3-beta.5", "payload", "Substrate Beta.app", "Contents", "MacOS", "Substrate Beta"),
     expectedResourceRoot: (root, namespace) =>
-      join(root, "launcher", "channels", "beta", "namespaces", namespace, "versions", "1.2.3-beta.5", "payload", "Open Design Beta.app", "Contents", "Resources", "open-design"),
+      join(root, "launcher", "channels", "beta", "namespaces", namespace, "versions", "1.2.3-beta.5", "payload", "Substrate Beta.app", "Contents", "Resources", "open-design"),
     fixturePlatformKey: "mac",
     namespace: "release-beta",
-    productName: "Open Design Beta",
+    productName: "Substrate Beta",
     payloadArchiveName: "open-design-1.2.3-beta.5-mac-arm64-payload.zip",
     payloadPath: "/payload.zip",
     platform: "darwin",
@@ -326,12 +326,12 @@ const platformCases: PlatformCase[] = [
     channel: "prerelease",
     currentVersion: "1.2.3-prerelease.4",
     expectedPayloadExecutablePath: (root, namespace) =>
-      join(root, "launcher", "channels", "prerelease", "namespaces", namespace, "versions", "1.2.3-prerelease.5", "payload", "Open Design Prerelease.app", "Contents", "MacOS", "Open Design Prerelease"),
+      join(root, "launcher", "channels", "prerelease", "namespaces", namespace, "versions", "1.2.3-prerelease.5", "payload", "Substrate Prerelease.app", "Contents", "MacOS", "Substrate Prerelease"),
     expectedResourceRoot: (root, namespace) =>
-      join(root, "launcher", "channels", "prerelease", "namespaces", namespace, "versions", "1.2.3-prerelease.5", "payload", "Open Design Prerelease.app", "Contents", "Resources", "open-design"),
+      join(root, "launcher", "channels", "prerelease", "namespaces", namespace, "versions", "1.2.3-prerelease.5", "payload", "Substrate Prerelease.app", "Contents", "Resources", "open-design"),
     fixturePlatformKey: "mac",
     namespace: "release-prerelease",
-    productName: "Open Design Prerelease",
+    productName: "Substrate Prerelease",
     payloadArchiveName: "open-design-1.2.3-prerelease.5-mac-arm64-payload.zip",
     payloadPath: "/prerelease-payload.zip",
     platform: "darwin",

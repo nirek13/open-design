@@ -53,12 +53,12 @@ describe('OrgSwitcher', () => {
     vi.spyOn(registry, 'fetchAuthContext')
       .mockResolvedValueOnce({
         mode: 'local-owner',
-        viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null },
+        viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
         organizations: [NORTHWIND, CONTOSSO],
       })
       .mockResolvedValue({
         mode: 'local-owner',
-        viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null },
+        viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
         organizations: [
           NORTHWIND,
           CONTOSSO,

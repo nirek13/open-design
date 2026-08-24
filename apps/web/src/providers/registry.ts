@@ -911,7 +911,7 @@ export interface ConnectorActionResult {
 }
 
 function popupBlockedMessage(): string {
-  return 'Popup blocked. Allow popups for Open Design and try again.';
+  return 'Popup blocked. Allow popups for Substrate and try again.';
 }
 
 export async function openExternalUrl(url: string): Promise<boolean> {
@@ -2857,6 +2857,7 @@ export async function fetchLibraryConnection(): Promise<LibraryConnectionStatus 
 // --- Organizations, apps, and the organization database --------------------
 
 import type {
+  AppAccessPolicy,
   AppGrant,
   AppGrantRole,
   AppShareLink,
@@ -2864,6 +2865,8 @@ import type {
   AuthContextResponse,
   CreateAppShareLinkRequest,
   CreateOrgInviteRequest,
+  CreateOrgTeamRequest,
+  PublishAppToWebResponse,
   CreateWorkspaceRecordRequest,
   CreateWorkspaceTableRequest,
   OrgApp,
@@ -2875,7 +2878,19 @@ import type {
   OrgPendingInvitesResponse,
   OrgMember,
   OrgRole,
+  OrgSearchHit,
+  OrgSearchResponse,
+  OrgTeam,
+  Organization,
   OrganizationMembershipView,
+  ProfileResponse,
+  PublicUserProfile,
+  SetAppGrantsRequest,
+  UpdateOrganizationRequest,
+  UpdateOrgTeamRequest,
+  UpdateProfileRequest,
+  BrandDetailResponse,
+  BrandExtractStartResponse,
   PublishAppRequest,
   QueryWorkspaceRecordsRequest,
   UpdateAppRequest,
@@ -2902,9 +2917,13 @@ async function workspaceDataJson<T>(url: string, init: RequestInit = {}): Promis
   if (!resp.ok) {
     let message = `HTTP ${resp.status}`;
     try {
-      const body = (await resp.json()) as { error?: { message?: string } | string };
-      message =
-        typeof body.error === 'string' ? body.error : (body.error?.message ?? message);
+      const body = (await resp.json()) as { error?: { message?: string; code?: string } | string };
+      if (typeof body.error === 'string') {
+        message = body.error;
+      } else if (body.error) {
+        const code = body.error.code ? `${body.error.code}: ` : '';
+        message = `${code}${body.error.message ?? message}`;
+      }
     } catch {
       // keep the status fallback
     }
@@ -2920,6 +2939,30 @@ const jsonBody = (body: unknown): RequestInit => ({
 
 export async function fetchAuthContext(): Promise<AuthContextResponse> {
   return workspaceDataJson<AuthContextResponse>('/api/auth/context');
+}
+
+export async function updateProfile(patch: UpdateProfileRequest): Promise<ProfileResponse> {
+  return workspaceDataJson<ProfileResponse>('/api/me', {
+    method: 'PATCH',
+    ...jsonBody(patch),
+  });
+}
+
+export async function uploadAvatar(file: File): Promise<ProfileResponse> {
+  const body = new FormData();
+  body.append('file', file);
+  return workspaceDataJson<ProfileResponse>('/api/me/avatar', {
+    method: 'PUT',
+    body,
+  });
+}
+
+export async function removeAvatar(): Promise<ProfileResponse> {
+  return workspaceDataJson<ProfileResponse>('/api/me/avatar', { method: 'DELETE' });
+}
+
+export async function lookupUser(username: string): Promise<PublicUserProfile> {
+  return workspaceDataJson<PublicUserProfile>(`/api/users/${encodeURIComponent(username)}`);
 }
 
 export async function fetchOrganizations(): Promise<OrganizationMembershipView[]> {
@@ -2942,6 +2985,28 @@ export async function renameOrganization(orgId: string, name: string): Promise<v
   });
 }
 
+export async function updateOrganization(
+  orgId: string,
+  patch: UpdateOrganizationRequest,
+): Promise<Organization> {
+  const json = await workspaceDataJson<{ organization: Organization }>(
+    `/api/orgs/${encodeURIComponent(orgId)}`,
+    { method: 'PATCH', ...jsonBody(patch) },
+  );
+  return json.organization;
+}
+
+export async function startBrandExtract(url: string): Promise<BrandExtractStartResponse> {
+  return workspaceDataJson<BrandExtractStartResponse>('/api/brands', {
+    method: 'POST',
+    ...jsonBody({ url }),
+  });
+}
+
+export async function fetchBrandDetail(id: string): Promise<BrandDetailResponse> {
+  return workspaceDataJson<BrandDetailResponse>(`/api/brands/${encodeURIComponent(id)}`);
+}
+
 export async function fetchOrgMembers(orgId: string): Promise<OrgMember[]> {
   const json = await workspaceDataJson<{ members: OrgMember[] }>(
     `/api/orgs/${encodeURIComponent(orgId)}/members`,
@@ -2961,12 +3026,59 @@ export async function updateOrgMemberRole(
   return json.member;
 }
 
+export async function updateOrgMemberReportsTo(
+  orgId: string,
+  memberId: string,
+  reportsTo: string | null,
+): Promise<OrgMember> {
+  const json = await workspaceDataJson<{ member: OrgMember }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
+    { method: 'PATCH', ...jsonBody({ reportsTo }) },
+  );
+  return json.member;
+}
+
 export async function removeOrgMember(orgId: string, memberId: string): Promise<OrgMember> {
   const json = await workspaceDataJson<{ member: OrgMember }>(
     `/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
     { method: 'DELETE' },
   );
   return json.member;
+}
+
+export async function fetchOrgTeams(orgId: string): Promise<OrgTeam[]> {
+  const json = await workspaceDataJson<{ teams: OrgTeam[] }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/teams`,
+  );
+  return json.teams;
+}
+
+export async function createOrgTeam(orgId: string, request: CreateOrgTeamRequest): Promise<OrgTeam> {
+  const json = await workspaceDataJson<{ team: OrgTeam }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/teams`,
+    { method: 'POST', ...jsonBody(request) },
+  );
+  return json.team;
+}
+
+export async function updateOrgTeam(
+  orgId: string,
+  teamId: string,
+  request: UpdateOrgTeamRequest,
+): Promise<OrgTeam> {
+  const json = await workspaceDataJson<{ team: OrgTeam }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/teams/${encodeURIComponent(teamId)}`,
+    { method: 'PATCH', ...jsonBody(request) },
+  );
+  return json.team;
+}
+
+export async function deleteOrgTeam(orgId: string, teamId: string): Promise<OrgTeam> {
+  const json = await workspaceDataJson<{ team: OrgTeam }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/teams/${encodeURIComponent(teamId)}`,
+    { method: 'DELETE' },
+  );
+  return json.team;
 }
 
 export async function fetchOrgInvites(orgId: string): Promise<OrgInvite[]> {
@@ -3013,6 +3125,25 @@ export async function acceptPendingInvite(inviteId: string): Promise<{ organizat
 
 // --- Apps -----------------------------------------------------------------
 
+export async function fetchOrgApp(orgId: string, appId: string): Promise<OrgApp> {
+  const json = await workspaceDataJson<{ app: OrgApp }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}`,
+  );
+  return json.app;
+}
+
+export async function searchOrg(
+  orgId: string,
+  query: string,
+  limit = 25,
+): Promise<OrgSearchHit[]> {
+  const qs = new URLSearchParams({ q: query, limit: String(limit) });
+  const json = await workspaceDataJson<OrgSearchResponse>(
+    `/api/orgs/${encodeURIComponent(orgId)}/find?${qs.toString()}`,
+  );
+  return json.hits;
+}
+
 export async function fetchOrgApps(
   orgId: string,
   options: { pinnedOnly?: boolean } = {},
@@ -3057,22 +3188,35 @@ export async function updateOrgApp(
 }
 
 export async function fetchAppGrants(orgId: string, appId: string): Promise<AppGrant[]> {
-  const json = await workspaceDataJson<{ grants: AppGrant[] }>(
+  const json = await fetchAppAccess(orgId, appId);
+  return json.grants;
+}
+
+export async function fetchAppAccess(orgId: string, appId: string): Promise<AppAccessPolicy> {
+  return workspaceDataJson<AppAccessPolicy>(
     `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/grants`,
   );
-  return json.grants;
 }
 
 export async function setAppGrants(
   orgId: string,
   appId: string,
   grants: Array<{ memberId: string; role: AppGrantRole }>,
+  extras: Pick<SetAppGrantsRequest, 'teamGrants' | 'denials'> = {},
 ): Promise<AppGrant[]> {
-  const json = await workspaceDataJson<{ grants: AppGrant[] }>(
-    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/grants`,
-    { method: 'PUT', ...jsonBody({ grants }) },
-  );
+  const json = await setAppAccess(orgId, appId, { grants, ...extras });
   return json.grants;
+}
+
+export async function setAppAccess(
+  orgId: string,
+  appId: string,
+  request: SetAppGrantsRequest,
+): Promise<AppAccessPolicy> {
+  return workspaceDataJson<AppAccessPolicy>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/grants`,
+    { method: 'PUT', ...jsonBody(request) },
+  );
 }
 
 export async function recordOrgAppOpen(orgId: string, appId: string): Promise<void> {
@@ -3097,6 +3241,16 @@ export async function createAppShareLink(
   return workspaceDataJson<AppShareLinkCreatedResponse>(
     `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/shares`,
     { method: 'POST', ...jsonBody(request) },
+  );
+}
+
+export async function publishAppToWeb(
+  orgId: string,
+  appId: string,
+): Promise<PublishAppToWebResponse> {
+  return workspaceDataJson<PublishAppToWebResponse>(
+    `/api/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(appId)}/publish-web`,
+    { method: 'POST' },
   );
 }
 
@@ -3228,6 +3382,8 @@ export async function fetchWorkspaceAuditEvents(
 
 import type {
   ChatChannel,
+  ChatChannelMember,
+  ChatSearchHit,
   CreateWorkspaceViewRequest,
   DealStage,
   ErpProjectsSummary,
@@ -3609,6 +3765,16 @@ export async function postChatMessage(
   return json.message;
 }
 
+export async function uploadChatFile(orgId: string, file: File): Promise<TeamChatAttachment> {
+  const body = new FormData();
+  body.append('file', file);
+  const json = await workspaceDataJson<{ attachment: TeamChatAttachment }>(
+    orgPath(orgId, '/chat/files'),
+    { method: 'POST', body },
+  );
+  return json.attachment;
+}
+
 export async function joinChatChannel(orgId: string, channelRef: string): Promise<ChatChannel> {
   const json = await workspaceDataJson<{ channel: ChatChannel }>(
     orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/join`),
@@ -3628,6 +3794,99 @@ export async function markChatChannelRead(
     { method: 'POST' },
   );
   return json.channel;
+}
+
+export async function fetchChatChannelMembers(
+  orgId: string,
+  channelRef: string,
+): Promise<ChatChannelMember[]> {
+  const json = await workspaceDataJson<{ members: ChatChannelMember[] }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/members`),
+  );
+  return json.members;
+}
+
+export async function leaveChatChannel(orgId: string, channelRef: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/leave`), {
+    method: 'POST',
+  });
+}
+
+export async function editChatMessage(
+  orgId: string,
+  messageId: string,
+  body: string,
+): Promise<TeamChatMessage> {
+  const json = await workspaceDataJson<{ message: TeamChatMessage }>(
+    orgPath(orgId, `/chat/messages/${encodeURIComponent(messageId)}`),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body }),
+    },
+  );
+  return json.message;
+}
+
+export async function deleteChatMessage(orgId: string, messageId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/chat/messages/${encodeURIComponent(messageId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function openChatDirectMessage(
+  orgId: string,
+  memberIds: string[],
+): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(orgPath(orgId, '/chat/dms'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ memberIds }),
+  });
+  return json.channel;
+}
+
+export async function searchChatMessages(
+  orgId: string,
+  query: string,
+): Promise<ChatSearchHit[]> {
+  const params = new URLSearchParams({ q: query });
+  const json = await workspaceDataJson<{ hits: ChatSearchHit[] }>(
+    orgPath(orgId, `/chat/search?${params.toString()}`),
+  );
+  return json.hits;
+}
+
+export async function inviteChatMembers(
+  orgId: string,
+  channelRef: string,
+  memberIds: string[],
+): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/members`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ memberIds }),
+    },
+  );
+  return json.channel;
+}
+
+export async function toggleChatReaction(
+  orgId: string,
+  messageId: string,
+  emoji: string,
+): Promise<TeamChatMessage> {
+  const json = await workspaceDataJson<{ message: TeamChatMessage }>(
+    orgPath(orgId, `/chat/messages/${encodeURIComponent(messageId)}/reactions`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ emoji }),
+    },
+  );
+  return json.message;
 }
 
 // --- Organization pages ---------------------------------------------------
@@ -4019,4 +4278,206 @@ export async function trashOrgMail(orgId: string, messageId: string): Promise<vo
     method: 'POST',
   });
 }
+
+// --- Slack (live workspace) ------------------------------------------------
+
+export async function fetchOrgSlackStatus(
+  orgId: string,
+): Promise<import('@open-design/contracts').SlackStatusResponse> {
+  return workspaceDataJson(orgPath(orgId, '/slack/status'));
+}
+
+export async function fetchOrgSlackChannels(
+  orgId: string,
+): Promise<import('@open-design/contracts').SlackChannelsResponse> {
+  return workspaceDataJson(orgPath(orgId, '/slack/channels'));
+}
+
+export async function fetchOrgSlackMessages(
+  orgId: string,
+  channelId: string,
+  options?: { cursor?: string; limit?: number },
+): Promise<import('@open-design/contracts').SlackMessagesResponse> {
+  const params = new URLSearchParams();
+  if (options?.cursor) params.set('cursor', options.cursor);
+  if (options?.limit) params.set('limit', String(options.limit));
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return workspaceDataJson(
+    orgPath(orgId, `/slack/channels/${encodeURIComponent(channelId)}/messages${suffix}`),
+  );
+}
+
+export async function searchOrgSlack(
+  orgId: string,
+  query: string,
+): Promise<import('@open-design/contracts').SlackSearchResponse> {
+  const params = new URLSearchParams({ q: query });
+  return workspaceDataJson(orgPath(orgId, `/slack/search?${params.toString()}`));
+}
+
+export async function fetchOrgSlackThread(
+  orgId: string,
+  channelId: string,
+  threadTs: string,
+): Promise<import('@open-design/contracts').SlackThreadResponse> {
+  return workspaceDataJson(
+    orgPath(
+      orgId,
+      `/slack/channels/${encodeURIComponent(channelId)}/threads/${encodeURIComponent(threadTs)}`,
+    ),
+  );
+}
+
+export async function sendOrgSlackMessage(
+  orgId: string,
+  body: import('@open-design/contracts').SendSlackMessageRequest,
+): Promise<import('@open-design/contracts').SendSlackMessageResponse> {
+  return workspaceDataJson(orgPath(orgId, '/slack/messages'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function reactOrgSlackMessage(
+  orgId: string,
+  body: import('@open-design/contracts').SlackReactRequest,
+): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, '/slack/reactions'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+
+// --- GitHub (live developer hub) -------------------------------------------
+
+export async function fetchOrgGithubStatus(
+  orgId: string,
+): Promise<import('@open-design/contracts').GithubStatusResponse> {
+  return workspaceDataJson(orgPath(orgId, '/github/status'));
+}
+
+export async function fetchOrgGithubRepos(
+  orgId: string,
+  options?: { query?: string },
+): Promise<import('@open-design/contracts').GithubReposResponse> {
+  const params = new URLSearchParams();
+  if (options?.query) params.set('q', options.query);
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return workspaceDataJson(orgPath(orgId, `/github/repos${suffix}`));
+}
+
+export async function fetchOrgGithubRepoDetail(
+  orgId: string,
+  owner: string,
+  repo: string,
+): Promise<import('@open-design/contracts').GithubRepoDetailResponse> {
+  return workspaceDataJson(
+    orgPath(orgId, `/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`),
+  );
+}
+
+export async function fetchOrgGithubPullDetail(
+  orgId: string,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<import('@open-design/contracts').GithubPullDetailResponse> {
+  return workspaceDataJson(
+    orgPath(
+      orgId,
+      `/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`,
+    ),
+  );
+}
+
+export async function fetchOrgGithubIssueDetail(
+  orgId: string,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<import('@open-design/contracts').GithubIssueDetailResponse> {
+  return workspaceDataJson(
+    orgPath(
+      orgId,
+      `/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}`,
+    ),
+  );
+}
+
+export async function fetchOrgGithubNotifications(
+  orgId: string,
+): Promise<import('@open-design/contracts').GithubNotificationsResponse> {
+  return workspaceDataJson(orgPath(orgId, '/github/notifications'));
+}
+
+export async function createOrgGithubIssue(
+  orgId: string,
+  owner: string,
+  repo: string,
+  body: import('@open-design/contracts').CreateGithubIssueRequest,
+): Promise<{ issue: import('@open-design/contracts').GithubIssue | null }> {
+  return workspaceDataJson(
+    orgPath(orgId, `/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function commentOrgGithubIssue(
+  orgId: string,
+  owner: string,
+  repo: string,
+  number: number,
+  body: import('@open-design/contracts').CommentGithubIssueRequest,
+): Promise<{ comment: import('@open-design/contracts').GithubComment | null }> {
+  return workspaceDataJson(
+    orgPath(
+      orgId,
+      `/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}/comments`,
+    ),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function mergeOrgGithubPull(
+  orgId: string,
+  owner: string,
+  repo: string,
+  number: number,
+  body?: import('@open-design/contracts').MergeGithubPullRequest,
+): Promise<{ pull: import('@open-design/contracts').GithubPullRequest | null }> {
+  return workspaceDataJson(
+    orgPath(
+      orgId,
+      `/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}/merge`,
+    ),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    },
+  );
+}
+
+export async function starOrgGithubRepo(
+  orgId: string,
+  owner: string,
+  repo: string,
+): Promise<void> {
+  await workspaceDataJson(
+    orgPath(orgId, `/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/star`),
+    { method: 'POST' },
+  );
+}
+
 
