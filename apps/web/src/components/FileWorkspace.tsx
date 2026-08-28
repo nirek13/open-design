@@ -4154,7 +4154,7 @@ function DesignSystemProjectPanel({
     editable,
     host: kitHost,
     reloadKey: kitReloadKey,
-    ready: hasSystemKit || system.status === 'ready',
+    ready: hasSystemKit || system.status === 'published',
     knownFiles: files.map((file) => file.name),
   });
   async function persistDesignMd(nextBody: string) {
