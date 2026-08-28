@@ -449,6 +449,8 @@ interface Props {
    */
   composioConfigLoading?: boolean;
   onClose: () => void;
+  /** Jump to the single Connected accounts page and close Settings. */
+  onOpenConnectPage?: (tab?: 'connectors' | 'mcp') => void;
   onRefreshAgents: (
     options?: AgentRefreshOptions,
   ) => AgentInfo[] | Promise<AgentInfo[] | void> | void;
@@ -1477,6 +1479,7 @@ export function SettingsDialog({
   onPersistByokCredential,
   composioConfigLoading = false,
   onClose,
+  onOpenConnectPage,
   onRefreshAgents,
   onAmrLoginStatusChange,
   daemonMediaProviders,
@@ -4344,7 +4347,13 @@ export function SettingsDialog({
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'mcpClient' ? ' active' : ''}`}
-              onClick={() => setActiveSection('mcpClient')}
+              onClick={() => {
+                if (onOpenConnectPage) {
+                  onOpenConnectPage('mcp');
+                  return;
+                }
+                setActiveSection('mcpClient');
+              }}
             >
               <Icon name="sparkles" size={18} />
               <span>
@@ -4355,7 +4364,13 @@ export function SettingsDialog({
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'composio' ? ' active' : ''}`}
-              onClick={() => setActiveSection('composio')}
+              onClick={() => {
+                if (onOpenConnectPage) {
+                  onOpenConnectPage('connectors');
+                  return;
+                }
+                setActiveSection('composio');
+              }}
             >
               <Icon name="sliders" size={18} />
               <span>
@@ -5772,22 +5787,35 @@ export function SettingsDialog({
           {activeSection === 'mcpClient' ? <McpClientSection surface="settings" /> : null}
 
           {activeSection === 'composio' ? (
-            <ConnectorSection
-              cfg={cfg}
-              setCfg={setCfg}
-              composioConfigLoading={composioConfigLoading}
-              onPersistComposioKey={onPersistComposioKey}
-              onConnectorAuthResult={({ connectorId, action, result, errorCode }) =>
-                trackSettingsConnectorAuthResult(analytics.track, {
-                  page_name: 'settings',
-                  area: 'connectors',
-                  connector_id: connectorId,
-                  action,
-                  result,
-                  ...(errorCode ? { error_code: errorCode } : {}),
-                })
-              }
-            />
+            onOpenConnectPage ? (
+              <section className="settings-section" data-testid="settings-connect-redirect">
+                <p>{t('settings.connectOpenHint')}</p>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => onOpenConnectPage('connectors')}
+                >
+                  {t('settings.connectOpen')}
+                </button>
+              </section>
+            ) : (
+              <ConnectorSection
+                cfg={cfg}
+                setCfg={setCfg}
+                composioConfigLoading={composioConfigLoading}
+                onPersistComposioKey={onPersistComposioKey}
+                onConnectorAuthResult={({ connectorId, action, result, errorCode }) =>
+                  trackSettingsConnectorAuthResult(analytics.track, {
+                    page_name: 'settings',
+                    area: 'connectors',
+                    connector_id: connectorId,
+                    action,
+                    result,
+                    ...(errorCode ? { error_code: errorCode } : {}),
+                  })
+                }
+              />
+            )
           ) : null}
 
           {activeSection === 'routines' ? <RoutinesSection onClose={onClose} /> : null}
@@ -5912,7 +5940,13 @@ export function SettingsDialog({
 
           {activeSection === 'memory' ? (
             <MemorySection
-              onOpenConnectors={() => setActiveSection('composio')}
+              onOpenConnectors={() => {
+                if (onOpenConnectPage) {
+                  onOpenConnectPage('connectors');
+                  return;
+                }
+                setActiveSection('composio');
+              }}
               chatAgentId={cfg.mode === 'daemon' ? cfg.agentId ?? null : null}
               chatModel={selectedMemoryChatModel}
             />

@@ -18,13 +18,14 @@ import {
   type CreateWorkspaceTableRequest,
   type QueryWorkspaceRecordsRequest,
   type UpdateWorkspaceRecordRequest,
+  type UpdateWorkspaceTableRequest,
 } from '@open-design/contracts';
 import { getProject } from '../db.js';
 import { sendApiError } from '../http/response.js';
 import type { RouteDeps } from '../server-context.js';
 import type { IdentityService } from '../auth/identity.js';
 import type { WorkspaceDbManager } from '../storage/workspace-db.js';
-import { WorkspaceDataError } from '../workspace-data/errors.js';
+import { WorkspaceDataError, workspaceValidationError } from '../workspace-data/errors.js';
 import type { WorkspaceDataEvents } from '../workspace-data/events.js';
 import { listAuditEvents } from '../workspace-data/audit.js';
 import {
@@ -33,7 +34,7 @@ import {
   getOrganization,
   listOrganizations,
 } from '../workspace-data/tenancy.js';
-import { createTable, listTables, resolveTable, loadTable } from '../workspace-data/schema.js';
+import { createTable, listTables, resolveTable, loadTable, setTablePublicWrite } from '../workspace-data/schema.js';
 import {
   createRecord,
   getRecord,
@@ -123,6 +124,35 @@ export function registerWorkspaceDataRoutes(app: Express, ctx: RegisterWorkspace
   app.get('/api/data/orgs/:orgId/tables/:tableRef', handle(async (req, res) => {
     const { db } = await scope(req);
     res.json({ table: resolveTable(db, param(req, 'tableRef')) });
+  }));
+
+  app.patch('/api/data/orgs/:orgId/tables/:tableRef', handle(async (req, res) => {
+    const orgId = param(req, 'orgId');
+    const viewer = await identity.resolveViewer(req, directory());
+    if (!viewer) {
+      throw new WorkspaceDataError('UNAUTHORIZED', 401, 'sign in to continue');
+    }
+    await getOrganization(directory(), orgId);
+    const member = assertMemberRole(
+      await getActiveMemberForUser(directory(), orgId, viewer.userId),
+      'admin',
+      orgId,
+    );
+    const db = manager.openWorkspace(orgId);
+    const table = resolveTable(db, param(req, 'tableRef'));
+    const body = (req.body ?? {}) as UpdateWorkspaceTableRequest;
+    if (typeof body.publicWrite !== 'boolean') {
+      throw workspaceValidationError([
+        { path: 'publicWrite', message: 'publicWrite must be true or false' },
+      ]);
+    }
+    const next = setTablePublicWrite(
+      db,
+      table,
+      { kind: 'user', memberId: member.id },
+      body.publicWrite,
+    );
+    res.json({ table: next });
   }));
 
   // --- Records -------------------------------------------------------------

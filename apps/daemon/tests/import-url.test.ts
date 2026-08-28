@@ -133,10 +133,56 @@ describe('fetchImportSource', () => {
     expect(source.content).toContain('Vase');
   });
 
+  const PROSE_PAGE = `<html><head><title>Team</title></head><body>
+    <p>Ada Lovelace leads engineering in London.</p>
+    <p>Grace Hopper leads platform in New York.</p>
+  </body></html>`;
+
+  it('cannot invent rows from unstructured prose without AI', async () => {
+    await expect(
+      fetchImportSource('https://example.com/team', mockFetch(PROSE_PAGE, 'text/html'), null),
+    ).rejects.toThrow(/no rows could be read/);
+  });
+
+  it('asks AI to turn unstructured prose into rows', async () => {
+    const source = await fetchImportSource(
+      'https://example.com/team',
+      mockFetch(PROSE_PAGE, 'text/html'),
+      async () => ({
+        tableName: 'team',
+        rows: [
+          ['name', 'role', 'city'],
+          ['Ada Lovelace', 'engineering', 'London'],
+          ['Grace Hopper', 'platform', 'New York'],
+        ],
+      }),
+    );
+    expect(source.kind).toBe('ai');
+    expect(source.fileName).toBe('team.csv');
+    expect(source.content).toContain('Ada Lovelace,engineering,London');
+    expect(source.content).toContain('Grace Hopper,platform,New York');
+  });
+
   it('refuses a non-public status', async () => {
     await expect(
       fetchImportSource('https://example.com/secret.csv', mockFetch('nope', 'text/csv', 403)),
     ).rejects.toThrow(/publicly readable/);
+  });
+
+  it('reads a UTF-8 BOM CSV served as octet-stream from an open-data dump', async () => {
+    const csv =
+      '\uFEFF"title-titre-eng","referenceNumber-numeroReference"\n"NPP support","cb-1"\n';
+    const source = await fetchImportSource(
+      'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
+      mockFetch(csv, 'application/octet-stream'),
+    );
+    expect(source.kind).toBe('csv');
+    expect(source.content.startsWith('\uFEFF')).toBe(false);
+    expect(source.fileName).toBe('newTenderNotice-nouvelAvisAppelOffres.csv');
+    expect(source.content).toContain('title-titre-eng');
+    expect(rewriteImportUrl(
+      'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
+    ).kind).toBe('csv');
   });
 });
 

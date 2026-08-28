@@ -1,5 +1,5 @@
 import { expect, test } from '@/playwright/suite';
-import { ensureRailOpen, openNewProjectModal as openNewProjectModalFromProjects } from '@/playwright/rail';
+import { openNewProjectModal as openNewProjectModalFromProjects } from '@/playwright/rail';
 import type { Locator, Page } from '@playwright/test';
 import { applyStandardMocks } from '@/playwright/mock-factory';
 import { T } from '@/timeouts';
@@ -13,11 +13,7 @@ test.beforeEach(async ({ page }) => {
 test('[P0] @critical home loads with the primary entry controls', async ({ page }) => {
   await gotoEntryHome(page);
 
-  // The rail is collapsed by default — the hero owns the first screen and the
-  // only chrome affordance is the topbar toggle. Expand to reach the rail nav.
-  await expect(page.getByTestId('entry-rail-toggle')).toBeVisible();
-  await expect(page.getByTestId('home-hero-input')).toBeVisible();
-  await ensureRailOpen(page);
+  await expect(page.getByTestId('workspace-ask-input')).toBeVisible();
   await expect(page.getByTestId('entry-nav-logo')).toBeVisible();
   await expect(page.getByTestId('entry-nav-home')).toHaveAttribute('aria-current', 'page');
   await expect(page.getByTestId('entry-nav-new-project')).toBeVisible();
@@ -53,8 +49,8 @@ async function gotoEntryHome(page: Page) {
     await privacyDialog.getByRole('button', { name: /I get it|not now|got it|don't share/i }).click();
     await expect(privacyDialog).toHaveCount(0);
   }
-  await expect(page.getByTestId('home-hero')).toBeVisible();
-  await expect(page.getByTestId('home-hero-input')).toBeVisible();
+  await expect(page.getByTestId('workspace-ask')).toBeVisible();
+  await expect(page.getByTestId('workspace-ask-input')).toBeVisible();
 }
 
 async function openNewProjectModal(page: Page) {

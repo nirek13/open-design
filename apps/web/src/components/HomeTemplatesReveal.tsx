@@ -1,4 +1,4 @@
-// New-user reveal wrapper for the Home "Community" templates.
+// New-user reveal wrapper for the Home templates gallery.
 //
 // When the user has no projects yet, the entry view keeps attention on the
 // hero composer: the templates gallery is collapsed and a quiet hint pinned

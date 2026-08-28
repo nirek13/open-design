@@ -175,6 +175,27 @@ describe('IdentityService clerk mode', () => {
     expect(viewer?.displayName).toBe('Kai');
   });
 
+  it('ignores an opaque Bearer API token so a session cookie can authenticate', async () => {
+    const cookieTok = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_cookie',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        name: 'Cookie Person',
+      },
+      privateKey,
+    );
+    const viewer = await identity.resolveViewer(
+      reqWithAuth({
+        bearer: 'a'.repeat(64),
+        cookie: `${SESSION_COOKIE_NAME}=${cookieTok}`,
+      }),
+      manager.directoryExecutor,
+    );
+    expect(viewer?.displayName).toBe('Cookie Person');
+  });
+
   it('prefers a Bearer token over a leftover session cookie', async () => {
     const cookieTok = signRs256(
       { alg: 'RS256', typ: 'JWT', kid },

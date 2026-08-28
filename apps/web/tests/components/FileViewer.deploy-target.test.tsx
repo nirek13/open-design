@@ -99,7 +99,7 @@ async function openCloudflareDeployModal(file: ProjectFile) {
   );
 
   fireEvent.click(screen.getByRole('button', { name: /share/i }));
-  fireEvent.click(await screen.findByRole('menuitem', { name: /Deploy to Cloudflare Pages/i }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: /Export to Cloudflare Pages/i }));
 
   const providerSelect = await screen.findByRole('combobox', { name: /Provider/i });
   await waitFor(() => {
@@ -108,9 +108,9 @@ async function openCloudflareDeployModal(file: ProjectFile) {
 }
 
 function clickDeploySubmitButton() {
-  const deployButtons = screen.getAllByRole('button', { name: /^Deploy$/i });
-  // The share-menu trigger is also labelled "Deploy to Cloudflare Pages"; the
-  // modal's own submit button is the last "Deploy"-named button on screen.
+  const deployButtons = screen.getAllByRole('button', { name: /^Export$/i });
+  // The share-menu trigger is also labelled "Export to Cloudflare Pages"; the
+  // modal's own submit button is the last "Export"-named button on screen.
   fireEvent.click(deployButtons[deployButtons.length - 1]!);
 }
 

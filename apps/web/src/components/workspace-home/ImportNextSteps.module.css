@@ -1,0 +1,108 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.choice,
+.refresh {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
+  border-radius: 11px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.choice:hover:not(:disabled) {
+  border-color: var(--od-border-strong, rgba(127, 127, 127, 0.45));
+}
+
+.choice:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.refresh {
+  cursor: default;
+}
+
+.choiceName {
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.choiceHint {
+  font-size: 12px;
+  opacity: 0.62;
+}
+
+.draft {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
+  border-radius: 11px;
+}
+
+.textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 9px;
+  resize: vertical;
+  font: inherit;
+  font-size: 14px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.32));
+  background: transparent;
+  color: inherit;
+}
+
+.draftActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.refreshRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.done {
+  margin: 6px 0 0;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--od-danger, #c44);
+}

@@ -93,7 +93,7 @@ export function JoinOrgView({ token }: { token: string }) {
           <>
             <h1 className={styles.title}>{t('join.cannotJoin')}</h1>
             <p className={styles.body}>{error ?? t(reasonKey as never)}</p>
-            <Button onClick={() => navigate({ kind: 'home', view: 'home' })}>
+            <Button onClick={() => navigate({ kind: 'home', view: 'workspace' })}>
               {t('join.goHome')}
             </Button>
           </>

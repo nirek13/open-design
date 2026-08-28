@@ -3,6 +3,17 @@ import type {
   ProviderModelsResponse,
 } from '../types';
 
+const KEYLESS_PROVIDER_PROTOCOLS = new Set(['aihubmix', 'bedrock']);
+
+function incompleteProviderModelsRequest(body: ProviderModelsRequest): string | null {
+  const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
+  const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+  const needsKey = !KEYLESS_PROVIDER_PROTOCOLS.has(body.protocol);
+  if (!baseUrl) return needsKey ? 'baseUrl and apiKey are required' : 'baseUrl is required';
+  if (needsKey && !apiKey) return 'baseUrl and apiKey are required';
+  return null;
+}
+
 async function postProviderModels(
   body: ProviderModelsRequest,
   signal?: AbortSignal,
@@ -51,5 +62,15 @@ export function fetchProviderModels(
   input: ProviderModelsRequest,
   signal?: AbortSignal,
 ): Promise<ProviderModelsResponse> {
+  const incomplete = incompleteProviderModelsRequest(input);
+  if (incomplete) {
+    return Promise.resolve({
+      ok: false,
+      kind: 'unknown',
+      latencyMs: 0,
+      detail: incomplete,
+      status: 400,
+    });
+  }
   return postProviderModels(input, signal);
 }

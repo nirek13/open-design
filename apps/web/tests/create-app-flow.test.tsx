@@ -107,6 +107,24 @@ describe('CreateAppFlow', () => {
       totalUnread: 0,
     });
     vi.spyOn(registry, 'publishApp').mockResolvedValue(APP);
+    vi.spyOn(registry, 'fetchProjectFileText').mockResolvedValue(null);
+    vi.spyOn(registry, 'fetchWorkspaceTables').mockResolvedValue([
+      {
+        id: 'tbl-leads',
+        name: 'leads',
+        displayName: 'Leads',
+        description: null,
+        status: 'active',
+        schemaVersion: 1,
+        protection: 'open',
+        publicWrite: false,
+        createdBy: 'wsm-1',
+        createdAt: 1,
+        updatedAt: 1,
+        archivedAt: null,
+        fields: [],
+      },
+    ]);
   });
 
   afterEach(() => {
@@ -139,5 +157,66 @@ describe('CreateAppFlow', () => {
     });
     expect(onClose).not.toHaveBeenCalled();
     expect(registry.publishApp).toHaveBeenCalled();
+  });
+
+  it('sends write access on a chosen table when deploying to the workspace', async () => {
+    render(
+      <I18nProvider initial="en">
+        <OrgProvider>
+          <CreateAppFlow
+            orgId="ws-1"
+            projectId="proj-1"
+            filePath="expense.html"
+            onClose={() => {}}
+          />
+        </OrgProvider>
+      </I18nProvider>,
+    );
+
+    fireEvent.click(await screen.findByTestId('app-scope-leads-write'));
+    fireEvent.click(await screen.findByTestId('app-data-write-consent-check'));
+    fireEvent.click(await screen.findByTestId('create-app-deploy-workspace'));
+    await waitFor(() => {
+      expect(registry.publishApp).toHaveBeenCalledWith(
+        'ws-1',
+        expect.objectContaining({
+          dataScopes: [{ table: 'leads', mode: 'write' }],
+        }),
+      );
+    });
+  });
+
+  it('asks for write permission from the HTML and sets it on deploy', async () => {
+    render(
+      <I18nProvider initial="en">
+        <OrgProvider>
+          <CreateAppFlow
+            orgId="ws-1"
+            projectId="proj-1"
+            filePath="expense.html"
+            htmlSource={'await od.create("leads", { name })'}
+            onClose={() => {}}
+          />
+        </OrgProvider>
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByTestId('app-data-write-consent')).toBeTruthy();
+    fireEvent.click(await screen.findByTestId('create-app-deploy-workspace'));
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/modify organization data|change organization data/i);
+    });
+    expect(registry.publishApp).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('app-data-write-consent-check'));
+    fireEvent.click(screen.getByTestId('create-app-deploy-workspace'));
+    await waitFor(() => {
+      expect(registry.publishApp).toHaveBeenCalledWith(
+        'ws-1',
+        expect.objectContaining({
+          dataScopes: [{ table: 'leads', mode: 'write' }],
+        }),
+      );
+    });
   });
 });

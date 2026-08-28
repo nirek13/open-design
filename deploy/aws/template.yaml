@@ -493,7 +493,9 @@ Resources:
                       proxy_set_header X-Forwarded-Proto $scheme;
                       proxy_set_header X-Forwarded-Host $host;
 
-                      proxy_set_header Authorization "Bearer ${PROXY_API_TOKEN}";
+                      # Pass the browser Clerk JWT through. Replacing this with
+                      # OD_API_TOKEN hid the session from IdentityService.
+                      proxy_set_header Authorization $http_authorization;
 
                       proxy_buffering off;
                       proxy_read_timeout ${PROXY_READ_TIMEOUT};

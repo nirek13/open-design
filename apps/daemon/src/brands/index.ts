@@ -428,6 +428,17 @@ export async function startBrandExtraction(
       metadata,
       locale,
     });
+    // Seed brand.json so the Design System tab / kit preview can render from
+    // the same payload without 404ing on the first paint (DESIGN.md and
+    // system/* arrive later, at preview/finalize).
+    await writeProjectFile(
+      projectsRoot,
+      projectId,
+      'brand.json',
+      JSON.stringify(seedBrand, null, 2),
+      { overwrite: true },
+      metadata,
+    );
     if (designMd) {
       await writeProjectFile(projectsRoot, projectId, 'context/input-DESIGN.md', designMd, { overwrite: true }, metadata);
     }

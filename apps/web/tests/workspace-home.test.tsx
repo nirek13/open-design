@@ -30,6 +30,7 @@ const INVOICES_TABLE = {
   status: 'active' as const,
   schemaVersion: 1,
   protection: 'open' as const,
+  publicWrite: false,
   createdBy: 'wsm-1',
   createdAt: 1,
   updatedAt: 1,
@@ -64,7 +65,14 @@ describe('WorkspaceHome', () => {
   beforeEach(() => {
     vi.spyOn(registry, 'fetchAuthContext').mockResolvedValue({
       mode: 'local-owner',
-      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
+      viewer: {
+        userId: 'user-local-owner',
+        displayName: 'Local Owner',
+        email: null,
+        username: null,
+        bio: null,
+        avatarUrl: null,
+      },
       organizations: [ORG],
     });
     vi.spyOn(registry, 'fetchWorkspaceTables').mockResolvedValue([INVOICES_TABLE]);
@@ -77,6 +85,7 @@ describe('WorkspaceHome', () => {
     vi.spyOn(registry, 'fetchHomeWidgets').mockResolvedValue([]);
     vi.spyOn(registry, 'fetchProposals').mockResolvedValue([]);
     vi.spyOn(registry, 'searchWorkspace').mockResolvedValue([]);
+    vi.spyOn(registry, 'queryWorkspaceRecords').mockResolvedValue({ records: [], nextCursor: null });
   });
 
   afterEach(() => {
@@ -90,6 +99,8 @@ describe('WorkspaceHome', () => {
     // Recent work is what you see before typing anything.
     expect(await screen.findByText('INV-1001')).toBeTruthy();
     expect(screen.getByTestId('workspace-search')).toBeTruthy();
+    expect(screen.getByTestId('workspace-create')).toBeTruthy();
+    expect(screen.queryByTestId('workspace-new-invoices')).toBeNull();
   });
 
   it('searches across everything as you type', async () => {
@@ -162,8 +173,15 @@ describe('WorkspaceHome', () => {
     expect(screen.getByText('Approve')).toBeTruthy();
   });
 
+  it('offers upload assets from the create menu', async () => {
+    renderHome();
+    fireEvent.click(await screen.findByTestId('workspace-create'));
+    expect(screen.getByTestId('workspace-upload-assets')).toBeTruthy();
+  });
+
   it('opens the tool builder with routes to a new tool including a wiki', async () => {
     renderHome();
+    fireEvent.click(await screen.findByTestId('workspace-create'));
     fireEvent.click(await screen.findByTestId('workspace-build-tool'));
     expect(await screen.findByTestId('tool-builder')).toBeTruthy();
     expect(screen.getByTestId('builder-describe')).toBeTruthy();
@@ -199,15 +217,190 @@ describe('WorkspaceHome', () => {
       content: 'Name\nAda\n',
     });
     renderHome();
-    fireEvent.click(await screen.findByTestId('workspace-build-tool'));
-    fireEvent.click(await screen.findByTestId('builder-import'));
+    fireEvent.click(await screen.findByTestId('workspace-create'));
+    fireEvent.click(screen.getByTestId('workspace-magic-import'));
     fireEvent.change(screen.getByTestId('builder-import-url'), {
       target: { value: 'https://example.com/customers.csv' },
     });
     fireEvent.click(screen.getByTestId('builder-import-url-go'));
     expect(await screen.findByTestId('builder-plan')).toBeTruthy();
     expect(screen.getByText(/1 row\(s\) into customers/)).toBeTruthy();
+    expect(await screen.findByTestId('import-data-preview')).toBeTruthy();
+    expect(screen.getByTestId('import-preview-cards').textContent).toContain('Ada');
+    expect(screen.getByTestId('import-source-link').getAttribute('href')).toBe(
+      'https://example.com/customers.csv',
+    );
     expect(planImportFromUrl).toHaveBeenCalledWith('ws-1', 'https://example.com/customers.csv');
+  });
+
+  it('after importing a link, offers a custom interface and a refresh schedule', async () => {
+    vi.spyOn(registry, 'planImportFromUrl').mockResolvedValue({
+      source: {
+        url: 'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
+        finalUrl: 'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
+        kind: 'csv',
+        fileName: 'newTenderNotice-nouvelAvisAppelOffres.csv',
+      },
+      plan: {
+        tableName: 'new_tender_notice',
+        displayName: 'New tender notice',
+        appendingToExisting: false,
+        sourceUrl: 'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
+        columns: [
+          {
+            header: 'Title (English)',
+            fieldName: 'title_eng',
+            type: 'text',
+            reason: 'free-form',
+            sample: ['NPP support'],
+            unique: false,
+          },
+          {
+            header: 'Reference number',
+            fieldName: 'reference_number',
+            type: 'text',
+            reason: 'unique key',
+            sample: ['cb-1'],
+            unique: true,
+          },
+        ],
+        rowCount: 1,
+        skipped: [],
+      },
+      content: 'title_eng,reference_number\nNPP support,cb-1\n',
+    });
+    vi.spyOn(registry, 'commitImportPlan').mockResolvedValue({
+      tableId: 'tbl-1',
+      imported: 1,
+      skipped: 0,
+    });
+    renderHome();
+    fireEvent.click(await screen.findByTestId('workspace-create'));
+    fireEvent.click(screen.getByTestId('workspace-magic-import'));
+    fireEvent.change(screen.getByTestId('builder-import-url'), {
+      target: {
+        value: 'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
+      },
+    });
+    fireEvent.click(screen.getByTestId('builder-import-url-go'));
+    expect(await screen.findByTestId('builder-plan')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('builder-commit'));
+    expect(await screen.findByTestId('import-next-steps')).toBeTruthy();
+    expect(screen.getByTestId('import-next-build')).toBeTruthy();
+    expect(screen.getByTestId('import-next-refresh')).toBeTruthy();
+  });
+
+  it('lets them prompt the builder for a custom interface instead of opening an empty project', async () => {
+    const onAskProject = vi.fn().mockResolvedValue(true);
+    vi.spyOn(registry, 'planImportFromUrl').mockResolvedValue({
+      source: {
+        url: 'https://example.com/tenders.csv',
+        finalUrl: 'https://example.com/tenders.csv',
+        kind: 'csv',
+        fileName: 'tenders.csv',
+      },
+      plan: {
+        tableName: 'tenders',
+        displayName: 'Tenders',
+        appendingToExisting: false,
+        sourceUrl: 'https://example.com/tenders.csv',
+        columns: [
+          {
+            header: 'Title',
+            fieldName: 'title',
+            type: 'text',
+            reason: 'free-form',
+            sample: ['NPP'],
+          },
+        ],
+        rowCount: 1,
+        skipped: [],
+      },
+      content: 'title\nNPP\n',
+    });
+    vi.spyOn(registry, 'commitImportPlan').mockResolvedValue({
+      tableId: 'tbl-1',
+      imported: 1,
+      skipped: 0,
+    });
+    render(
+      <I18nProvider initial="en">
+        <OrgProvider>
+          <WorkspaceHome active onAskProject={onAskProject} />
+        </OrgProvider>
+      </I18nProvider>,
+    );
+    fireEvent.click(await screen.findByTestId('workspace-create'));
+    fireEvent.click(screen.getByTestId('workspace-magic-import'));
+    fireEvent.change(screen.getByTestId('builder-import-url'), {
+      target: { value: 'https://example.com/tenders.csv' },
+    });
+    fireEvent.click(screen.getByTestId('builder-import-url-go'));
+    expect(await screen.findByTestId('builder-plan')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('builder-commit'));
+    expect(await screen.findByTestId('import-next-steps')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('import-next-build'));
+    expect(await screen.findByTestId('import-next-build-draft')).toBeTruthy();
+    expect(onAskProject).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByTestId('import-next-build-prompt'), {
+      target: { value: 'A board of open tenders grouped by closing week' },
+    });
+    fireEvent.click(screen.getByTestId('import-next-build-submit'));
+    await waitFor(() => {
+      expect(onAskProject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: expect.stringContaining('A board of open tenders grouped by closing week'),
+          conversationMode: 'design',
+        }),
+      );
+    });
+  });
+
+  it('shows imported tables as visual data sources on the hub', async () => {
+    const suppliers = {
+      ...INVOICES_TABLE,
+      id: 'tbl-sup',
+      name: 'suppliers',
+      displayName: 'Suppliers',
+      fields: [
+        {
+          id: 'fld-name',
+          tableId: 'tbl-sup',
+          name: 'name',
+          displayName: 'Name',
+          type: 'text' as const,
+          required: false,
+          unique: false,
+          config: null,
+          position: 0,
+          status: 'active' as const,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    };
+    vi.spyOn(registry, 'fetchWorkspaceTables').mockResolvedValue([INVOICES_TABLE, suppliers]);
+    vi.spyOn(registry, 'queryWorkspaceRecords').mockResolvedValue({
+      records: [
+        {
+          id: 'rec-sup-1',
+          tableId: 'tbl-sup',
+          data: { name: 'Acme Steel' },
+          revision: 1,
+          createdByKind: 'user',
+          createdById: 'wsm-1',
+          createdAt: 1,
+          updatedAt: 1,
+          deletedAt: null,
+        },
+      ],
+      nextCursor: null,
+    });
+    renderHome();
+    expect(await screen.findByTestId('workspace-data-sources')).toBeTruthy();
+    expect(screen.getByTestId('workspace-source-suppliers')).toBeTruthy();
+    expect(screen.getByTestId('source-gallery-suppliers')).toBeTruthy();
+    expect(screen.getByText('Acme Steel')).toBeTruthy();
   });
 
   it('reports a load failure instead of showing an empty workspace', async () => {
@@ -215,5 +408,80 @@ describe('WorkspaceHome', () => {
     renderHome();
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('daemon offline');
+  });
+
+  it('asks from the hub and starts a project with the full brief', async () => {
+    vi.spyOn(registry, 'interpretIntent').mockResolvedValue({
+      kind: 'unsupported',
+      summary: 'Ask the assistant',
+      confidence: 0,
+      operations: [],
+      preview: null,
+      query: null,
+      schemaChange: null,
+      unmatched: 'make a pitch deck',
+      suggestions: [],
+    });
+    const onAskProject = vi.fn().mockResolvedValue(true);
+    render(
+      <I18nProvider initial="en">
+        <OrgProvider>
+          <WorkspaceHome active onAskProject={onAskProject} />
+        </OrgProvider>
+      </I18nProvider>,
+    );
+    await screen.findByTestId('workspace-ask');
+    fireEvent.change(screen.getByTestId('workspace-ask-input'), {
+      target: { value: 'Make a 8-slide pitch deck for investors' },
+    });
+    fireEvent.click(screen.getByTestId('workspace-ask-submit'));
+    await waitFor(() => {
+      expect(onAskProject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: 'Make a 8-slide pitch deck for investors',
+          pluginInputs: { prompt: 'Make a 8-slide pitch deck for investors' },
+          conversationMode: 'design',
+        }),
+      );
+    });
+  });
+
+  it('turns a pasted public link into an import instead of a design project', async () => {
+    const onAskProject = vi.fn();
+    const planImportFromUrl = vi.spyOn(registry, 'planImportFromUrl').mockResolvedValue({
+      source: {
+        url: 'https://example.com/team',
+        finalUrl: 'https://example.com/team',
+        kind: 'ai',
+        fileName: 'team.csv',
+      },
+      plan: {
+        tableName: 'team',
+        displayName: 'Team',
+        appendingToExisting: false,
+        columns: [
+          { header: 'Name', fieldName: 'name', type: 'text', reason: 'names', sample: ['Ada'] },
+        ],
+        rowCount: 2,
+        skipped: [],
+      },
+      content: 'name,role\nAda,eng\n',
+    });
+    render(
+      <I18nProvider initial="en">
+        <OrgProvider>
+          <WorkspaceHome active onAskProject={onAskProject} />
+        </OrgProvider>
+      </I18nProvider>,
+    );
+    await screen.findByTestId('workspace-ask');
+    fireEvent.change(screen.getByTestId('workspace-ask-input'), {
+      target: { value: 'https://example.com/team' },
+    });
+    fireEvent.click(screen.getByTestId('workspace-ask-submit'));
+    expect(await screen.findByTestId('tool-builder')).toBeTruthy();
+    expect(await screen.findByTestId('builder-plan')).toBeTruthy();
+    expect(planImportFromUrl).toHaveBeenCalledWith('ws-1', 'https://example.com/team');
+    expect(onAskProject).not.toHaveBeenCalled();
   });
 });

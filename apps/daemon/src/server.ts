@@ -658,6 +658,8 @@ import { registerOrgSearchRoutes } from './routes/org-search.js';
 import { registerCalendarRoutes } from './routes/calendar.js';
 import { registerMailRoutes } from './routes/mail.js';
 import { registerSlackRoutes } from './routes/slack.js';
+import { registerPhoneRoutes } from './routes/phone.js';
+import { createPhoneService, phoneStudioUrl } from './phone/service.js';
 import { registerGithubRoutes } from './routes/github.js';
 import { WorkspaceDbManager } from './storage/workspace-db.js';
 import { WorkspaceDataEvents } from './workspace-data/events.js';
@@ -1237,10 +1239,27 @@ export function createAgentRuntimeToolPrompt(
         '- Read and write through `tools data query|insert|update` (see `tools data --help` for payload shapes). The daemon validates every write against the schema, enforces uniqueness and link integrity, soft-deletes only, and records full row history plus an audit trail attributed to this run — do not try to bypass it or batch-edit data through files.',
         '- Records never truly delete. To add a column, rename a field, or create a table from a sentence, use `tools erp ask --text "..." --apply` (it is stored as an undoable proposal). Do not work around the schema with ad-hoc files.',
         '',
+        '### Data-connected HTML apps (`window.od`)',
+        '',
+        '- When you build a form, intake page, dashboard, or tool that *people will use* to create or change workspace records (a contact form that lands in a spreadsheet, an expense form, a status board), do NOT fetch `/api/*` from the page and do not invent a backend. The running app has no network (`connect-src \'none\'`).',
+        '- The host injects `window.od` in the project HTML preview and when the file is opened as a workspace app. Use `const api = window.od` (never a bare `od` in `type="module"` scripts). If `api` is missing, tell the person to stay in the workspace preview.',
+        '  - `await api.create(\'leads\', { name, email })` appends a row (needs write).',
+        '  - `await api.query(\'leads\')` reads rows (needs read or write).',
+        '  - `await api.describe(\'leads\')` returns columns.',
+        '  - `await api.update(\'leads\', id, { status: \'won\' })` changes a row (needs write).',
+        '  - `await api.scopes()` lists what this app was granted, so the UI can adapt.',
+        '- Discover the real table first with `tools data list-tables` / `describe-table`. Use those machine names as `od.create` table arguments. If no table fits, create one, then write the form against it.',
+        '- Permission is never implied. A page that calls create/update cannot change organization data until a person grants Write. Do both of these:',
+        '  1. Before you write `od.create` / `od.update`, emit one `<question-form id="org_data_write">` asking whether this app may create and change rows in the named table(s). Use a switch, default `true` when the brief is an intake form. Then stop the turn.',
+        '  2. After they answer yes and the HTML works in preview, publish with those grants: `"$OD_NODE_BIN" "$OD_BIN" app publish --project "$OD_PROJECT_ID" --file <file> --name "<name>" --scope <table>:write --pin`. Repeat `--scope` per table. Never pass write scopes they refused.',
+        '- If they refuse, still write the HTML; publish without `--scope` (or skip publish). Tell them it cannot change organization data until they grant Write when adding it to the workspace.',
+        '- Guard the page: if `window.od` is missing, tell the person to stay in the workspace preview. Public web links can append rows only to tables marked Public form (Data → Public form) when the app has Write on that table — they still cannot read or edit existing rows.',
+        '- Wire submit handlers to `od.create`. A form that only looks like it saves, or that POSTs to a made-up URL, is unfinished.',
+        '',
         '### ERP (`tools erp`)',
         '',
         '- You MAY change the organization ERP: import data, add tables/fields, define packs, and edit any wiki page that lives beside those tables.',
-        '- Magic-import a public Google Sheet, CSV, JSON array, or HTML table: `"$OD_NODE_BIN" "$OD_BIN" tools erp import-url --url <https://...>` (optional `--table <name>`; `--plan-only` to preview). Then `tools data query --table <name>` to read what landed.',
+        '- Magic-import a public Google Sheet, CSV, JSON, HTML table, open-data dump, or any public page (AI scrapes unstructured pages into rows): `"$OD_NODE_BIN" "$OD_BIN" tools erp import-url --url <https://...>` (optional `--table <name>`; `--plan-only` to preview). Re-importing the same link updates matching unique keys. Then `tools data query --table <name>` to read what landed.',
         '- Say what to change: `"$OD_NODE_BIN" "$OD_BIN" tools erp ask --text "add a phone column to customers" --apply`. Queries (show/list/find) run without `--apply`. Low-confidence sentences should be turned into `tools data create-table` or a custom pack instead of guessed.',
         '- Invent a new ERP module as a pack: `tools erp pack --input spec.json` then `tools erp pack-install --pack <slug>`. Spec shape: `{displayName, description?, tables:[{name, displayName, fields:[{name, type, required?}]}]}`.',
         '- Put imported data on any page: `tools pages embed --page <id> --type database --table <table-id>` or `--type record --record <id>`. You may upsert, append, duplicate, or archive any wiki page in this organization — that is how you modify ERP pages and build new ones.',
@@ -2436,6 +2455,9 @@ export async function startServer({
     identity: identityService,
     connectors: connectorService,
     dataDir: RUNTIME_DATA_DIR,
+    userDesignSystemsRoot: USER_DESIGN_SYSTEMS_DIR,
+    projectsRoot: PROJECTS_DIR,
+    getProject: (projectId) => getProject(db, projectId),
     // Serves one file of a shared app to an anonymous link visitor.
     //
     // The headers below are the security line for link sharing: the same
@@ -2478,6 +2500,17 @@ export async function startServer({
       res.setHeader('Content-Type', file.mime || 'application/octet-stream');
       res.send(file.buffer);
     },
+    loadAppHtml: async ({ projectId, filePath }: { projectId: string; filePath: string }) => {
+      const project = getProject(db, projectId);
+      if (!project) return null;
+      try {
+        const file = await readProjectFile(PROJECTS_DIR, projectId, filePath, project.metadata);
+        return file.buffer.toString('utf8');
+      } catch {
+        return null;
+      }
+    },
+    events: workspaceDataEvents,
   };
   const {
     authorizeToolRequest,
@@ -2819,6 +2852,19 @@ export async function startServer({
       return daemonUrl;
     },
   };
+  const phoneInboundBaseUrl = () => {
+    const env = process.env.OD_PUBLIC_BASE_URL;
+    if (env && /^https?:\/\//i.test(env)) return env.replace(/\/+$/u, '');
+    if (typeof daemonUrl === 'string' && daemonUrl) return String(daemonUrl).replace(/\/+$/u, '');
+    return `http://127.0.0.1:${process.env.OD_PORT ?? '7456'}`;
+  };
+  const phoneService = createPhoneService({
+    dataDir: RUNTIME_DATA_DIR,
+    connectors: connectorService,
+    inboundUrlFor: (channelId) => `${phoneInboundBaseUrl()}/api/phone/inbound/${encodeURIComponent(channelId)}`,
+  });
+  phoneService.startPolling();
+
   const httpDeps = {
     sendApiError,
     sendMulterError,
@@ -3399,6 +3445,15 @@ export async function startServer({
       manager: workspaceDbManager,
       identity: identityService,
       connectors: connectorService,
+    },
+  });
+  registerPhoneRoutes(app, {
+    http: httpDeps,
+    phone: {
+      identity: identityService,
+      service: phoneService,
+      connectors: connectorService,
+      directory: () => workspaceDbManager.directoryExecutor,
     },
   });
   registerGithubRoutes(app, {
@@ -9235,6 +9290,113 @@ export async function startServer({
   });
   routineService.start();
 
+  phoneService.setRunHandler(async ({ channelId, prompt, sourceLabel }) => {
+    const record = phoneService.store.get(channelId);
+    if (!record) throw new Error('phone channel disappeared');
+    const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
+    let agentId = typeof appConfig.agentId === 'string' && appConfig.agentId
+      ? appConfig.agentId
+      : null;
+    if (!agentId) {
+      const agents = await detectAgents(appConfig.agentCliEnv ?? {}).catch(() => []);
+      agentId = agents.find((agent) => agent.available)?.id ?? null;
+    }
+    if (!agentId) {
+      throw new Error('No available agent is configured. Choose an agent in Settings first.');
+    }
+    const stamp = Date.now();
+    let projectId = record.projectId;
+    if (!projectId || !getProject(db, projectId)) {
+      projectId = `phone-${randomUUID()}`;
+      insertProject(db, {
+        id: projectId,
+        name: record.label || `Phone · ${sourceLabel}`,
+        skillId: null,
+        designSystemId: appConfig.designSystemId ?? null,
+        pendingPrompt: null,
+        metadata: { kind: 'other', intent: 'phone', phoneChannelId: channelId, source: record.kind },
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+    }
+    let conversationId = record.conversationId;
+    if (!conversationId || !getConversation(db, conversationId)) {
+      conversationId = `phone-conv-${randomUUID()}`;
+      insertConversation(db, {
+        id: conversationId,
+        projectId,
+        title: record.label || sourceLabel,
+        sessionMode: 'chat',
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+    }
+    const latestRecord = phoneService.store.get(channelId) ?? record;
+    phoneService.store.save({ ...latestRecord, projectId, conversationId });
+
+    const assistantMessageId = `phone-assistant-${randomUUID()}`;
+    const run = design.runs.create({
+      projectId,
+      conversationId,
+      assistantMessageId,
+      clientRequestId: `phone-${channelId}-${randomUUID()}`,
+      agentId,
+      mediaExecution: defaultMediaExecutionPolicy(),
+    });
+    upsertMessage(db, conversationId, {
+      id: `phone-user-${run.id}`,
+      role: 'user',
+      content: prompt,
+    });
+    upsertMessage(db, conversationId, {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      agentId,
+      agentName: getAgentDef(agentId)?.name ?? agentId,
+      runId: run.id,
+      runStatus: 'queued',
+      startedAt: stamp,
+    });
+    const modelPrefs = appConfig.agentModels?.[agentId] ?? {};
+    design.runs.start(run, () => startChatRun({
+      agentId,
+      projectId,
+      conversationId,
+      assistantMessageId,
+      clientRequestId: run.clientRequestId,
+      designSystemId: appConfig.designSystemId ?? null,
+      sessionMode: 'chat',
+      model: modelPrefs.model ?? null,
+      reasoning: modelPrefs.reasoning ?? null,
+      serviceTier: modelPrefs.serviceTier ?? null,
+      message: prompt,
+      currentPrompt: prompt,
+      systemPrompt: [
+        `You are Open Design, reached from ${sourceLabel} on a phone.`,
+        'Keep replies short and concrete. Do not emit <question-form>; ask one plain-text question if you must.',
+        'If you write project files, say what you made in one or two sentences.',
+      ].join('\n'),
+    }, run));
+    const finalStatus = await design.runs.wait(run);
+    const assistant = listMessages(db, conversationId).find((row) => row.id === assistantMessageId);
+    const text = typeof assistant?.content === 'string' ? assistant.content : '';
+    const envBase = process.env.OD_PUBLIC_BASE_URL;
+    const webBase = envBase && /^https?:\/\//i.test(envBase)
+      ? envBase.replace(/\/+$/u, '')
+      : (process.env.OD_WEB_PORT
+        ? `http://127.0.0.1:${process.env.OD_WEB_PORT}`
+        : String(daemonUrl || '').replace(/\/+$/u, '') || null);
+    return {
+      runId: run.id,
+      projectId,
+      conversationId,
+      status: finalStatus.status,
+      text,
+      studioUrl: phoneStudioUrl(webBase, projectId, conversationId),
+    };
+  });
+
   assertServerContextSatisfiesRoutes({
     db,
     design,
@@ -9339,6 +9501,7 @@ export async function startServer({
       composioConnectorProvider.stopCatalogRefreshLoop();
       orbitService.stop();
       routineService?.stop();
+      phoneService.stop();
       // Each startServer() opens its own workspace SQLite handles (one
       // directory DB plus one per touched workspace). Without this, repeated
       // starts in one process — as the daemon test suites do — leak file

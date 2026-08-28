@@ -34,7 +34,7 @@ Internet (allowlisted CIDR only)
 
 - **DesiredCount: 0 or 1** — SQLite under EFS must not be multi-writer. `0` parks the task.
 - **No NAT gateways** — Fargate uses a public IP for outbound (ECR, AWS APIs, model providers). Inbound is still only the ALB security group. This drops ~\$65/mo versus dual NAT.
-- **Auth model:** browser hits ALB; nginx adds `Authorization: Bearer <ApiToken>` for `/api/`. Token lives in Secrets Manager, not in the image.
+- **Auth model:** browser hits ALB; nginx rewrites Host/Origin to loopback and **forwards** the browser `Authorization` (Clerk session JWT) for `/api/`. Do not replace that header with `OD_API_TOKEN` — the daemon would then try to verify the infrastructure token as a session and 401 every signed-in call. `OD_API_TOKEN` still lives in Secrets Manager for the proxy container; the app binds to loopback so the API-token middleware skips the nginx hop.
 
 ### Cost modes (economy vs performance)
 

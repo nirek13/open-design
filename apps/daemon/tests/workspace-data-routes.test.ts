@@ -90,6 +90,23 @@ describe('workspace data routes', () => {
     return body.table;
   }
 
+  it('lets an admin open a table to public form submissions', async () => {
+    const table = await createEmployeesTable();
+    expect(table.publicWrite).toBe(false);
+
+    const opened = await json('PATCH', `/api/data/orgs/${workspaceId}/tables/employees`, {
+      publicWrite: true,
+    });
+    expect(opened.status).toBe(200);
+    expect(opened.body.table.publicWrite).toBe(true);
+
+    const closed = await json('PATCH', `/api/data/orgs/${workspaceId}/tables/employees`, {
+      publicWrite: false,
+    });
+    expect(closed.status).toBe(200);
+    expect(closed.body.table.publicWrite).toBe(false);
+  });
+
   it('runs the record lifecycle over HTTP with audit and revisions', async () => {
     const table = await createEmployeesTable();
 

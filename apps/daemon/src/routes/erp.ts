@@ -958,6 +958,7 @@ export function registerErpRoutes(app: Express, ctx: RegisterErpRoutesDeps) {
     const plan = buildImportPlan(recordsDb, {
       content: source.content,
       fileName: source.fileName,
+      sourceUrl: source.url,
       ...(body.tableName ? { tableName: String(body.tableName) } : {}),
     });
     const sourceMeta = {
@@ -1062,6 +1063,7 @@ export function registerErpRoutes(app: Express, ctx: RegisterErpRoutesDeps) {
     const plan = buildImportPlan(recordsDb, {
       content: source.content,
       fileName: source.fileName,
+      sourceUrl: source.url,
       ...(req.body?.tableName ? { tableName: String(req.body.tableName) } : {}),
     });
     const sourceMeta = {

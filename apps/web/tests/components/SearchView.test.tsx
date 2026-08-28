@@ -52,6 +52,8 @@ describe('SearchView', () => {
       organizations: [ORG],
     });
     vi.spyOn(registry, 'searchOrg').mockResolvedValue([]);
+    vi.spyOn(registry, 'fetchAllOrgApps').mockResolvedValue([]);
+    vi.spyOn(registry, 'fetchLibraryAssets').mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -87,6 +89,107 @@ describe('SearchView', () => {
 
     fireEvent.click(screen.getByTestId('org-search-hit-page'));
     expect(navigate).toHaveBeenCalledWith({ kind: 'home', view: 'pages', pageId: 'pg-1' });
+  });
+
+  it('opens a place from Spotlight without waiting on org search', async () => {
+    renderSearch();
+    const input = await screen.findByTestId('org-search-input');
+    fireEvent.change(input, { target: { value: 'Mail' } });
+    expect(await screen.findByTestId('org-search-hit-destination')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('org-search-hit-destination'));
+    expect(navigate).toHaveBeenCalledWith({ kind: 'home', view: 'mail' });
+  });
+
+  it('lists every org app even when org search returns nothing', async () => {
+    vi.mocked(registry.fetchAllOrgApps).mockResolvedValue([
+      {
+        id: 'app-9',
+        orgId: 'ws-1',
+        orgName: 'Northwind',
+        name: 'Expense form',
+        description: 'Submit receipts',
+        projectId: 'proj-1',
+        filePath: 'app.html',
+        visibility: 'org',
+        status: 'active',
+        accessMode: 'org',
+        pinned: false,
+        pinnedAt: null,
+        createdBy: 'wsm-1',
+        createdByName: 'Local Owner',
+        createdAt: 1,
+        updatedAt: 1,
+        archivedAt: null,
+        lastOpenedAt: null,
+        openCount: 0,
+        dataScopes: [],
+        webUrl: null,
+      },
+    ]);
+    renderSearch();
+    fireEvent.change(await screen.findByTestId('org-search-input'), {
+      target: { value: 'Expense' },
+    });
+    expect(await screen.findByText('Expense form')).toBeTruthy();
+    expect(screen.getByTestId('org-search-hit-app')).toBeTruthy();
+  });
+
+  it('lists matching uploaded assets', async () => {
+    vi.mocked(registry.fetchLibraryAssets).mockResolvedValue([
+      {
+        id: 'asset-1',
+        kind: 'image',
+        storage: 'owned',
+        sourceTitle: 'Brand logo',
+        capturedAt: 1,
+        archivedDate: '2026-08-26',
+        contentHash: 'abc',
+        tags: ['brand'],
+        sources: [],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    renderSearch();
+    fireEvent.change(await screen.findByTestId('org-search-input'), {
+      target: { value: 'logo' },
+    });
+    expect(await screen.findByText('Brand logo')).toBeTruthy();
+    expect(screen.getByTestId('org-search-hit-asset')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('org-search-hit-asset'));
+    expect(navigate).toHaveBeenCalledWith({ kind: 'home', view: 'library' });
+  });
+
+  it('offers to scrape a pasted public link into data', async () => {
+    vi.spyOn(registry, 'planImportFromUrl').mockResolvedValue({
+      source: {
+        url: 'https://example.com/pricing',
+        finalUrl: 'https://example.com/pricing',
+        kind: 'ai',
+        fileName: 'pricing.csv',
+      },
+      plan: {
+        tableName: 'pricing',
+        displayName: 'Pricing',
+        appendingToExisting: false,
+        columns: [
+          { header: 'Plan', fieldName: 'plan', type: 'text', reason: 'text', sample: ['Pro'] },
+        ],
+        rowCount: 1,
+        skipped: [],
+      },
+      content: 'plan\nPro\n',
+    });
+    renderSearch();
+    fireEvent.change(await screen.findByTestId('org-search-input'), {
+      target: { value: 'https://example.com/pricing' },
+    });
+    expect(await screen.findByTestId('org-search-hit-import')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('org-search-hit-import'));
+    expect(await screen.findByTestId('tool-builder')).toBeTruthy();
+    expect(await screen.findByTestId('builder-plan')).toBeTruthy();
+    expect(await screen.findByTestId('import-data-preview')).toBeTruthy();
+    expect(screen.getByTestId('import-preview-cards').textContent).toContain('Pro');
   });
 
   it('shows an empty state when nothing matches', async () => {

@@ -25,17 +25,20 @@ function roundTrip(route: Route): Route {
 
 describe('parseRoute / buildPath (issue #1505)', () => {
   it('parses the home route', () => {
-    // The workspace is the landing surface; the agent hero lives at /home.
     expect(parseRoute('/')).toEqual({ kind: 'home', view: 'workspace' });
     expect(parseRoute('')).toEqual({ kind: 'home', view: 'workspace' });
-    expect(parseRoute('/home')).toEqual({ kind: 'home', view: 'home' });
+    expect(parseRoute('/home')).toEqual({ kind: 'home', view: 'workspace' });
+    expect(buildPath({ kind: 'home', view: 'home' })).toBe('/');
+    expect(buildPath({ kind: 'home', view: 'workspace' })).toBe('/');
   });
 
-  it('round-trips ERP connections', () => {
-    const route: Route = { kind: 'home', view: 'connections' };
+  it('round-trips ERP connections onto Connect', () => {
+    const route: Route = { kind: 'home', view: 'integrations' };
     expect(parseRoute('/erp/connections')).toEqual(route);
     expect(parseRoute('/connections')).toEqual(route);
-    expect(buildPath(route)).toBe('/erp/connections');
+    expect(parseRoute('/connect')).toEqual(route);
+    expect(parseRoute('/integrations')).toEqual(route);
+    expect(buildPath(route)).toBe('/connect');
   });
 
   it('round-trips a bare project route', () => {
@@ -156,6 +159,15 @@ describe('parseRoute / buildPath (issue #1505)', () => {
     expect(roundTrip(channel)).toEqual(channel);
   });
 
+  it('round-trips a named workspace table', () => {
+    const named: Route = { kind: 'home', view: 'tables', tableName: 'suppliers' };
+    expect(parseRoute('/tables/suppliers')).toEqual(named);
+    expect(buildPath(named)).toBe('/tables/suppliers');
+    expect(roundTrip(named)).toEqual(named);
+    expect(parseRoute('/tables')).toEqual({ kind: 'home', view: 'tables' });
+    expect(buildPath({ kind: 'home', view: 'tables' })).toBe('/tables');
+  });
+
   it('round-trips organization search', () => {
     const route: Route = { kind: 'home', view: 'search' };
     expect(parseRoute('/search')).toEqual(route);
@@ -163,8 +175,8 @@ describe('parseRoute / buildPath (issue #1505)', () => {
     expect(roundTrip(route)).toEqual(route);
   });
 
-  it('falls back to home when the URL is unrecognized', () => {
-    expect(parseRoute('/something/else')).toEqual({ kind: 'home', view: 'home' });
+  it('falls back to the workspace hub when the URL is unrecognized', () => {
+    expect(parseRoute('/something/else')).toEqual({ kind: 'home', view: 'workspace' });
     expect(parseRoute('/projects')).toEqual({ kind: 'home', view: 'projects' });
   });
 });

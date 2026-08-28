@@ -3,21 +3,31 @@ import type { Locator } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
 /**
- * The entry nav rail is collapsed by default; its destinations
- * (`entry-nav-*`) only become interactable once the rail is expanded via the
- * topbar toggle. This helper is idempotent — when the rail is already docked
- * the toggle is hidden, so it no-ops. Call it before clicking any rail nav
- * item or asserting the rail/logo is visible.
+ * Destinations live in the slim left sidebar. This helper waits until
+ * that rail is interactable. Call it before clicking any `entry-nav-*`
+ * item that is already pinned on the dock.
  */
 export async function ensureRailOpen(page: Page): Promise<void> {
-  const toggle = page.getByTestId('entry-rail-toggle');
-  // The toggle is only present while collapsed (it's display:none once docked).
-  if (await toggle.isVisible().catch(() => false)) {
-    await toggle.scrollIntoViewIfNeeded();
-    await toggle.click();
+  await expect(page.getByTestId('entry-nav-logo')).toBeVisible();
+  await expect(page.getByTestId('entry-nav-home')).toBeVisible();
+}
+
+const NAV_TEST_ID_PREFIX = 'entry-nav-';
+
+/** Open a destination from the sidebar, or from Places if it is not pinned. */
+export async function clickEntryNav(page: Page, testId: string): Promise<void> {
+  await ensureRailOpen(page);
+  const onDock = page.getByTestId('entry-nav-dock').getByTestId(testId);
+  if (await onDock.isVisible().catch(() => false)) {
+    await onDock.click();
+    return;
   }
-  await expect(page.locator('.entry')).toHaveClass(/entry--rail-open/);
-  await expect(page.locator('.entry-nav-rail')).not.toHaveAttribute('aria-hidden', 'true');
+  const id = testId.startsWith(NAV_TEST_ID_PREFIX)
+    ? testId.slice(NAV_TEST_ID_PREFIX.length)
+    : testId;
+  await page.getByTestId('entry-nav-logo').click();
+  await expect(page.getByTestId('entry-nav-atlas')).toBeVisible();
+  await page.getByTestId(`entry-nav-atlas-${id}`).click();
 }
 
 export async function openNewProjectModal(page: Page): Promise<void> {

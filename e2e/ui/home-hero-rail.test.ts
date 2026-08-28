@@ -465,29 +465,21 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('[P1] home left rail expands and collapses from the shell controls', async ({ page }) => {
+test('[P1] home org mark opens Places and the sidebar stays reachable', async ({ page }) => {
   await gotoEntryHome(page);
 
-  const shell = page.locator('.entry');
   const rail = page.locator('.entry-nav-rail');
-  const expand = page.getByTestId('entry-rail-toggle');
-
-  await expect(shell).not.toHaveClass(/entry--rail-open/);
-  await expect(rail).toHaveAttribute('aria-hidden', 'true');
-  await expect(expand).toHaveAttribute('aria-expanded', 'false');
-
-  await expand.click();
-  await expect(shell).toHaveClass(/entry--rail-open/);
-  await expect(rail).not.toHaveAttribute('aria-hidden', 'true');
+  await expect(rail).toBeVisible();
   await expect(page.getByTestId('entry-nav-home')).toBeVisible();
   await expect(page.getByTestId('entry-nav-projects')).toBeVisible();
 
-  const collapse = page.getByTestId('entry-nav-collapse');
-  await expect(collapse).toBeVisible();
-  await collapse.click();
-  await expect(shell).not.toHaveClass(/entry--rail-open/);
-  await expect(rail).toHaveAttribute('aria-hidden', 'true');
-  await expect(expand).toHaveAttribute('aria-expanded', 'false');
+  await page.getByTestId('entry-nav-logo').click();
+  await expect(page.getByTestId('entry-nav-atlas')).toBeVisible();
+  await expect(page.getByTestId('entry-nav-island-work')).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('entry-nav-atlas')).toHaveCount(0);
+  await expect(page.getByTestId('entry-nav-home')).toBeVisible();
 });
 
 test('[P1] home composer plus menu exposes attachment, connector, plugin, and MCP entries', async ({ page }) => {

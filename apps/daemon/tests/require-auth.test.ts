@@ -81,6 +81,23 @@ describe('isPublicApiPath', () => {
     expect(isPublicApiPath('/api/invites/abc123/accept')).toBe(true);
   });
 
+  it('lets Composio finish OAuth without a session cookie', () => {
+    expect(isPublicApiPath('/api/connectors/oauth/callback/github')).toBe(true);
+    expect(isPublicApiPath('/api/connectors/github/connect')).toBe(false);
+  });
+
+  it('lets agent tool wrappers authenticate via OD_TOOL_TOKEN alone', () => {
+    expect(isPublicApiPath('/api/tools/live-artifacts/list')).toBe(true);
+    expect(isPublicApiPath('/api/tools/connectors/execute')).toBe(true);
+    // Near-miss: /api/tool without the trailing s must stay gated.
+    expect(isPublicApiPath('/api/tool/live-artifacts/list')).toBe(false);
+  });
+
+  it('lets Slack and iMessage webhooks authenticate with the phone inbound token', () => {
+    expect(isPublicApiPath('/api/phone/inbound/abc')).toBe(true);
+    expect(isPublicApiPath('/api/phone/channels')).toBe(false);
+  });
+
   it('does not leak anything else', () => {
     for (const path of [
       '/api/projects',

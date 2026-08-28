@@ -14,6 +14,7 @@
  *   { type: 'od:slide-state', active: number, count: number }
  * after every navigation so the host can render its own counter / dots.
  */
+import { APP_SDK_SOURCE } from '@open-design/contracts';
 import { injectDeckStageFallback } from '@open-design/contracts/runtime/deck-stage-fallback';
 
 import {
@@ -378,11 +379,12 @@ export function buildSrcdoc(
   const withSourcePaths = options.editBridge ? annotateManualEditSourcePaths(withOdIds) : withOdIds;
   const withBase = options.baseHref ? injectBaseHref(withSourcePaths, options.baseHref) : withSourcePaths;
   const withShim = injectSandboxShim(withBase);
+  const withAppSdk = injectAppSdk(withShim);
   const blockLoadTimeScriptRedirect = htmlHasLoadTimeLocationNavigation(withBase);
   // Always on: a redirect loop can freeze ANY previewed artifact, and the guard
   // is inert on documents that never self-redirect. Injected right after the
   // sandbox shim so it is installed before any author script or meta refresh.
-  const withRedirectGuard = injectPreviewRedirectGuard(withShim, { blockLoadTimeScriptRedirect });
+  const withRedirectGuard = injectPreviewRedirectGuard(withAppSdk, { blockLoadTimeScriptRedirect });
   const withKeydownRegistry = options.deck ? injectDeckKeydownRegistryHook(withRedirectGuard) : withRedirectGuard;
   const withFocusGuard = options.previewFocusGuard
     ? injectPreviewFocusGuard(withKeydownRegistry)
@@ -1262,6 +1264,15 @@ function escapeAttr(value: string): string {
 // links with target="_blank" to work in the sandboxed preview.
 // Empty hrefs and hash only hrefs will be intercepted and ignored.
 // hrefs leading to an id on the page will be scrolled into view.
+function injectAppSdk(doc: string): string {
+  const script = `<script data-od-app-sdk>${APP_SDK_SOURCE}</script>`;
+  if (/<head[^>]*>/i.test(doc))
+    return doc.replace(/<head[^>]*>/i, (m) => `${m}${script}`);
+  if (/<body[^>]*>/i.test(doc))
+    return doc.replace(/<body[^>]*>/i, (m) => `${m}${script}`);
+  return script + doc;
+}
+
 function injectSandboxShim(doc: string): string {
   const shim = `<script data-od-sandbox-shim>(function(){
   function makeStore(){

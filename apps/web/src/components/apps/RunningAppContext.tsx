@@ -32,8 +32,8 @@ interface RunningAppContextValue {
   openError: string | null;
   clearOpenError: () => void;
   /**
-   * When true, the overlay leaves room for the entry nav rail so the
-   * sidebar stays visible and clickable while the app runs.
+   * When true, the overlay used to leave room for a dock. The stage
+   * compass floats above the app, so this no longer insets the overlay.
    */
   sidebarVisible: boolean;
   setSidebarVisible: (visible: boolean) => void;

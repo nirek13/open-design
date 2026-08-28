@@ -1,6 +1,6 @@
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -18,6 +18,7 @@ import {
   upsertExternalUser,
 } from '../src/workspace-data/tenancy.js';
 import { LOCAL_OWNER_USER_ID } from '@open-design/contracts';
+import { createTable, setTablePublicWrite } from '../src/workspace-data/schema.js';
 
 describe('organization routes', () => {
   let tempDir: string;
@@ -26,6 +27,10 @@ describe('organization routes', () => {
   let base = '';
   let orgId = '';
   const servedFiles: Array<{ projectId: string; filePath: string }> = [];
+  const markPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
 
   beforeEach(async () => {
     tempDir = mkdtempSync(path.join(os.tmpdir(), 'od-org-routes-'));
@@ -42,6 +47,10 @@ describe('organization routes', () => {
         manager,
         identity: new IdentityService({ mode: 'local-owner', issuer: null, publishableKey: null }),
         dataDir: tempDir,
+        harvestWebsiteMark: async (_url: string, logosDir: string) => {
+          mkdirSync(logosDir, { recursive: true });
+          writeFileSync(path.join(logosDir, 'apple-touch-icon.png'), markPng);
+        },
         serveAppFile: async (
           _req: unknown,
           res: express.Response,
@@ -50,6 +59,8 @@ describe('organization routes', () => {
           servedFiles.push(input);
           res.status(200).send(`<html>${input.filePath}</html>`);
         },
+        loadAppHtml: async ({ filePath }: { projectId: string; filePath: string }) =>
+          `<html><body>form:${filePath}</body></html>`,
       },
     } as any);
 
@@ -111,6 +122,22 @@ describe('organization routes', () => {
       'Finance',
       'My Organization',
     ]);
+  });
+
+  it('serves a scraped site logo after a website is saved', async () => {
+    const missing = await fetch(`${base}/api/orgs/${orgId}/mark`);
+    expect(missing.status).toBe(404);
+
+    const patched = await json('PATCH', `/api/orgs/${orgId}`, {
+      websiteUrl: 'https://stripe.com',
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.body.organization.websiteUrl).toBe('https://stripe.com');
+
+    const got = await fetch(`${base}/api/orgs/${orgId}/mark`);
+    expect(got.status).toBe(200);
+    expect(got.headers.get('content-type')).toBe('image/png');
+    expect(Buffer.from(await got.arrayBuffer()).equals(markPng)).toBe(true);
   });
 
   describe('invites', () => {
@@ -396,6 +423,44 @@ describe('organization routes', () => {
       expect(list.body.apps[0].createdByName).toBe('Local Owner');
     });
 
+    it('stores declared data scopes and lets them be replaced later', async () => {
+      const created = await json('POST', `/api/orgs/${orgId}/apps`, {
+        name: 'Lead form',
+        projectId: 'proj-1',
+        filePath: 'form.html',
+        dataScopes: [
+          { table: 'leads', mode: 'write' },
+          { table: 'invoices', mode: 'read' },
+          { table: '', mode: 'write' },
+        ],
+      });
+      expect(created.status).toBe(201);
+      expect(created.body.app.dataScopes).toEqual([
+        { table: 'leads', mode: 'write' },
+        { table: 'invoices', mode: 'read' },
+      ]);
+
+      const renamed = await json('PATCH', `/api/orgs/${orgId}/apps/${created.body.app.id}`, {
+        name: 'Lead intake',
+      });
+      expect(renamed.status).toBe(200);
+      expect(renamed.body.app.name).toBe('Lead intake');
+      expect(renamed.body.app.dataScopes).toEqual([
+        { table: 'leads', mode: 'write' },
+        { table: 'invoices', mode: 'read' },
+      ]);
+
+      const replaced = await json('PATCH', `/api/orgs/${orgId}/apps/${created.body.app.id}`, {
+        dataScopes: [{ table: 'leads', mode: 'write' }],
+      });
+      expect(replaced.body.app.dataScopes).toEqual([{ table: 'leads', mode: 'write' }]);
+
+      const cleared = await json('PATCH', `/api/orgs/${orgId}/apps/${created.body.app.id}`, {
+        dataScopes: [],
+      });
+      expect(cleared.body.app.dataScopes).toEqual([]);
+    });
+
     it('hides a private app from everyone but its publisher', async () => {
       const app = await publishApp();
       await json('PATCH', `/api/orgs/${orgId}/apps/${app.id}`, { visibility: 'private' });
@@ -445,6 +510,96 @@ describe('organization routes', () => {
       // Sharing by link flips visibility so the two can never disagree.
       const reread = await json('GET', `/api/orgs/${orgId}/apps/${app.id}`);
       expect(reread.body.app.visibility).toBe('link');
+    });
+
+    it('wraps a write-scoped share in a host backend and appends to a public-write table', async () => {
+      const recordsDb = manager.openWorkspace(orgId);
+      const table = createTable(
+        recordsDb,
+        { name: 'leads', fields: [{ name: 'email', type: 'text', required: true }] },
+        { kind: 'user', memberId: 'wsm-test' },
+      );
+      setTablePublicWrite(recordsDb, table, { kind: 'user', memberId: 'wsm-test' }, true);
+
+      const created = await json('POST', `/api/orgs/${orgId}/apps`, {
+        name: 'Intake',
+        projectId: 'proj-1',
+        filePath: 'intake.html',
+        dataScopes: [{ table: 'leads', mode: 'write' }],
+      });
+      expect(created.status).toBe(201);
+      const shared = await json('POST', `/api/orgs/${orgId}/apps/${created.body.app.id}/shares`);
+      expect(shared.status).toBe(201);
+      const token = shared.body.token as string;
+
+      const page = await fetch(`${base}/s/${token}`);
+      expect(page.status).toBe(200);
+      expect(page.headers.get('content-security-policy') ?? '').toContain("connect-src 'self'");
+      const html = await page.text();
+      expect(html).toContain('sandbox="allow-scripts"');
+      expect(html).toContain('form:intake.html');
+      expect(servedFiles).toEqual([]);
+
+      const ingest = await fetch(`${base}/s/${token}/data`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          protocol: 1,
+          id: 'r1',
+          kind: 'create',
+          table: 'leads',
+          data: { email: 'ada@co.com' },
+        }),
+      });
+      expect(ingest.headers.get('access-control-allow-origin')).toBe('*');
+      const ingestBody = (await ingest.json()) as any;
+      expect(ingestBody.ok).toBe(true);
+      expect(ingestBody.result.record.data.email).toBe('ada@co.com');
+      expect(ingestBody.result.record.createdByKind).toBe('public-form');
+
+      const queryAttempt = await fetch(`${base}/s/${token}/data`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          protocol: 1,
+          id: 'r2',
+          kind: 'query',
+          table: 'leads',
+        }),
+      });
+      const queryBody = (await queryAttempt.json()) as any;
+      expect(queryBody.ok).toBe(false);
+      expect(queryBody.error).toMatch(/only add rows/i);
+    });
+
+    it('refuses a public create when the table is not marked public-write', async () => {
+      const recordsDb = manager.openWorkspace(orgId);
+      createTable(
+        recordsDb,
+        { name: 'secrets', fields: [{ name: 'note', type: 'text', required: true }] },
+        { kind: 'user', memberId: 'wsm-test' },
+      );
+      const created = await json('POST', `/api/orgs/${orgId}/apps`, {
+        name: 'Secret form',
+        projectId: 'proj-1',
+        filePath: 'secret.html',
+        dataScopes: [{ table: 'secrets', mode: 'write' }],
+      });
+      const shared = await json('POST', `/api/orgs/${orgId}/apps/${created.body.app.id}/shares`);
+      const ingest = await fetch(`${base}/s/${shared.body.token}/data`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          protocol: 1,
+          id: 'r1',
+          kind: 'create',
+          table: 'secrets',
+          data: { note: 'nope' },
+        }),
+      });
+      const body = (await ingest.json()) as any;
+      expect(body.ok).toBe(false);
+      expect(body.error).toMatch(/does not allow public submissions/i);
     });
 
     it('stops serving a revoked share link', async () => {

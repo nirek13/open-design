@@ -7,6 +7,7 @@
 }
 
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -16,6 +17,53 @@
   padding: 28px;
   border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
   border-radius: 16px;
+}
+
+.cardWide {
+  max-width: 640px;
+}
+
+.urlRow {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.urlRow :global(input) {
+  flex: 1;
+  min-width: 0;
+}
+
+.fileHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.planSummary {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.logo {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 10px;
+  object-fit: contain;
 }
 
 .eyebrow {

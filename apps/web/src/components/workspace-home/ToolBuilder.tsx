@@ -6,17 +6,17 @@
 //   Describe it  — say what you need; the assistant builds it as a project,
 //                  and anything it changes about your data comes back as a
 //                  proposal you approve.
-//   Import it    — you already have the data in a spreadsheet or at a public
-//                  link (Google Sheet, CSV, JSON, HTML table). Paste or drop,
-//                  check what we read, then commit.
+//   Import it    — paste a public link (Google Sheet, CSV, JSON, HTML
+//                  table, or any page). Tables are read directly; otherwise
+//                  AI scrapes the page into rows. Check the reading, then commit.
 //   Define it    — you know the shape. Name the fields yourself.
 //
 // The import path shows its reading before writing anything, because a wrong
 // guess about a column is cheap to fix here and expensive to fix later.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Select } from '@open-design/components';
-import type { ImportPlan, WorkspaceFieldInput, WorkspaceFieldType } from '@open-design/contracts';
+import type { ImportFromUrlResponse, ImportPlan, WorkspaceFieldInput, WorkspaceFieldType } from '@open-design/contracts';
 import { WORKSPACE_FIELD_TYPES } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
@@ -24,12 +24,22 @@ import { commitImportPlan, createWorkspaceTable, planImport, planImportFromUrl }
 import { createProject } from '../../state/projects';
 import { navigate } from '../../router';
 import { composePagesWikiPrompt } from '../pages/wiki-prompt';
+import type { PluginLoopSubmit } from '../PluginLoopHome';
+import { ImportDataPreview } from './ImportDataPreview';
+import { ImportNextSteps } from './ImportNextSteps';
 import styles from './ToolBuilder.module.css';
 
 interface Props {
   onClose: () => void;
   onCreated: () => void | Promise<void>;
+  /** Reload hub data without closing the builder — used after an import so next steps stay on screen. */
+  onReload?: () => void | Promise<void>;
+  onAskProject?: (
+    payload: PluginLoopSubmit,
+  ) => Promise<boolean | 'blocked' | void> | boolean | 'blocked' | void;
   initialMode?: Mode;
+  /** Prefill and immediately read a public link. */
+  initialUrl?: string;
 }
 
 type Mode = 'choose' | 'describe' | 'import' | 'define' | 'wiki';
@@ -40,7 +50,7 @@ function errorMessage(err: unknown): string {
 
 const EMPTY_FIELD: WorkspaceFieldInput = { name: '', type: 'text' };
 
-export function ToolBuilder({ onClose, onCreated, initialMode = 'choose' }: Props) {
+export function ToolBuilder({ onClose, onCreated, onReload, onAskProject, initialMode = 'choose', initialUrl }: Props) {
   const t = useT();
   const { activeOrgId, activeOrg } = useOptionalOrg() ?? NO_ORG_CONTEXT;
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -52,8 +62,11 @@ export function ToolBuilder({ onClose, onCreated, initialMode = 'choose' }: Prop
   const [fields, setFields] = useState<WorkspaceFieldInput[]>([{ ...EMPTY_FIELD }]);
   const [importContent, setImportContent] = useState('');
   const [importFileName, setImportFileName] = useState('');
-  const [importUrl, setImportUrl] = useState('');
+  const [importUrl, setImportUrl] = useState(initialUrl ?? '');
   const [plan, setPlan] = useState<ImportPlan | null>(null);
+  const [importSource, setImportSource] = useState<ImportFromUrlResponse['source'] | null>(null);
+  const [imported, setImported] = useState(false);
+  const autoRead = useRef(false);
 
   async function handleDescribe() {
     if (!description.trim() || busy) return;
@@ -115,6 +128,7 @@ export function ToolBuilder({ onClose, onCreated, initialMode = 'choose' }: Prop
     setBusy(true);
     try {
       setPlan(await planImport(activeOrgId, text, file.name));
+      setImportSource(null);
       setError(null);
     } catch (err) {
       setPlan(null);
@@ -124,14 +138,14 @@ export function ToolBuilder({ onClose, onCreated, initialMode = 'choose' }: Prop
     }
   }
 
-  async function handleUrlImport() {
-    const url = importUrl.trim();
+  async function readUrl(url: string) {
     if (!activeOrgId || !url || busy) return;
     setBusy(true);
     try {
       const result = await planImportFromUrl(activeOrgId, url);
       setImportContent(result.content ?? '');
       setImportFileName(result.source.fileName);
+      setImportSource(result.source);
       setPlan(result.plan);
       setError(null);
     } catch (err) {
@@ -142,12 +156,26 @@ export function ToolBuilder({ onClose, onCreated, initialMode = 'choose' }: Prop
     }
   }
 
+  async function handleUrlImport() {
+    await readUrl(importUrl.trim());
+  }
+
+  useEffect(() => {
+    const url = initialUrl?.trim();
+    if (!url || !activeOrgId || autoRead.current) return;
+    autoRead.current = true;
+    setMode('import');
+    setImportUrl(url);
+    void readUrl(url);
+  }, [activeOrgId, initialUrl]);
+
   async function handleCommitImport() {
     if (!activeOrgId || !plan || busy) return;
     setBusy(true);
     try {
       await commitImportPlan(activeOrgId, plan, importContent);
-      await onCreated();
+      setImported(true);
+      await onReload?.();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -173,7 +201,7 @@ export function ToolBuilder({ onClose, onCreated, initialMode = 'choose' }: Prop
 
   return (
     <div className={styles.backdrop} role="dialog" aria-modal="true" data-testid="tool-builder">
-      <div className={styles.panel}>
+      <div className={`${styles.panel}${plan ? ` ${styles.panelWide}` : ''}`}>
         <header className={styles.head}>
           <h2 className={styles.title}>{t('builder.title')}</h2>
           <Button variant="ghost" onClick={onClose} aria-label={t('builder.close')}>
@@ -312,7 +340,10 @@ export function ToolBuilder({ onClose, onCreated, initialMode = 'choose' }: Prop
                     {plan.columns.map((column) => (
                       <tr key={column.fieldName}>
                         <td>{column.header}</td>
-                        <td>{column.type}</td>
+                        <td>
+                          {column.type}
+                          {column.unique ? ` · ${t('builder.uniqueKey')}` : ''}
+                        </td>
                         <td className={styles.reason}>{column.reason}</td>
                       </tr>
                     ))}
@@ -323,16 +354,32 @@ export function ToolBuilder({ onClose, onCreated, initialMode = 'choose' }: Prop
                     {t('builder.skippedRows', { count: String(plan.skipped.length) })}
                   </p>
                 ) : null}
+                {importContent ? (
+                  <ImportDataPreview plan={plan} content={importContent} source={importSource} />
+                ) : null}
               </div>
             ) : null}
-            <div className={styles.actions}>
-              <Button variant="ghost" onClick={() => setMode('choose')}>
-                {t('builder.back')}
-              </Button>
-              <Button variant="primary" onClick={handleCommitImport} disabled={!plan || busy} data-testid="builder-commit">
-                {busy ? t('builder.importing') : t('builder.importCommit')}
-              </Button>
-            </div>
+            {imported && plan ? (
+              <ImportNextSteps
+                plan={plan}
+                sourceUrl={importSource?.url ?? plan.sourceUrl}
+                onView={() => {
+                  void onCreated();
+                  navigate({ kind: 'home', view: 'tables', tableName: plan.tableName });
+                }}
+                onLeave={() => void onCreated()}
+                {...(onAskProject ? { onAskProject } : {})}
+              />
+            ) : (
+              <div className={styles.actions}>
+                <Button variant="ghost" onClick={() => setMode('choose')}>
+                  {t('builder.back')}
+                </Button>
+                <Button variant="primary" onClick={handleCommitImport} disabled={!plan || busy} data-testid="builder-commit">
+                  {busy ? t('builder.importing') : t('builder.importCommit')}
+                </Button>
+              </div>
+            )}
           </div>
         ) : null}
 

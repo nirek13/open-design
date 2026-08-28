@@ -1,22 +1,29 @@
 // Turn a public URL into the same delimited text the spreadsheet importer
 // already understands. The point of "magic import" is that a Google Sheet,
-// a JSON API, or an HTML table should land in the ERP the same way a CSV
-// drop does — preview the reading, then commit.
+// a JSON API, an HTML table, or any public page the AI can read should land
+// in the workspace the same way a CSV drop does — preview the reading, then
+// commit.
 //
 // Network stays behind `fetchExternalBrandAsset` so a pasted link cannot
 // point the daemon at loopback or cloud metadata (same SSRF bar as brand
 // harvest). Nothing here writes; callers pass the result to `buildImportPlan`.
 
 import { fetchExternalBrandAsset } from '../brands/safe-fetch.js';
+import {
+  defaultExtractTabularWithAi,
+  pageHtmlToText,
+  type ImportAiExtractor,
+  type ImportAiResult,
+} from './import-ai.js';
 import { WorkspaceDataError } from './errors.js';
 import { extractTabularFromHtml } from './extract-tabular.js';
 
-const FETCH_TIMEOUT_MS = 12_000;
-const BODY_CAP = 2_000_000;
+const FETCH_TIMEOUT_MS = 45_000;
+const BODY_CAP = 8_000_000;
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
-export type ImportSourceKind = 'csv' | 'json' | 'html-table' | 'google-sheets';
+export type ImportSourceKind = 'csv' | 'json' | 'html-table' | 'google-sheets' | 'ai';
 
 export interface FetchedImportSource {
   url: string;
@@ -63,7 +70,26 @@ export function rewriteImportUrl(raw: string): { href: string; kind: ImportSourc
       kind: 'google-sheets',
     };
   }
-  return { href: parsed.href, kind: null };
+  return { href: parsed.href, kind: kindFromPath(parsed.pathname) };
+}
+
+function kindFromPath(pathname: string): ImportSourceKind | null {
+  const lower = pathname.toLowerCase();
+  if (lower.endsWith('.csv') || lower.endsWith('.tsv') || lower.endsWith('.tab')) return 'csv';
+  if (lower.endsWith('.json')) return 'json';
+  return null;
+}
+
+function decodeBody(buf: Buffer, contentType: string): string {
+  const sliced = buf.subarray(0, BODY_CAP);
+  if (sliced.length >= 3 && sliced[0] === 0xef && sliced[1] === 0xbb && sliced[2] === 0xbf) {
+    return sliced.subarray(3).toString('utf8');
+  }
+  const charset = /charset=([^;]+)/i.exec(contentType)?.[1]?.trim().toLowerCase().replace(/["']/g, '');
+  if (charset === 'iso-8859-1' || charset === 'latin1' || charset === 'windows-1252') {
+    return sliced.toString('latin1');
+  }
+  return sliced.toString('utf8');
 }
 
 function fileNameFromUrl(url: string, fallback: string): string {
@@ -167,7 +193,9 @@ function detectKind(
   const ct = contentType.toLowerCase();
   if (ct.includes('json')) return 'json';
   if (ct.includes('html')) return 'html-table';
-  if (ct.includes('csv') || ct.includes('tab-separated')) return 'csv';
+  if (ct.includes('csv') || ct.includes('tab-separated') || ct.includes('octet-stream')) {
+    if (looksDelimited(body) || ct.includes('csv') || ct.includes('tab-separated')) return 'csv';
+  }
   const trimmed = body.trimStart();
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) return 'json';
   if (/<table\b/i.test(body) || /<html\b/i.test(body) || /<dl\b/i.test(body) || /<ul\b/i.test(body)) {
@@ -179,6 +207,7 @@ function detectKind(
 export async function fetchImportSource(
   url: string,
   fetchFn: typeof fetchExternalBrandAsset = fetchExternalBrandAsset,
+  extractWithAi?: ImportAiExtractor | null,
 ): Promise<FetchedImportSource> {
   const rewritten = rewriteImportUrl(url);
   let res: Response;
@@ -186,7 +215,8 @@ export async function fetchImportSource(
     res = await fetchFn(rewritten.href, {
       headers: {
         'User-Agent': UA,
-        Accept: 'text/csv,text/tab-separated-values,application/json,text/html,text/plain,*/*;q=0.8',
+        Accept:
+          'text/csv,text/tab-separated-values,application/json,text/html,text/plain,application/octet-stream,*/*;q=0.8',
       },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
@@ -205,12 +235,13 @@ export async function fetchImportSource(
     );
   }
   const buf = Buffer.from(await res.arrayBuffer());
-  const body = buf.subarray(0, BODY_CAP).toString('utf8');
+  const body = decodeBody(buf, res.headers.get('content-type') ?? '');
   if (!body.trim()) {
     throw new WorkspaceDataError('IMPORT_UNREADABLE', 422, 'that link was empty');
   }
-  const kind = detectKind(res.headers.get('content-type') ?? '', body, rewritten.kind);
+  let kind = detectKind(res.headers.get('content-type') ?? '', body, rewritten.kind);
   let content = body;
+  let aiTable: string | undefined;
   if (kind === 'json') {
     const csv = jsonToCsv(body);
     if (!csv) {
@@ -223,18 +254,32 @@ export async function fetchImportSource(
     content = csv;
   } else if (kind === 'html-table') {
     const csv = extractTabularFromHtml(body) ?? htmlTableToCsv(body);
-    if (!csv) {
-      throw new WorkspaceDataError(
-        'IMPORT_UNREADABLE',
-        422,
-        'no rows or columns could be read from that page',
-      );
+    if (csv) {
+      content = csv;
+    } else {
+      const ai = await runAiExtract(url.trim(), body, extractWithAi);
+      if (!ai) {
+        throw new WorkspaceDataError(
+          'IMPORT_UNREADABLE',
+          422,
+          'no rows could be read from that page. Add an AI key in Settings to extract data from any public site',
+        );
+      }
+      kind = 'ai';
+      content = rowsToCsv(ai.rows);
+      aiTable = ai.tableName;
     }
-    content = csv;
   } else if (!looksDelimited(body) && (extractTabularFromHtml(body) || htmlTableToCsv(body))) {
     content = (extractTabularFromHtml(body) ?? htmlTableToCsv(body))!;
   } else if (!looksDelimited(body) && jsonToCsv(body)) {
     content = jsonToCsv(body)!;
+  } else if (!looksDelimited(body)) {
+    const ai = await runAiExtract(url.trim(), body, extractWithAi);
+    if (ai) {
+      kind = 'ai';
+      content = rowsToCsv(ai.rows);
+      aiTable = ai.tableName;
+    }
   }
 
   const finalUrl = res.url || rewritten.href;
@@ -242,7 +287,24 @@ export async function fetchImportSource(
     url: url.trim(),
     finalUrl,
     kind,
-    fileName: fileNameFromUrl(finalUrl, kind === 'json' ? 'imported.json.csv' : 'imported.csv'),
+    fileName: fileNameFromUrl(
+      finalUrl,
+      aiTable ? `${aiTable}.csv` : kind === 'json' ? 'imported.json.csv' : 'imported.csv',
+    ),
     content,
   };
+}
+
+async function runAiExtract(
+  url: string,
+  html: string,
+  extractWithAi: ImportAiExtractor | null | undefined,
+): Promise<ImportAiResult | null> {
+  if (extractWithAi === null) return null;
+  const extract = extractWithAi ?? defaultExtractTabularWithAi;
+  try {
+    return await extract({ url, html, text: pageHtmlToText(html) });
+  } catch {
+    return null;
+  }
 }

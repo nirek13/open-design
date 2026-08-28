@@ -32,6 +32,7 @@ const TABLE = {
   status: 'active' as const,
   schemaVersion: 1,
   protection: 'open' as const,
+  publicWrite: false,
   createdBy: 'wsm-1',
   createdAt: 1,
   updatedAt: 1,

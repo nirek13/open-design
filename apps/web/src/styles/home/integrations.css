@@ -52,9 +52,58 @@
   color: var(--accent);
 }
 
+.integrations-view__accounts {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: var(--shadow-xs);
+  transition: background-color 120ms var(--ease-out), border-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.integrations-view__accounts:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+.integrations-view__accounts.is-active {
+  background: var(--accent-tint);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  color: var(--accent-strong, var(--accent));
+}
+
+.integrations-view__accounts.is-active .integrations-view__tab-label {
+  color: var(--accent-strong, var(--accent));
+}
+
+.integrations-view__advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.integrations-view__advanced-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .integrations-view__tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 6px;
   border: 1px solid var(--border);
@@ -111,6 +160,9 @@
 }
 
 .integrations-view__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   min-width: 0;
 }
 
@@ -192,7 +244,7 @@
   }
 
   .integrations-view__tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 
   .integrations-view__coming-soon {

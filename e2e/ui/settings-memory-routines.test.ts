@@ -1,5 +1,5 @@
 import { expect, test } from '@/playwright/suite';
-import { ensureRailOpen } from '@/playwright/rail';
+import { clickEntryNav } from '@/playwright/rail';
 import { routeAgents } from '@/playwright/mock-factory';
 import type { Locator, Page } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
@@ -2281,8 +2281,7 @@ test.describe('Settings Memory and Automations flows', () => {
     });
 
     await gotoEntryHome(page);
-    await ensureRailOpen(page);
-    await page.getByTestId('entry-nav-tasks').click();
+    await clickEntryNav(page, 'entry-nav-tasks');
     const view = page.getByTestId('tasks-view');
     await expect(view.getByRole('heading', { name: 'Automations', exact: true })).toBeVisible();
 
@@ -2352,8 +2351,7 @@ test.describe('Settings Memory and Automations flows', () => {
     });
 
     await gotoEntryHome(page);
-    await ensureRailOpen(page);
-    await page.getByTestId('entry-nav-tasks').click();
+    await clickEntryNav(page, 'entry-nav-tasks');
     const view = page.getByTestId('tasks-view');
 
     await view.getByRole('button', { name: 'New automation' }).click();

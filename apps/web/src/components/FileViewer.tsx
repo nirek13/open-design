@@ -21,8 +21,9 @@ import { exportErrorCode } from '../analytics/export-error-code';
 import { deployErrorCode } from '../analytics/deploy-error-code';
 import { PublishPanel } from './hosting/PublishPanel';
 import { CreateAppFlow } from './apps/CreateAppFlow';
+import { useAppSdkHost } from './apps/useAppSdkHost';
 import { useOptionalRunningApp } from './apps/RunningAppContext';
-import { activeOrgIdForRequests } from '../org/OrgContext';
+import { activeOrgIdForRequests, useOptionalOrg } from '../org/OrgContext';
 import { trackIframeLoad } from '../observability/iframe-error';
 import {
   trackArtifactExportResult,
@@ -150,6 +151,7 @@ import {
 import {
   hasTweaksTemplate,
   hasUrlModeBridge,
+  htmlNeedsAppSdk,
   htmlNeedsFocusGuard,
   htmlNeedsPoweredPreview,
   htmlNeedsRedirectGuard,
@@ -325,6 +327,7 @@ function previewTextNeedsFullSourceForSafeInline(source: string | null): boolean
     htmlNeedsSandboxShim(source) ||
     htmlNeedsFocusGuard(source) ||
     htmlNeedsRedirectGuard(source) ||
+    htmlNeedsAppSdk(source) ||
     hasTweaksTemplate(source)
   );
 }
@@ -2829,6 +2832,16 @@ function FileVersionManagerModal({
   const versionImageExportTitleId = useId();
   const [previewFrameRef, previewFrameSize] = usePreviewCanvasSize<HTMLDivElement>();
   const versionPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const isVersionPreviewSource = useCallback(
+    (source: MessageEventSource | null) => !!source && source === versionPreviewIframeRef.current?.contentWindow,
+    [],
+  );
+  const versionPreviewOrgId = useOptionalOrg()?.activeOrgId ?? activeOrgIdForRequests();
+  useAppSdkHost({
+    orgId: versionPreviewOrgId,
+    scopes: 'preview',
+    isSource: isVersionPreviewSource,
+  });
   // Track which srcDoc the iframe has finished rendering. Deriving readiness by
   // comparing to the current srcDoc during render (rather than toggling a bool
   // in a post-paint effect) keeps the overlay up across a switch with no
@@ -6451,6 +6464,12 @@ function HtmlViewer({
       source === srcDocPreviewIframeRef.current?.contentWindow
     );
   }, []);
+  const previewOrgId = useOptionalOrg()?.activeOrgId ?? activeOrgIdForRequests();
+  useAppSdkHost({
+    orgId: previewOrgId,
+    scopes: 'preview',
+    isSource: isOurPreviewIframeSource,
+  });
   const setCommentComposerHostRef = useCallback((node: HTMLDivElement | null) => {
     setCommentComposerHost((current) => (current === node ? current : node));
   }, []);
@@ -7416,6 +7435,10 @@ function HtmlViewer({
     const s = routingHtmlSource;
     return s != null && htmlNeedsRedirectGuard(s);
   }, [passiveLargeHtmlPreview, routingHtmlSource]);
+  const needsAppSdk = useMemo(() => {
+    const s = routingHtmlSource;
+    return s != null && htmlNeedsAppSdk(s);
+  }, [routingHtmlSource]);
   // Set by the injected guard's `od:redirect-loop-blocked` postMessage. The
   // browser makes `window.location` unforgeable, so a runaway reload can only be
   // stopped host-side — parking the srcDoc iframe on static content below. File-
@@ -7517,6 +7540,7 @@ function HtmlViewer({
     forceInline: (forceInline || needsSandboxShim) && !needsPowered,
     needsFocusGuard: needsFocusGuard && !needsPowered,
     needsRedirectGuard: needsRedirectGuard && !needsPowered,
+    needsAppSdk,
     projectRootAssetRefs,
   };
   const useUrlLoadPreview = shouldUrlLoadHtmlPreview(urlLoadDecision) && !manualEditRequiresSrcDoc;
@@ -13913,6 +13937,7 @@ function HtmlViewer({
               projectId={projectId}
               projectName={file.name.replace(/\.[^.]+$/, '')}
               filePath={file.name}
+              htmlSource={source}
               initialMode={createAppMode}
               onClose={() => setCreateAppOpen(false)}
               onCreated={(app) => {

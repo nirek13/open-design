@@ -1,0 +1,511 @@
+/* Slim icon rail. Hover/open grows labels over the page without pushing layout. */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: var(--entry-rail-width, 52px);
+  height: 100%;
+  min-height: 0;
+  padding: 10px 6px 12px;
+  pointer-events: auto;
+  background: color-mix(in srgb, var(--bg) 88%, var(--bg-panel));
+  transition:
+    width 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    background 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.rail:hover,
+.railExpanded {
+  width: 212px;
+  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  box-shadow: 12px 0 32px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.railCatalog,
+.railCatalog:hover {
+  width: var(--entry-rail-width, 52px);
+  box-shadow: none;
+}
+
+.head,
+.foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.logo {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0 0 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: flex-start;
+  transition:
+    background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.logo:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.logo:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.logoOpen {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.logoMark {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.tool,
+.item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.rail:hover .tool,
+.rail:hover .item,
+.railExpanded .tool,
+.railExpanded .item {
+  justify-content: flex-start;
+  padding: 0 8px;
+}
+
+.tool:hover,
+.item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  color: var(--text);
+}
+
+.tool:focus-visible,
+.item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.tool:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.itemActive {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.itemDragging {
+  opacity: 0.55;
+}
+
+.itemIcon {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.itemLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 550;
+  opacity: 0;
+  max-width: 0;
+  transition:
+    opacity 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    max-width 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.rail:hover .itemLabel,
+.railExpanded .itemLabel {
+  opacity: 1;
+  max-width: 148px;
+}
+
+.railCatalog .itemLabel,
+.railCatalog:hover .itemLabel {
+  opacity: 0;
+  max-width: 0;
+}
+
+.appPin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.slot {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.slotDropBefore::before,
+.slotDropAfter::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.slotDropBefore::before {
+  top: -1px;
+}
+
+.slotDropAfter::after {
+  bottom: -1px;
+}
+
+.addWrap {
+  position: relative;
+}
+
+.addMenu {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: 0;
+  max-height: min(420px, 70vh);
+  overflow: auto;
+}
+
+.menu {
+  position: fixed;
+  z-index: 120;
+  min-width: 196px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 10px);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-md, 0 10px 30px rgba(0, 0, 0, 0.08));
+  pointer-events: auto;
+}
+
+.menuLabel {
+  padding: 8px 10px 4px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.menuItem {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+  text-align: left;
+}
+
+.menuItem:hover {
+  background: var(--bg-subtle);
+  color: var(--text-strong, var(--text));
+}
+
+.menuEmpty {
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.tip {
+  position: fixed;
+  z-index: 120;
+  transform: translateY(-50%);
+  padding: 5px 9px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--bg-panel);
+  background: var(--text-strong, #111);
+  border-radius: var(--radius-sm, 8px);
+  box-shadow: var(--shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.12));
+  pointer-events: none;
+}
+
+.atlas {
+  position: fixed;
+  inset: 0;
+  left: var(--entry-rail-width, 52px);
+  z-index: 96;
+  pointer-events: auto;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.atlasPanel {
+  width: min(380px, calc(100vw - var(--entry-rail-width, 52px)));
+  height: 100%;
+  padding: 22px 18px 28px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  box-shadow: 16px 0 40px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.atlasHead {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.atlasKicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.atlasTitle {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  color: var(--text-strong, var(--text));
+}
+
+.atlasHint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.atlasSearch {
+  width: 100%;
+  height: 36px;
+  margin-top: 4px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 70%, var(--bg-panel));
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.atlasSearch:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.islands {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.island {
+  padding: 12px 12px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+}
+
+.islandTitle {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.islandChips {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.islandRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.islandChip {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px 0 6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.islandChip:hover,
+.islandChip:focus-visible {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+}
+
+.islandChip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.islandChipOnStage {
+  color: var(--text-muted);
+}
+
+.islandChipActive {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.islandChip .itemLabel {
+  opacity: 1;
+  max-width: none;
+}
+
+.pinBtn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.pinBtn:hover,
+.pinBtn:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.pinBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.rail :global(.entry-help-menu) {
+  width: 100%;
+}
+
+.rail :global(.entry-help-menu__trigger) {
+  width: 100%;
+  height: 36px;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  gap: 10px;
+}
+
+.rail:hover :global(.entry-help-menu__trigger),
+.railExpanded :global(.entry-help-menu__trigger) {
+  justify-content: flex-start;
+  padding: 0 8px;
+}
+
+@media (max-width: 720px) {
+  .rail:hover,
+  .railExpanded {
+    width: var(--entry-rail-width, 52px);
+    box-shadow: none;
+  }
+
+  .itemLabel {
+    display: none;
+  }
+
+  .atlas {
+    left: 0;
+  }
+
+  .atlasPanel {
+    width: min(100vw, 380px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail,
+  .itemLabel,
+  .tool,
+  .item,
+  .logo {
+    transition: none;
+  }
+}

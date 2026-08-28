@@ -11,11 +11,13 @@
 // cards.
 
 import { describe, expect, it, afterEach, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { InstalledPluginRecord } from '@open-design/contracts';
 import type { ComponentProps } from 'react';
 import { PluginsHomeSection } from '../../src/components/PluginsHomeSection';
 import { I18nProvider } from '../../src/i18n';
+import { OrgProvider } from '../../src/org/OrgContext';
+import * as registry from '../../src/providers/registry';
 
 function makePlugin(overrides: {
   id: string;
@@ -218,7 +220,7 @@ describe('PluginsHomeSection (community gallery)', () => {
     expect(screen.getByTestId('plugins-home-use-prototype-dashboard')).toBeTruthy();
   });
 
-  it('shows all Community types by default on the lightweight gallery layout', () => {
+  it('shows all types by default on the lightweight gallery layout', () => {
     const first = renderSection(sample, { cardLayout: 'gallery' });
 
     expect(screen.getByTestId('plugins-home-pill-category-all').getAttribute('aria-selected')).toBe(
@@ -251,13 +253,55 @@ describe('PluginsHomeSection (community gallery)', () => {
 });
 
 describe('PluginsHomeSection (category bar)', () => {
-  it('frames the home shelf as community and can jump to registry', () => {
+  it('frames the home shelf as work created by others and can jump to registry', () => {
     const onBrowseRegistry = vi.fn();
     renderSection(sample, { onBrowseRegistry });
 
-    expect(screen.getByText('Community')).toBeTruthy();
+    expect(screen.getByText('Created by others')).toBeTruthy();
     fireEvent.click(screen.getByTestId('plugins-home-browse-registry'));
     expect(onBrowseRegistry).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the active organization in the home shelf heading', async () => {
+    vi.spyOn(registry, 'fetchAuthContext').mockResolvedValue({
+      mode: 'local-owner',
+      viewer: {
+        userId: 'user-local-owner',
+        displayName: 'Local Owner',
+        email: null,
+        username: null,
+        bio: null,
+        avatarUrl: null,
+      },
+      organizations: [{
+        id: 'ws-1',
+        name: 'Northwind',
+        createdBy: 'wsm-1',
+        createdAt: 1,
+        updatedAt: 1,
+        role: 'owner',
+        memberCount: 1,
+      }],
+    });
+
+    render(
+      <I18nProvider initial="en">
+        <OrgProvider>
+          <PluginsHomeSection
+            plugins={sample}
+            loading={false}
+            activePluginId={null}
+            pendingApplyId={null}
+            onUse={() => {}}
+            onOpenDetails={() => {}}
+          />
+        </OrgProvider>
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Created by others in Northwind')).toBeTruthy();
+    });
   });
 
   it('renders the artifact category row and the default Slides scene row', () => {
@@ -293,7 +337,7 @@ describe('PluginsHomeSection (category bar)', () => {
     expect(screen.queryByTestId('plugins-home-row-subcategory-hyperframes')).toBeNull();
   });
 
-  it('groups Live Artifact as its own flat Community category', () => {
+  it('groups Live Artifact as its own flat gallery category', () => {
     renderSection();
 
     fireEvent.click(screen.getByTestId('plugins-home-pill-category-live-artifact'));

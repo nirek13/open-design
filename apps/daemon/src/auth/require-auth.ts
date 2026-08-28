@@ -39,7 +39,19 @@ const PUBLIC_API_PATHS = new Set([
 
 /** Prefixes reachable while signed out. `/api/invites/:token/accept` is how a
  * new person joins, and they are by definition not a member of anything yet. */
-const PUBLIC_API_PREFIXES = ['/api/invites/'];
+const PUBLIC_API_PREFIXES = [
+  '/api/invites/',
+  // Composio returns the browser here after OAuth. The handler is keyed on
+  // a short-lived `state`; it must not require a session cookie.
+  '/api/connectors/oauth/callback/',
+  // Agent run wrappers (`OD_TOOL_TOKEN`) authorize inside each handler via
+  // `authorizeToolRequest`. A Clerk session must not be required here — opaque
+  // tool tokens are not JWTs and would otherwise 401 every agent tool call.
+  '/api/tools/',
+  // Phone inbound webhooks (Slack Events, BlueBubbles, Apple Shortcuts)
+  // authorize with the channel's inbound token, not a Clerk session.
+  '/api/phone/inbound/',
+];
 
 export function isPublicApiPath(pathname: string): boolean {
   if (PUBLIC_API_PATHS.has(pathname)) return true;

@@ -49,6 +49,8 @@ describe('SearchPalette', () => {
       organizations: [ORG],
     });
     vi.spyOn(registry, 'searchOrg').mockResolvedValue([]);
+    vi.spyOn(registry, 'fetchAllOrgApps').mockResolvedValue([]);
+    vi.spyOn(registry, 'fetchLibraryAssets').mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -72,5 +74,11 @@ describe('SearchPalette', () => {
     await waitFor(() => {
       expect(registry.searchOrg).toHaveBeenCalledWith('ws-1', 'handbook');
     });
+  });
+
+  it('shows places and an upload action with an empty query', async () => {
+    renderPalette();
+    expect(await screen.findAllByTestId('org-search-hit-destination')).not.toHaveLength(0);
+    expect(screen.getByTestId('org-search-upload')).toBeTruthy();
   });
 });

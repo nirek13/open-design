@@ -1,5 +1,5 @@
 import { expect, test } from '@/playwright/suite';
-import { ensureRailOpen } from '@/playwright/rail';
+import { clickEntryNav, ensureRailOpen } from '@/playwright/rail';
 import { routeAgents } from '@/playwright/mock-factory';
 import type { Page } from '@playwright/test';
 
@@ -134,8 +134,7 @@ test('[P1] home composer execution pill reflects the selected Local CLI agent an
 test('[P2] Integrations Use everywhere tab is reachable from the nav rail', async ({ page }) => {
   await gotoEntryHome(page);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-integrations').click();
+  await clickEntryNav(page, 'entry-nav-integrations');
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
   await page.getByTestId('integrations-tab-use-everywhere').click();
   await expect(page.getByTestId('integrations-tab-use-everywhere')).toHaveAttribute(
@@ -167,8 +166,7 @@ test('[P1] tab chrome settings menu opens settings and closes the execution popo
 test('[P2] returning from another entry view via the home nav reaches the home hero', async ({ page }) => {
   await gotoEntryHome(page);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-integrations').click();
+  await clickEntryNav(page, 'entry-nav-integrations');
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
 
   // The logo doubles as a hover-to-collapse control now, so home is reached

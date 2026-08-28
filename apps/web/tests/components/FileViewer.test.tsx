@@ -1704,6 +1704,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(srcDocFrame?.srcdoc).toContain('data-od-id="results"');
     expect(srcDocFrame?.srcdoc).not.toContain('data-od-lazy-srcdoc-transport');
     expect(srcDocFrame?.srcdoc).toContain('data-od-sandbox-shim');
+    expect(srcDocFrame?.srcdoc).toContain('data-od-app-sdk');
   });
 
   it('keeps srcDoc HTML previews available with a compact Code action', async () => {
@@ -2620,12 +2621,12 @@ describe('FileViewer SVG artifacts', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /share/i }));
 
-    expect(screen.getByRole('menuitem', { name: /Deploy to Vercel/i })).toBeTruthy();
-    fireEvent.click(screen.getByRole('menuitem', { name: /Deploy to Cloudflare Pages/i }));
+    expect(screen.getByRole('menuitem', { name: /Export to Vercel/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Export to Cloudflare Pages/i }));
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toBeTruthy();
-    expect(within(dialog).getByRole('heading', { name: /Deploy to Cloudflare Pages/i })).toBeTruthy();
+    expect(within(dialog).getByRole('heading', { name: /Export to Cloudflare Pages/i })).toBeTruthy();
     expect(within(dialog).queryByRole('heading', { name: /Publish share page/i })).toBeNull();
     const backdrop = document.body.querySelector('.viewer-modal-backdrop.deploy-flow-backdrop');
     expect(backdrop).toBeTruthy();
@@ -2686,7 +2687,7 @@ describe('FileViewer SVG artifacts', () => {
 
     const openDeployModal = async () => {
       fireEvent.click(screen.getByRole('button', { name: /share/i }));
-      fireEvent.click(await screen.findByRole('menuitem', { name: /Deploy to Vercel/i }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: /Export to Vercel/i }));
       return screen.findByRole('dialog');
     };
 
@@ -2861,7 +2862,7 @@ describe('FileViewer SVG artifacts', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /share/i }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Deploy to Cloudflare Pages/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Export to Cloudflare Pages/i }));
 
     const providerSelect = await screen.findByRole('combobox', { name: /Provider/i });
     await waitFor(() => {
@@ -2923,7 +2924,7 @@ describe('FileViewer SVG artifacts', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /share/i }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Deploy to Cloudflare Pages/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Export to Cloudflare Pages/i }));
 
     const providerSelect = await screen.findByRole('combobox', { name: /Provider/i });
     await waitFor(() => {
@@ -3049,7 +3050,7 @@ describe('FileViewer SVG artifacts', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /share/i }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Deploy to Cloudflare Pages/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Export to Cloudflare Pages/i }));
 
     const zoneSelect = await screen.findByRole('combobox', { name: /Domain/i });
     await waitFor(() => {
@@ -3057,7 +3058,7 @@ describe('FileViewer SVG artifacts', () => {
     });
     fireEvent.change(screen.getByLabelText(/Subdomain prefix/i), { target: { value: 'demo' } });
 
-    const deployButtons = screen.getAllByRole('button', { name: /^Deploy$/i });
+    const deployButtons = screen.getAllByRole('button', { name: /^Export$/i });
     fireEvent.click(deployButtons[deployButtons.length - 1]!);
 
     const pagesDevLabel = await screen.findByText('pages.dev URL');
@@ -3420,14 +3421,15 @@ describe('FileViewer SVG artifacts', () => {
     expect(menuItems.slice(0, 1)).toEqual([
       'Publish online above to enable share ↑',
     ]);
-    // One-click hosting leads the PUBLISH ONLINE section: it is the only entry
-    // that needs no account and no API token, so it sits above the
-    // bring-your-own-provider deploys rather than below them.
+    // Workspace app and public Publish lead. Vercel/Cloudflare export is
+    // advanced and must not sit next to those verbs.
     expect(menuItems.slice(1, 4)).toEqual([
+      'Add to workspaceTeam app or public link',
+      'Publish to webCreates a public link for this app. No extra account needed.',
       'Publish instantlyNo account or API token needed',
-      'Deploy to Vercel',
-      'Deploy to Cloudflare Pages',
     ]);
+    expect(menuItems).toContain('Export to Vercel');
+    expect(menuItems).toContain('Export to Cloudflare Pages');
     expect(screen.getByText('Publish online above to enable share ↑')).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: /Copy share link/i })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /Open share page/i })).toBeNull();
@@ -3447,7 +3449,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(downloadItems).toContain('Download as .zip');
     expect(downloadItems).toContain('Export as standalone HTML');
     expect(downloadItems).not.toContain('Copy share link');
-    expect(downloadItems).not.toContain('Deploy to Vercel');
+    expect(downloadItems).not.toContain('Export to Vercel');
     expect(downloadItems).not.toContain('Export as PPTX');
     expect(downloadItems).not.toContain('Export as PPTX (images)');
     expect(downloadItems).not.toContain('Export as PPTX (editable)');
@@ -4206,7 +4208,7 @@ describe('FileViewer SVG artifacts', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^download$/i }));
 
     expect(screen.getByRole('menuitem', { name: /Export as Markdown/i })).toBeTruthy();
-    expect(screen.queryByRole('menuitem', { name: /Deploy to Vercel/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Export to Vercel/i })).toBeNull();
   });
 
   it('coalesces markdown split-pane scroll sync to one animation frame', async () => {

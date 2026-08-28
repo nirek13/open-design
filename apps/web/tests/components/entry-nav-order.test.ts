@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_ENTRY_NAV_HIDDEN,
   DEFAULT_ENTRY_NAV_ORDER,
+  clampStagePoint,
+  defaultBloomPoint,
   dockMagnifyScale,
+  dockWorkSurfacesFromStatuses,
   DOCK_WHEEL_IDENTITY,
   dockWheelPose,
   hideEntryNavItem,
@@ -9,6 +13,7 @@ import {
   moveEntryNavItem,
   normalizeEntryNavOrder,
   nudgeEntryNavItem,
+  nudgeStagePoint,
   pinnedEntryNavId,
   showEntryNavItem,
 } from '../../src/components/entry-nav-order';
@@ -45,6 +50,24 @@ describe('entry-nav-order', () => {
     ]);
   });
 
+  it('defaults the dock to the company spine', () => {
+    expect([...DEFAULT_ENTRY_NAV_ORDER]).toEqual([
+      'home',
+      'pages',
+      'team',
+      'projects',
+      'apps',
+    ]);
+    expect(DEFAULT_ENTRY_NAV_HIDDEN).toContain('search');
+    expect(DEFAULT_ENTRY_NAV_HIDDEN).toContain('mail');
+    expect(DEFAULT_ENTRY_NAV_HIDDEN).toContain('calendar');
+    expect(DEFAULT_ENTRY_NAV_HIDDEN).toContain('slack');
+    expect(DEFAULT_ENTRY_NAV_HIDDEN).toContain('library');
+    expect(DEFAULT_ENTRY_NAV_HIDDEN).toContain('integrations');
+    expect(DEFAULT_ENTRY_NAV_HIDDEN).toContain('plugins');
+    expect(DEFAULT_ENTRY_NAV_HIDDEN).toContain('organization');
+  });
+
   it('moves an item before or after a target', () => {
     const order = ['erp', 'home', 'mail'];
     expect(moveEntryNavItem(order, 'erp', 'mail', 'after')).toEqual(['home', 'mail', 'erp']);
@@ -58,6 +81,22 @@ describe('entry-nav-order', () => {
     expect(nudgeEntryNavItem(order, 'home', 'down')).toEqual(['erp', 'mail', 'home']);
     expect(nudgeEntryNavItem(order, 'erp', 'up')).toEqual(order);
     expect(nudgeEntryNavItem(order, 'mail', 'down')).toEqual(order);
+  });
+
+  it('pins Mail, Calendar, and Slack only after those accounts are connected', () => {
+    expect(dockWorkSurfacesFromStatuses({})).toEqual([]);
+    expect(dockWorkSurfacesFromStatuses({
+      gmail: { status: 'available' },
+      googlecalendar: { status: 'error' },
+    })).toEqual([]);
+    expect(dockWorkSurfacesFromStatuses({
+      gmail: { status: 'connected' },
+    })).toEqual(['mail']);
+    expect(dockWorkSurfacesFromStatuses({
+      gmail: { status: 'connected' },
+      googlecalendar: { status: 'connected' },
+      slack: { status: 'connected' },
+    })).toEqual(['mail', 'calendar', 'slack']);
   });
 
   it('tags pinned apps distinctly', () => {
@@ -81,5 +120,19 @@ describe('entry-nav-order', () => {
     expect(rim.scale).toBeLessThan(0.75);
     expect(rim.opacity).toBeLessThan(0.4);
     expect(dockWheelPose(-120, 120, true).rotateX).toBeLessThan(0);
+  });
+
+  it('blooms chips in a fan instead of a vertical stack', () => {
+    const first = defaultBloomPoint(0);
+    const second = defaultBloomPoint(1);
+    expect(first.x).toBeGreaterThan(0.04);
+    expect(second.x).toBeGreaterThan(first.x);
+    expect(first.y).toBeGreaterThan(second.y);
+  });
+
+  it('nudges a stage point without wrapping off screen', () => {
+    const point = clampStagePoint({ x: 0.5, y: 0.5 });
+    expect(nudgeStagePoint(point, 'up').y).toBeLessThan(point.y);
+    expect(nudgeStagePoint({ x: 0.04, y: 0.5 }, 'left').x).toBe(0.04);
   });
 });

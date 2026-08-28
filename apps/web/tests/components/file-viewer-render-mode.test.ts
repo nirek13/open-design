@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   hasTweaksTemplate,
   hasUrlModeBridge,
+  htmlNeedsAppSdk,
   htmlNeedsFocusGuard,
   htmlNeedsPoweredPreview,
   htmlNeedsRedirectGuard,
@@ -76,6 +77,10 @@ describe('shouldUrlLoadHtmlPreview', () => {
     expect(shouldUrlLoadHtmlPreview({ ...base, needsRedirectGuard: true })).toBe(false);
   });
 
+  it('falls back to srcDoc when the HTML uses the workspace data SDK', () => {
+    expect(shouldUrlLoadHtmlPreview({ ...base, needsAppSdk: true })).toBe(false);
+  });
+
   it('falls back to srcDoc when the source references project files by site-root path', () => {
     // URL-load serves the document untouched, so `/reference-assets/main.css`
     // resolves against the app origin root and 404s; only the srcDoc pipeline
@@ -94,6 +99,19 @@ describe('shouldUrlLoadHtmlPreview', () => {
     expect(shouldUrlLoadHtmlPreview({ ...base, tweaksBridge: true, forceInline: true })).toBe(false);
     expect(shouldUrlLoadHtmlPreview({ ...base, commentMode: true, urlModeBridge: true, inspectMode: true })).toBe(false);
     expect(shouldUrlLoadHtmlPreview({ ...base, drawMode: true, urlSnapshotBridge: true, inspectMode: true })).toBe(false);
+  });
+});
+
+describe('htmlNeedsAppSdk', () => {
+  it('matches pages that call od.query / window.od', () => {
+    expect(htmlNeedsAppSdk('async function fetchData() { await od.query("tenders"); }')).toBe(true);
+    expect(htmlNeedsAppSdk('const api = window.od; await api.describe("tenders");')).toBe(true);
+  });
+
+  it('ignores unrelated identifiers', () => {
+    expect(htmlNeedsAppSdk('<p>Load the food.query report</p>')).toBe(false);
+    expect(htmlNeedsAppSdk('period.query = true')).toBe(false);
+    expect(htmlNeedsAppSdk('')).toBe(false);
   });
 });
 

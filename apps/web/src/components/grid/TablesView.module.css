@@ -51,6 +51,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .tableButton:hover {
@@ -75,6 +78,54 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.layoutToggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+}
+
+.layoutToggle button {
+  border: 0;
+  border-radius: 7px;
+  padding: 4px 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.layoutActive {
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  font-weight: 600;
+}
+
+.publicWrite {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+}
+
+.publicWrite input {
+  margin: 0;
+}
+
+.publicMark {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(76, 124, 243, 0.16);
+  color: inherit;
 }
 
 .viewTabs {

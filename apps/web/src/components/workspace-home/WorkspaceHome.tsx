@@ -1,10 +1,9 @@
-// The main view: find anything, open anything, make anything.
+// The company hub: Ask, Needs you, Data sources, Recent.
 //
-// The order of this page is the order of the work. Search sits at the top and
-// takes focus on load, because finding something you already have is the
-// common case. Anything waiting on a person comes next — an approval nobody
-// looks at is the same as no approval at all. Then the numbers worth a glance,
-// then the ways to make something new, then what was touched recently.
+// Ask is the way work starts. Approvals that nobody looks at are the same as
+// no approvals, so they come next. Recent work is the trail back. Search stays
+// as a field on this page — not a second hero, not a dock destination.
+// Create (new invoice, build a table) lives behind one control.
 //
 // Everything here is org-scoped. With no organization resolved the page shows
 // its empty shape rather than failing, because the shell mounts this view
@@ -12,31 +11,51 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, EmptyState, Input, Skeleton } from '@open-design/components';
-import type { HubStatus, Proposal, SavedQuestionAnswer, WorkspaceTable } from '@open-design/contracts';
+import type { HubStatus, Proposal, WorkspaceRecord, WorkspaceTable } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
   decideProposal,
-  fetchHomeWidgets,
   fetchHubStatus,
   fetchProposals,
   fetchRecentRecords,
   fetchWorkspaceTables,
+  queryWorkspaceRecords,
   searchWorkspace,
   setUpHub,
   type SearchHit,
   type SearchResultGroup,
 } from '../../providers/registry';
 import { navigate } from '../../router';
+import type { PluginLoopSubmit } from '../PluginLoopHome';
+import { RecommendedStartRegion } from '../RecommendedStartRegion';
+import type { Recommendation } from '../../onboarding/recommendation';
+import type { OnboardingEntry } from '../../onboarding/onboarding-entry';
+import type { ProjectMetadata } from '../../types';
 import { WorkspacePage, WorkspaceSection } from '../workspace/WorkspacePage';
-import { StatCard } from '../workspace/StatCard';
-import { formatMoney, relativeTime, singularize } from '../workspace/format';
+import { RecordGallery } from '../workspace/RecordGallery';
+import { relativeTime, singularize } from '../workspace/format';
+import { HubAskComposer } from './HubAskComposer';
 import { RecordEditor } from './RecordEditor';
 import { ToolBuilder } from './ToolBuilder';
+import { LibraryUploadModal } from '../LibraryUploadModal';
 import styles from './WorkspaceHome.module.css';
 
 interface Props {
   active: boolean;
+  defaultDesignSystemId?: string | null;
+  initialPrompt?: string;
+  onAskProject?: (
+    payload: PluginLoopSubmit,
+  ) => Promise<boolean | 'blocked' | void> | boolean | 'blocked' | void;
+  recommendation?: Recommendation | null;
+  onRecommendationStart?: (input: {
+    name: string;
+    prompt: string;
+    metadata: ProjectMetadata;
+    onboardingEntry: OnboardingEntry;
+  }) => boolean | void | Promise<boolean | void>;
+  onRecommendationDismiss?: () => void;
 }
 
 /** The documents a business runs on, in the order work flows through them. */
@@ -47,17 +66,15 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Widget values are counts or money depending on what was asked. Money is
- * integer minor units; a count is just a count. */
-function formatWidgetValue(widget: SavedQuestionAnswer): string {
-  if (widget.value === null || widget.value === undefined) return '—';
-  if (typeof widget.value !== 'number') return String(widget.value);
-  const op = widget.question.aggregate?.op;
-  const isMoney = op === 'sum' || op === 'avg' || op === 'min' || op === 'max';
-  return isMoney ? formatMoney(widget.value) : String(widget.value);
-}
-
-export function WorkspaceHome({ active }: Props) {
+export function WorkspaceHome({
+  active,
+  defaultDesignSystemId,
+  initialPrompt,
+  onAskProject,
+  recommendation,
+  onRecommendationStart,
+  onRecommendationDismiss,
+}: Props) {
   const t = useT();
   // The entry shell mounts this view, so it must survive rendering without a
   // provider above it — every load path below already treats a null org as
@@ -70,7 +87,6 @@ export function WorkspaceHome({ active }: Props) {
   const [recent, setRecent] = useState<SearchHit[]>([]);
   const [tables, setTables] = useState<WorkspaceTable[]>([]);
   const [hub, setHub] = useState<HubStatus | null>(null);
-  const [widgets, setWidgets] = useState<SavedQuestionAnswer[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -79,23 +95,38 @@ export function WorkspaceHome({ active }: Props) {
   const [editing, setEditing] = useState<{ tableRef: string; recordId?: string } | null>(null);
   const [buildingTool, setBuildingTool] = useState(false);
   const [builderMode, setBuilderMode] = useState<'choose' | 'import'>('choose');
+  const [importSeedUrl, setImportSeedUrl] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [sourcePreviews, setSourcePreviews] = useState<Array<{ table: WorkspaceTable; records: WorkspaceRecord[] }>>([]);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const createMenuRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     if (!activeOrgId) return;
     try {
-      const [nextTables, nextHub, nextRecent, nextWidgets, nextProposals] = await Promise.all([
+      const [nextTables, nextHub, nextRecent, nextProposals] = await Promise.all([
         fetchWorkspaceTables(activeOrgId),
         fetchHubStatus(activeOrgId),
         fetchRecentRecords(activeOrgId),
-        fetchHomeWidgets(activeOrgId),
         fetchProposals(activeOrgId, 'pending'),
       ]);
       setTables(nextTables);
       setHub(nextHub);
       setRecent(nextRecent);
-      setWidgets(nextWidgets);
       setProposals(nextProposals);
+      const custom = nextTables.filter((table) => !HUB_TABLES.includes(table.name)).slice(0, 4);
+      const previews = await Promise.all(
+        custom.map(async (table) => {
+          try {
+            const queried = await queryWorkspaceRecords(activeOrgId, table.name, { limit: 6 });
+            return { table, records: queried.records };
+          } catch {
+            return { table, records: [] };
+          }
+        }),
+      );
+      setSourcePreviews(previews.filter((item) => item.records.length > 0));
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
@@ -133,8 +164,22 @@ export function WorkspaceHome({ active }: Props) {
   }, [active, activeOrgId, query]);
 
   useEffect(() => {
-    if (active) searchRef.current?.focus();
-  }, [active]);
+    if (!createOpen) return;
+    const onDoc = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (createMenuRef.current && target && createMenuRef.current.contains(target)) return;
+      setCreateOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCreateOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [createOpen]);
 
   const documentTables = useMemo(
     () => DOCUMENT_TABLES.map((name) => tables.find((table) => table.name === name)).filter(Boolean) as WorkspaceTable[],
@@ -172,39 +217,51 @@ export function WorkspaceHome({ active }: Props) {
   const showingSearch = query.trim().length > 0;
   const showSkeletons = !loaded && !error;
 
-  const searchField = (
-    <div className={styles.searchWrap}>
-      <span className={styles.searchIcon} aria-hidden="true">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
-          <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-      </span>
-      <Input
-        ref={searchRef}
-        type="search"
-        className={styles.search}
-        value={query}
-        placeholder={t('workspace.searchPlaceholder')}
-        onChange={(event) => setQuery(event.target.value)}
-        aria-label={t('workspace.searchPlaceholder')}
-        data-testid="workspace-search"
-      />
-      {query ? (
-        <button
-          type="button"
-          className={styles.searchClear}
-          onClick={() => {
-            setQuery('');
-            searchRef.current?.focus();
-          }}
-          aria-label={t('workspace.clearSearch')}
-        >
-          ✕
-        </button>
-      ) : null}
-    </div>
-  );
+  function openCreate(action: () => void) {
+    setCreateOpen(false);
+    action();
+  }
+
+  const createItems = [
+    ...documentTables.map((table) => ({
+      key: table.id,
+      testId: `workspace-new-${table.name}`,
+      label: t('workspace.newOf', { name: singularize(table.displayName || table.name) }),
+      onClick: () => openCreate(() => setEditing({ tableRef: table.name })),
+    })),
+    ...customTables.map((table) => ({
+      key: table.id,
+      testId: `workspace-new-${table.name}`,
+      label: t('workspace.newOf', { name: singularize(table.displayName || table.name) }),
+      onClick: () => openCreate(() => setEditing({ tableRef: table.name })),
+    })),
+    {
+      key: 'build',
+      testId: 'workspace-build-tool',
+      label: t('workspace.buildTool'),
+      onClick: () => openCreate(() => {
+        setImportSeedUrl(null);
+        setBuilderMode('choose');
+        setBuildingTool(true);
+      }),
+    },
+    {
+      key: 'import',
+      testId: 'workspace-magic-import',
+      label: t('workspace.magicImport'),
+      onClick: () => openCreate(() => {
+        setImportSeedUrl(null);
+        setBuilderMode('import');
+        setBuildingTool(true);
+      }),
+    },
+    {
+      key: 'upload',
+      testId: 'workspace-upload-assets',
+      label: t('workspace.uploadAssets'),
+      onClick: () => openCreate(() => setUploading(true)),
+    },
+  ];
 
   return (
     <WorkspacePage
@@ -212,39 +269,97 @@ export function WorkspaceHome({ active }: Props) {
       eyebrow={activeOrg?.name}
       title={t('workspace.title')}
       lead={t('workspace.subtitle')}
-      banner={searchField}
       actions={
-        <>
-          <Button variant="ghost" onClick={() => navigate({ kind: 'home', view: 'database' })}>
-            {t('workspace.openDatabase')}
-          </Button>
+        <div className={styles.createMenuWrap} ref={createMenuRef}>
           <Button
             variant="ghost"
-            onClick={() => {
-              setBuilderMode('import');
-              setBuildingTool(true);
-            }}
-            data-testid="workspace-magic-import"
+            onClick={() => setCreateOpen((open) => !open)}
+            aria-expanded={createOpen}
+            aria-haspopup="menu"
+            data-testid="workspace-create"
           >
-            {t('workspace.magicImport')}
+            {t('workspace.createTitle')}
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              setBuilderMode('choose');
-              setBuildingTool(true);
-            }}
-            data-testid="workspace-build-tool"
-          >
-            {t('workspace.buildTool')}
-          </Button>
-        </>
+          {createOpen ? (
+            <div className={styles.createMenu} role="menu" data-testid="workspace-create-menu">
+              {createItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={styles.createMenuItem}
+                  role="menuitem"
+                  data-testid={item.testId}
+                  onClick={item.onClick}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       }
     >
       {error ? (
         <div className={styles.error} role="alert">
           {error}
         </div>
+      ) : null}
+
+      <div className={styles.intro}>
+        {onAskProject ? (
+          <HubAskComposer
+            orgId={activeOrgId}
+            defaultDesignSystemId={defaultDesignSystemId}
+            initialPrompt={initialPrompt}
+            onAskProject={onAskProject}
+            onProposalCreated={load}
+            onImportUrl={(url) => {
+              setImportSeedUrl(url);
+              setBuilderMode('import');
+              setBuildingTool(true);
+            }}
+          />
+        ) : null}
+
+        <div className={styles.searchWrap}>
+        <span className={styles.searchIcon} aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
+            <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </span>
+        <Input
+          ref={searchRef}
+          type="search"
+          className={styles.search}
+          value={query}
+          placeholder={t('workspace.searchPlaceholder')}
+          onChange={(event) => setQuery(event.target.value)}
+          aria-label={t('workspace.searchPlaceholder')}
+          data-testid="workspace-search"
+        />
+        {query ? (
+          <button
+            type="button"
+            className={styles.searchClear}
+            onClick={() => {
+              setQuery('');
+              searchRef.current?.focus();
+            }}
+            aria-label={t('workspace.clearSearch')}
+          >
+            ✕
+          </button>
+        ) : null}
+        </div>
+      </div>
+
+      {recommendation && onRecommendationStart && onRecommendationDismiss ? (
+        <RecommendedStartRegion
+          recommendation={recommendation}
+          onStart={onRecommendationStart}
+          onDismiss={onRecommendationDismiss}
+        />
       ) : null}
 
       {showingSearch ? (
@@ -344,77 +459,31 @@ export function WorkspaceHome({ active }: Props) {
             </WorkspaceSection>
           ) : null}
 
-          {widgets.length > 0 ? (
-            <WorkspaceSection title={t('workspace.pinned')} testId="workspace-widgets">
-              <div className={styles.widgetGrid}>
-                {widgets.map((widget) => (
-                  <StatCard
-                    key={widget.question.id}
-                    label={widget.question.question}
-                    value={formatWidgetValue(widget)}
-                    detail={
-                      widget.count !== undefined && widget.count !== null
-                        ? t('workspace.acrossRecords', { count: String(widget.count) })
-                        : undefined
-                    }
-                  />
+          {sourcePreviews.length > 0 ? (
+            <WorkspaceSection title={t('workspace.dataSources')} testId="workspace-data-sources">
+              <div className={styles.sources}>
+                {sourcePreviews.map(({ table, records }) => (
+                  <section key={table.id} className={styles.source} data-testid={`workspace-source-${table.name}`}>
+                    <header className={styles.sourceHead}>
+                      <h3 className={styles.sourceTitle}>{table.displayName}</h3>
+                      <Button
+                        variant="ghost"
+                        onClick={() => navigate({ kind: 'home', view: 'tables', tableName: table.name })}
+                      >
+                        {t('workspace.openTable')}
+                      </Button>
+                    </header>
+                    <RecordGallery
+                      fields={table.fields}
+                      records={records}
+                      testId={`source-gallery-${table.name}`}
+                      onOpen={(recordId) => setEditing({ tableRef: table.name, recordId })}
+                    />
+                  </section>
                 ))}
               </div>
             </WorkspaceSection>
           ) : null}
-
-          <WorkspaceSection title={t('workspace.createTitle')}>
-            {showSkeletons ? (
-              <div className={styles.createGrid}>
-                <Skeleton shape="block" height={74} />
-                <Skeleton shape="block" height={74} />
-                <Skeleton shape="block" height={74} />
-              </div>
-            ) : (
-              <div className={styles.createGrid}>
-                {documentTables.map((table) => (
-                  <button
-                    key={table.id}
-                    type="button"
-                    className={styles.createCard}
-                    onClick={() => setEditing({ tableRef: table.name })}
-                    data-testid={`workspace-new-${table.name}`}
-                  >
-                    <span className={styles.createCardName}>
-                      {t('workspace.newOf', { name: singularize(table.displayName || table.name) })}
-                    </span>
-                    <span className={styles.createCardHint}>
-                      {t('workspace.newOfHint', {
-                        name: singularize(table.displayName || table.name).toLowerCase(),
-                      })}
-                    </span>
-                  </button>
-                ))}
-                {customTables.map((table) => (
-                  <button
-                    key={table.id}
-                    type="button"
-                    className={styles.createCard}
-                    onClick={() => setEditing({ tableRef: table.name })}
-                    data-testid={`workspace-new-${table.name}`}
-                  >
-                    <span className={styles.createCardName}>
-                      {t('workspace.newOf', { name: singularize(table.displayName || table.name) })}
-                    </span>
-                    <span className={styles.createCardHint}>{t('workspace.yourTable')}</span>
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className={`${styles.createCard} ${styles.createCardAccent}`}
-                  onClick={() => setBuildingTool(true)}
-                >
-                  <span className={styles.createCardName}>{t('workspace.buildTool')}</span>
-                  <span className={styles.createCardHint}>{t('workspace.buildToolHint')}</span>
-                </button>
-              </div>
-            )}
-          </WorkspaceSection>
 
           <WorkspaceSection title={t('workspace.recent')}>
             {showSkeletons ? (
@@ -470,10 +539,28 @@ export function WorkspaceHome({ active }: Props) {
       {buildingTool ? (
         <ToolBuilder
           initialMode={builderMode}
-          onClose={() => setBuildingTool(false)}
+          {...(importSeedUrl ? { initialUrl: importSeedUrl } : {})}
+          onClose={() => {
+            setBuildingTool(false);
+            setImportSeedUrl(null);
+          }}
           onCreated={async () => {
             setBuildingTool(false);
+            setImportSeedUrl(null);
             await load();
+          }}
+          onReload={load}
+          {...(onAskProject ? { onAskProject } : {})}
+        />
+      ) : null}
+
+      {uploading ? (
+        <LibraryUploadModal
+          seedFiles={null}
+          onClose={() => setUploading(false)}
+          onUploaded={() => {
+            setUploading(false);
+            navigate({ kind: 'home', view: 'library' });
           }}
         />
       ) : null}

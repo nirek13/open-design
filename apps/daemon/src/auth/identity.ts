@@ -114,9 +114,24 @@ function cookieToken(req: Request): string | null {
   );
 }
 
-/** Bearer wins so an explicit caller token is never shadowed by a leftover cookie. */
+/** Clerk (and other) session JWTs have three non-empty dot-separated segments.
+ * Infrastructure tokens such as `OD_API_TOKEN` do not, and must not be treated
+ * as a session — a reverse proxy that injects `Authorization: Bearer <api-token>`
+ * would otherwise hide a valid `od_session` cookie and 401 every signed-in call. */
+function looksLikeJwt(token: string): boolean {
+  const parts = token.split('.');
+  return parts.length === 3 && parts.every((part) => part.length > 0);
+}
+
+function sessionJwt(token: string | null): string | null {
+  return token && looksLikeJwt(token) ? token : null;
+}
+
+/** A JWT Bearer wins so an explicit caller session is never shadowed by a leftover
+ * cookie. Opaque Authorization values are skipped so a proxy API token can coexist
+ * with the session cookie. */
 export function sessionToken(req: Request): string | null {
-  return bearerToken(req) ?? cookieToken(req);
+  return sessionJwt(bearerToken(req)) ?? cookieToken(req);
 }
 
 function displayNameFromClaims(claims: Record<string, unknown>, fallback: string): string {

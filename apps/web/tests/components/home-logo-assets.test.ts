@@ -6,6 +6,7 @@ const read = (relative: string) =>
 
 const homeHeroSource = read('../../src/components/HomeHero.tsx');
 const entryNavRailSource = read('../../src/components/EntryNavRail.tsx');
+const orgMarkSource = read('../../src/components/org/OrgMark.tsx');
 const logoSvg = read('../../public/logo.svg');
 const brandIconSvg = read('../../public/brand-icon.svg');
 
@@ -35,7 +36,8 @@ describe('Home logo assets', () => {
     expect(homeHeroSource).toContain('od-brand-glyph');
     expect(homeHeroSource).not.toContain('src="/app-icon.svg"');
 
-    expect(entryNavRailSource).toContain('od-brand-glyph');
+    expect(entryNavRailSource).toContain('OrgMark');
     expect(entryNavRailSource).not.toContain('src="/app-icon.svg"');
+    expect(orgMarkSource).toContain('od-brand-glyph');
   });
 });

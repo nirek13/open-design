@@ -942,6 +942,21 @@ describe('connector routes', () => {
     expect(lastComposioLinkRequest?.callback_url).toContain(`127.0.0.2:${url.port}/api/connectors/oauth/callback`);
   });
 
+  it('uses OD_PUBLIC_BASE_URL for Composio OAuth callbacks behind a loopback proxy', async () => {
+    const previous = process.env.OD_PUBLIC_BASE_URL;
+    process.env.OD_PUBLIC_BASE_URL = 'https://od.example.com';
+    try {
+      const connect = await jsonFetch(`${baseUrl}/api/connectors/github/connect`, { method: 'POST' });
+      expect(connect.status).toBe(200);
+      expect(lastComposioLinkRequest?.callback_url).toContain(
+        'https://od.example.com/api/connectors/oauth/callback/github',
+      );
+    } finally {
+      if (previous === undefined) delete process.env.OD_PUBLIC_BASE_URL;
+      else process.env.OD_PUBLIC_BASE_URL = previous;
+    }
+  });
+
   it('times out stalled Composio logo fetches and clears the inflight entry', async () => {
     let upstreamRequests = 0;
     let firstRequestAborted = false;

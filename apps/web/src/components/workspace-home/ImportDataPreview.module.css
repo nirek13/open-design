@@ -1,0 +1,105 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.source {
+  font-size: 12px;
+  color: var(--text-soft, inherit);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  opacity: 0.8;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.22));
+  border-radius: 10px;
+  background: var(--od-surface-2, transparent);
+  min-height: 88px;
+}
+
+.card strong {
+  font-size: 13px;
+}
+
+.card span {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  opacity: 0.78;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card em {
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.tableWrap {
+  overflow: auto;
+  max-height: 220px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.2));
+  border-radius: 10px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table th,
+.table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--od-border, rgba(127, 127, 127, 0.12));
+  white-space: nowrap;
+}
+
+.table th {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  position: sticky;
+  top: 0;
+  background: var(--od-surface-1, var(--bg-panel));
+}
+
+.more {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.65;
+}

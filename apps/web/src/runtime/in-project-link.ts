@@ -230,7 +230,7 @@ export function isPathLikeChatHref(href: string | null | undefined): boolean {
   if (withoutQuery.replace(/\/+$/, '') === '') return false;
   try {
     const route = parseRoute(withoutQuery);
-    return route.kind === 'home' && route.view === 'home';
+    return route.kind === 'home' && (route.view === 'workspace' || route.view === 'home');
   } catch {
     // parseRoute decodes route segments and throws on malformed
     // percent-encoding (`/projects/%E0`) — an href the router would crash

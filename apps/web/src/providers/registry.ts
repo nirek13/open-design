@@ -2869,6 +2869,7 @@ import type {
   PublishAppToWebResponse,
   CreateWorkspaceRecordRequest,
   CreateWorkspaceTableRequest,
+  UpdateWorkspaceTableRequest,
   OrgApp,
   OrgAppWithOrgName,
   OrgInvite,
@@ -3281,6 +3282,22 @@ export async function createWorkspaceTable(
     `/api/data/orgs/${encodeURIComponent(orgId)}/tables`,
     {
       method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+  );
+  return json.table;
+}
+
+export async function patchWorkspaceTable(
+  orgId: string,
+  tableRef: string,
+  request: UpdateWorkspaceTableRequest,
+): Promise<WorkspaceTable> {
+  const json = await workspaceDataJson<{ table: WorkspaceTable }>(
+    `/api/data/orgs/${encodeURIComponent(orgId)}/tables/${encodeURIComponent(tableRef)}`,
+    {
+      method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request),
     },

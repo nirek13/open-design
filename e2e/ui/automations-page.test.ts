@@ -1,5 +1,5 @@
 import { expect, test } from '@/playwright/suite';
-import { ensureRailOpen } from '@/playwright/rail';
+import { clickEntryNav } from '@/playwright/rail';
 import { routeAgents } from '@/playwright/mock-factory';
 import type { Locator, Page } from '@playwright/test';
 
@@ -96,8 +96,7 @@ async function gotoEntryHome(page: Page) {
 
 async function gotoAutomations(page: Page) {
   await gotoEntryHome(page);
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-tasks').click();
+  await clickEntryNav(page, 'entry-nav-tasks');
   const view = page.getByTestId('tasks-view');
   await expect(view.getByRole('heading', { level: 1, name: AUTOMATIONS_TITLE })).toBeVisible();
   return view;

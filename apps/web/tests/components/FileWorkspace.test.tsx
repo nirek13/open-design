@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { installMockOpenDesignHost } from '@open-design/host/testing';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -3016,9 +3017,9 @@ describe('FileWorkspace add-module menu', () => {
     expect(screen.queryByTestId('design-browser-panel')).toBeNull();
     unmount();
 
-    // With the pin, the same inactive browser tab stays mounted so the chat
-    // "Continue extraction" handler can read its post-wall DOM.
-    render(
+    // On web the pin would iframe the source site (and trip frame-ancestors
+    // CSP). There is no readable <webview>, so the pin is a no-op.
+    const webPin = render(
       <FileWorkspace
         projectId="project-1"
         projectKind="prototype"
@@ -3031,8 +3032,31 @@ describe('FileWorkspace add-module menu', () => {
         onTabsStateChange={vi.fn()}
       />,
     );
-    const panel = screen.getByTestId('design-browser-panel');
-    expect(panel.dataset.initialTitle).toBe('The Economist');
+    expect(screen.queryByTestId('design-browser-panel')).toBeNull();
+    webPin.unmount();
+
+    // Desktop: with the pin, the same inactive browser tab stays mounted so
+    // the chat "Continue extraction" handler can read its post-wall DOM.
+    const restoreHost = installMockOpenDesignHost();
+    try {
+      render(
+        <FileWorkspace
+          projectId="project-1"
+          projectKind="prototype"
+          files={[workspaceFile('brand.html')]}
+          liveArtifacts={[]}
+          onRefreshFiles={vi.fn()}
+          isDeck={false}
+          tabsState={{ tabs: ['brand.html'], active: 'brand.html', browserTabs }}
+          pinnedBrowserTabId="__browser__:1"
+          onTabsStateChange={vi.fn()}
+        />,
+      );
+      const panel = screen.getByTestId('design-browser-panel');
+      expect(panel.dataset.initialTitle).toBe('The Economist');
+    } finally {
+      restoreHost();
+    }
   });
 
 });

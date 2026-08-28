@@ -118,9 +118,9 @@ import { AmrLowBalanceDialog, type AmrLowBalanceDecision } from './AmrLowBalance
 import { checkAmrBalanceGate } from '../runtime/amr-balance-gate';
 import { isPaidAmrPlan, resolveAmrPlan } from '../runtime/amr-low-balance-plan';
 import { HomeView } from './HomeView';
+import { WorkspaceHome } from './workspace-home/WorkspaceHome';
 import {
   createPluginAuthoringHandoff,
-  createPluginUseHandoff,
   type HomePromptHandoff,
 } from './home-hero/plugin-authoring';
 import {
@@ -194,30 +194,6 @@ import {
   type ProviderModelsCache,
 } from './providerModelsCache';
 import { resolveByokModelPreference } from './byok/validation';
-
-// Persist the entry nav-rail open/collapsed state so it survives both a
-// home -> project -> home navigation (EntryShell unmounts on the project
-// route) and a full reload. Without this the rail always reset to its
-// collapsed default on return.
-const RAIL_OPEN_STORAGE_KEY = 'od.entry.railOpen';
-
-function readStoredRailOpen(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem(RAIL_OPEN_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function writeStoredRailOpen(open: boolean): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(RAIL_OPEN_STORAGE_KEY, open ? 'true' : 'false');
-  } catch {
-    /* ignore quota / disabled storage */
-  }
-}
 
 const ONBOARDING_DROPDOWN_OPEN_EVENT = 'open-design:onboarding-dropdown-open';
 
@@ -506,7 +482,7 @@ export function EntryShell({
   defaultDesignSystemId,
   connectors,
   connectorsLoading,
-  integrationInitialTab = 'mcp',
+  integrationInitialTab = 'connectors',
   composioConfigLoading = false,
   skillsLoading = false,
   designSystemsLoading = false,
@@ -585,37 +561,14 @@ export function EntryShell({
     if (view !== 'design-systems') return;
     void onDesignSystemsRefresh?.();
   }, [onDesignSystemsRefresh, view]);
-  // The entry nav rail is collapsed by default (Manus-style) so the entry
-  // view opens clean and full-width; the panel toggle in the topbar opens it
-  // as an overlay that dismisses on selection / backdrop click / Escape.
-  // Its open/collapsed state is persisted (localStorage) so it survives a
-  // home -> project -> home round trip (EntryShell unmounts on the project
-  // route) and a reload, instead of snapping back to collapsed.
-  const [railOpen, setRailOpen] = useState<boolean>(readStoredRailOpen);
-  useEffect(() => {
-    writeStoredRailOpen(railOpen);
-  }, [railOpen]);
-  // Team chat / Slack occupy the remaining pane like a dedicated app. Keep
-  // the icon rail collapsed unless the user explicitly opens it on this view.
-  const [chatCanvasRailUnlocked, setChatCanvasRailUnlocked] = useState(false);
-  useEffect(() => {
-    setChatCanvasRailUnlocked(false);
-  }, [view]);
-  const shownRailOpen = isChatCanvasView(view) && !chatCanvasRailUnlocked ? false : railOpen;
-
-  // Keep the entry nav rail visible beside a running workspace app so users
-  // can switch destinations / pinned apps without closing the instance first.
+  // Floating compass + stage chips sit above a running workspace app, so
+  // the overlay stays full-bleed instead of leaving a dock strip.
   const runningApp = useOptionalRunningApp();
   const isAppRunning = Boolean(runningApp?.running);
   const setRunningAppSidebarVisible = runningApp?.setSidebarVisible;
   useEffect(() => {
     if (!setRunningAppSidebarVisible) return;
-    if (!isAppRunning) {
-      setRunningAppSidebarVisible(false);
-      return;
-    }
-    setRailOpen(true);
-    setRunningAppSidebarVisible(true);
+    setRunningAppSidebarVisible(false);
     return () => {
       setRunningAppSidebarVisible(false);
     };
@@ -667,17 +620,14 @@ export function EntryShell({
     setHomePromptHandoff(
       createPluginAuthoringHandoff(Date.now(), goal),
     );
-    changeView('home');
+    changeView('workspace');
   }
 
   function usePluginFromLibrary(
     record: InstalledPluginRecord,
-    action: PluginUseAction = 'use',
+    _action: PluginUseAction = 'use',
   ) {
-    setHomePromptHandoff(
-      createPluginUseHandoff(Date.now(), record.id, { action }),
-    );
-    changeView('home');
+    navigate({ kind: 'marketplace-detail', pluginId: record.id });
   }
 
   useEffect(() => {
@@ -872,7 +822,7 @@ export function EntryShell({
       setOnboardingRec(buildRecommendation(survey));
     }
     onCompleteOnboarding();
-    changeView('home');
+    changeView('workspace');
   }
 
   // Drop the personalized recommendation. Fired when the user browses all
@@ -882,7 +832,7 @@ export function EntryShell({
     setOnboardingRec((current) => (current ? null : current));
   }
 
-  // "进入 Studio" from the Home recommendation. Creates the project with the
+  // "Start creating" from the hub recommendation. Creates the project with the
   // recommended first request pre-filled into the composer but NOT auto-sent —
   // the user keeps control and can edit or clear it (spec §7.4 / §8.2).
   async function handleRecommendationStart(input: {
@@ -971,7 +921,7 @@ export function EntryShell({
 
   return (
     <div className="entry-shell entry-shell--no-header">
-      <div className={`entry${shownRailOpen ? ' entry--rail-open' : ''}`}>
+      <div className="entry">
         <EntryNavRail
           view={view}
           onViewChange={changeView}
@@ -983,31 +933,11 @@ export function EntryShell({
             });
             openNewProject();
           }}
-          open={shownRailOpen}
-          onClose={() => {
-            setChatCanvasRailUnlocked(false);
-            setRailOpen(false);
-          }}
+          open
+          onClose={() => {}}
         />
         <main className="entry-main entry-main--scroll" ref={entryMainScrollRef}>
           <div className="entry-main__topbar">
-            <button
-              type="button"
-              className="entry-rail-toggle"
-              onClick={() => {
-                if (isChatCanvasView(view) && !shownRailOpen) {
-                  setChatCanvasRailUnlocked(true);
-                  setRailOpen(true);
-                  return;
-                }
-                setRailOpen((prev) => !prev);
-              }}
-              aria-label={t('entry.navExpand')}
-              aria-expanded={shownRailOpen}
-              data-testid="entry-rail-toggle"
-            >
-              <Icon name="panel-left" size={20} />
-            </button>
             <UpdaterPopup
               allowSilentUpdates={config.allowSilentUpdates}
               silentUpdatePreferenceReady={daemonAppConfigReady}
@@ -1016,7 +946,7 @@ export function EntryShell({
                   ?? ((allowSilentUpdates) => onConfigPersist({ ...config, allowSilentUpdates }))
               }
             />
-            <WhatsNewPopup active={view === 'home'} />
+            <WhatsNewPopup active={view === 'workspace'} />
             {amrBalanceGateBlock ? (
               <AmrBalanceDialog
                 reason={amrBalanceGateBlock.reason}
@@ -1169,6 +1099,21 @@ export function EntryShell({
                 />
               </div>
             ) : null}
+            <div data-testid="entry-view-workspace" data-active={view === 'workspace' ? 'true' : 'false'} {...inactiveViewProps(view === 'workspace')}>
+              <WorkspaceHome
+                active={view === 'workspace'}
+                defaultDesignSystemId={defaultDesignSystemId}
+                initialPrompt={
+                  homePromptHandoff?.source === 'plugin-authoring'
+                    ? homePromptHandoff.prompt
+                    : undefined
+                }
+                onAskProject={handlePluginLoopSubmit}
+                recommendation={onboardingRec}
+                onRecommendationStart={handleRecommendationStart}
+                onRecommendationDismiss={dismissRecommendation}
+              />
+            </div>
             <div
               data-testid="entry-view-erp"
               data-active={isErpEntryView(view) ? 'true' : 'false'}
@@ -1177,6 +1122,9 @@ export function EntryShell({
               <ErpShell
                 module={erpModuleFromView(view)}
                 active={isErpEntryView(view)}
+                {...(route.kind === 'home' && route.view === 'tables' && route.tableName
+                  ? { initialTableName: route.tableName }
+                  : {})}
               />
             </div>
             <div data-testid="entry-view-team" data-active={view === 'team' ? 'true' : 'false'} {...inactiveViewProps(view === 'team')}>

@@ -6,7 +6,6 @@ import { Button } from '@open-design/components';
 import { useT } from '../../i18n';
 import { navigate } from '../../router';
 import { Icon, type IconName } from '../Icon';
-import { WorkspaceHome } from '../workspace-home/WorkspaceHome';
 import { ApprovalsView } from '../approvals/ApprovalsView';
 import { BooksView } from '../books/BooksView';
 import { TablesView } from '../grid/TablesView';
@@ -15,7 +14,6 @@ import { PurchasingView } from '../purchasing/PurchasingView';
 import { InventoryView } from '../inventory/InventoryView';
 import { ProjectsView } from '../projects/ProjectsView';
 import { TemplatesView } from '../templates/TemplatesView';
-import { ErpConnections } from './ErpConnections';
 import styles from './ErpShell.module.css';
 
 export type ErpModule =
@@ -33,7 +31,6 @@ export type ErpModule =
 
 /** Entry-shell views that belong inside the ERP shell. */
 export const ERP_ENTRY_VIEWS = [
-  'workspace',
   'approvals',
   'books',
   'tables',
@@ -42,7 +39,6 @@ export const ERP_ENTRY_VIEWS = [
   'inventory',
   'jobs',
   'templates',
-  'connections',
   'erp',
 ] as const;
 
@@ -73,17 +69,18 @@ export function erpModuleFromView(view: string): ErpModule {
     case 'connections':
       return 'connections';
     case 'erp':
-    case 'workspace':
     default:
-      return 'hub';
+      return 'netsuite';
   }
 }
 
 export function viewFromErpModule(module: ErpModule): ErpEntryView {
   switch (module) {
     case 'hub':
-      return 'workspace';
+      return 'books';
     case 'netsuite':
+      return 'erp';
+    case 'connections':
       return 'erp';
     default:
       return module;
@@ -91,7 +88,6 @@ export function viewFromErpModule(module: ErpModule): ErpEntryView {
 }
 
 const MODULES: Array<{ id: ErpModule; icon: IconName; labelKey: keyof import('../../i18n/types').Dict }> = [
-  { id: 'hub', icon: 'search', labelKey: 'erp.module.hub' },
   { id: 'approvals', icon: 'check', labelKey: 'erp.module.approvals' },
   { id: 'books', icon: 'file-text', labelKey: 'erp.module.books' },
   { id: 'crm', icon: 'handshake', labelKey: 'erp.module.crm' },
@@ -100,7 +96,6 @@ const MODULES: Array<{ id: ErpModule; icon: IconName; labelKey: keyof import('..
   { id: 'jobs', icon: 'kanban', labelKey: 'erp.module.jobs' },
   { id: 'tables', icon: 'layout', labelKey: 'erp.module.tables' },
   { id: 'templates', icon: 'blocks', labelKey: 'erp.module.templates' },
-  { id: 'connections', icon: 'link', labelKey: 'erp.module.connections' },
   { id: 'netsuite', icon: 'orbit', labelKey: 'erp.module.netsuite' },
 ];
 
@@ -108,6 +103,7 @@ interface Props {
   module: ErpModule;
   active: boolean;
   onModuleChange?: (module: ErpModule) => void;
+  initialTableName?: string;
 }
 
 function NetSuitePanel({ active }: { active: boolean }) {
@@ -136,7 +132,7 @@ function NetSuitePanel({ active }: { active: boolean }) {
   );
 }
 
-export function ErpShell({ module, active, onModuleChange }: Props) {
+export function ErpShell({ module, active, onModuleChange, initialTableName }: Props) {
   const t = useT();
   const modules = useMemo(
     () =>
@@ -177,16 +173,19 @@ export function ErpShell({ module, active, onModuleChange }: Props) {
         </div>
       </aside>
       <div className={styles.main}>
-        {module === 'hub' ? <WorkspaceHome active={active && module === 'hub'} /> : null}
         {module === 'approvals' ? <ApprovalsView active={active && module === 'approvals'} /> : null}
         {module === 'books' ? <BooksView active={active && module === 'books'} /> : null}
-        {module === 'tables' ? <TablesView active={active && module === 'tables'} /> : null}
+        {module === 'tables' ? (
+          <TablesView
+            active={active && module === 'tables'}
+            {...(initialTableName ? { initialTableName } : {})}
+          />
+        ) : null}
         {module === 'crm' ? <CrmView active={active && module === 'crm'} /> : null}
         {module === 'purchasing' ? <PurchasingView active={active && module === 'purchasing'} /> : null}
         {module === 'inventory' ? <InventoryView active={active && module === 'inventory'} /> : null}
         {module === 'jobs' ? <ProjectsView active={active && module === 'jobs'} /> : null}
         {module === 'templates' ? <TemplatesView active={active && module === 'templates'} /> : null}
-        {module === 'connections' ? <ErpConnections active={active && module === 'connections'} /> : null}
         {module === 'netsuite' ? <NetSuitePanel active={active && module === 'netsuite'} /> : null}
       </div>
     </div>

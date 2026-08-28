@@ -37,6 +37,7 @@
   font-weight: 600;
   color: var(--text-strong);
   letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 .plugins-home__count {
   font-size: 11.5px;

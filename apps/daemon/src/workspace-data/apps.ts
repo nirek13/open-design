@@ -650,10 +650,13 @@ export async function updateApp(
   if (patch.pinned !== undefined) {
     pinnedAt = next.pinned ? (existing.pinned ? existing.pinnedAt : now) : null;
   }
+  const dataScopes =
+    patch.dataScopes === undefined ? existing.dataScopes : normalizeAppScopes(patch.dataScopes);
   await db.run(
     `UPDATE od_apps
         SET name = ?, description = ?, file_path = ?, visibility = ?, status = ?,
-            archived_at = ?, updated_at = ?, access_mode = ?, pinned = ?, pinned_at = ?
+            archived_at = ?, updated_at = ?, access_mode = ?, pinned = ?, pinned_at = ?,
+            data_scopes_json = ?
       WHERE id = ? AND workspace_id = ?`,
     [
       next.name,
@@ -666,6 +669,7 @@ export async function updateApp(
       next.accessMode,
       next.pinned ? 1 : 0,
       pinnedAt,
+      JSON.stringify(dataScopes),
       appId,
       orgId,
     ],

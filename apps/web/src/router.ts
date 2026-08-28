@@ -64,6 +64,8 @@ export type Route =
       /** Deep-link into a GitHub repo (`/dev/:owner/:repo`). */
       owner?: string;
       repo?: string;
+      /** Deep-link into a workspace table (`/tables/:tableName`). */
+      tableName?: string;
     }
   | { kind: 'design-system-create' }
   | { kind: 'design-system-detail'; designSystemId: string }
@@ -88,11 +90,13 @@ export type Route =
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
-  // The workspace is the front door: this product is the company database
-  // first, and the design surface second. `/home` still reaches the agent
-  // hero, which is why it has an explicit path of its own.
+  // The workspace is the front door. `/home` used to be a second design-agent
+  // landing; it now redirects here so Ask and find share one place.
   if (parts.length === 0) return { kind: 'home', view: 'workspace' };
-  if (parts[0] === 'home' && !parts[1]) return { kind: 'home', view: 'home' };
+  if (parts[0] === 'home' && !parts[1]) return { kind: 'home', view: 'workspace' };
+  if (parts[0] === 'connect' && !parts[1]) {
+    return { kind: 'home', view: 'integrations' };
+  }
   if (parts[0] === 'search' && !parts[1]) {
     return { kind: 'home', view: 'search' };
   }
@@ -152,7 +156,7 @@ export function parseRoute(pathname: string): Route {
   if (LIBRARY_UI_VISIBLE && parts[0] === 'library' && !parts[1]) {
     return { kind: 'home', view: 'library' };
   }
-  if (parts[0] === 'integrations') {
+  if (parts[0] === 'integrations' || parts[0] === 'connect') {
     return { kind: 'home', view: 'integrations' };
   }
   if (DATABASE_UI_VISIBLE && parts[0] === 'database' && !parts[1]) {
@@ -163,11 +167,11 @@ export function parseRoute(pathname: string): Route {
   }
   if (parts[0] === 'erp') {
     if (parts[1] === 'netsuite') return { kind: 'home', view: 'erp' };
-    if (parts[1] === 'connections') return { kind: 'home', view: 'connections' };
-    return { kind: 'home', view: 'workspace' };
+    if (parts[1] === 'connections') return { kind: 'home', view: 'integrations' };
+    return { kind: 'home', view: 'books' };
   }
   if (parts[0] === 'connections' && !parts[1]) {
-    return { kind: 'home', view: 'connections' };
+    return { kind: 'home', view: 'integrations' };
   }
   if (parts[0] === 'books' && !parts[1]) {
     return { kind: 'home', view: 'books' };
@@ -222,7 +226,10 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'templates' && !parts[1]) {
     return { kind: 'home', view: 'templates' };
   }
-  if (parts[0] === 'tables' && !parts[1]) {
+  if (parts[0] === 'tables') {
+    if (parts[1]) {
+      return { kind: 'home', view: 'tables', tableName: decodeURIComponent(parts[1]) };
+    }
     return { kind: 'home', view: 'tables' };
   }
   if (parts[0] === 'inventory' && !parts[1]) {
@@ -251,7 +258,7 @@ export function parseRoute(pathname: string): Route {
     }
     return { kind: 'marketplace' };
   }
-  return { kind: 'home', view: 'home' };
+  return { kind: 'home', view: 'workspace' };
 }
 
 export function buildPath(route: Route): string {
@@ -266,11 +273,11 @@ export function buildPath(route: Route): string {
     if (route.view === 'brands') {
       return route.brandId ? `/brands/${encodeURIComponent(route.brandId)}` : '/brands';
     }
-    if (route.view === 'integrations') return '/integrations';
+    if (route.view === 'integrations') return '/connect';
     if (route.view === 'database') return DATABASE_UI_VISIBLE ? '/database' : '/';
     if (route.view === 'workspace') return '/';
     if (route.view === 'erp') return '/erp/netsuite';
-    if (route.view === 'connections') return '/erp/connections';
+    if (route.view === 'connections') return '/connect';
     if (route.view === 'books') return '/books';
     if (route.view === 'approvals') return '/approvals';
     if (route.view === 'crm') return '/crm';
@@ -295,12 +302,14 @@ export function buildPath(route: Route): string {
       return '/dev';
     }
     if (route.view === 'templates') return '/templates';
-    if (route.view === 'tables') return '/tables';
+    if (route.view === 'tables') {
+      return route.tableName ? `/tables/${encodeURIComponent(route.tableName)}` : '/tables';
+    }
     if (route.view === 'inventory') return '/inventory';
     if (route.view === 'projects') return '/projects';
     if (route.view === 'apps') return '/apps';
     if (route.view === 'organization') return '/organization';
-    return '/home';
+    return '/';
   }
   if (route.kind === 'join') return `/join/${encodeURIComponent(route.token)}`;
   if (route.kind === 'marketplace') return '/marketplace';

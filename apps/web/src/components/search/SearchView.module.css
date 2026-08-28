@@ -55,6 +55,11 @@
   color: var(--text);
 }
 
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .results {
   display: flex;
   flex-direction: column;

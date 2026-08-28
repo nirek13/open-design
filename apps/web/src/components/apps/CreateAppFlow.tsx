@@ -6,17 +6,33 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, Select } from '@open-design/components';
-import type { AppAccessMode, AppGrantRole, OrgApp, OrgMember, OrgTeam, ProjectFile } from '@open-design/contracts';
-import { APP_GMAIL_SCOPE_TABLE } from '@open-design/contracts';
+import {
+  appRequestsTableWrites,
+  inferAppScopesFromHtml,
+  type AppAccessMode,
+  type AppDataScope,
+  type AppGrantRole,
+  type OrgApp,
+  type OrgMember,
+  type OrgTeam,
+  type ProjectFile,
+} from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
   fetchOrgMembers,
   fetchOrgTeams,
+  fetchProjectFileText,
   fetchProjectFiles,
   publishApp,
   publishAppToWeb,
 } from '../../providers/registry';
+import {
+  AppDataScopePicker,
+  applyOrgDataWriteConsent,
+  splitGmailScope,
+  withGmailScope,
+} from './AppDataScopePicker';
 import { SendAppPicker } from './SendAppPicker';
 import styles from './CreateAppFlow.module.css';
 
@@ -27,6 +43,8 @@ export interface CreateAppFlowProps {
   projectId?: string;
   projectName?: string;
   filePath?: string;
+  /** HTML of the file being published — used to propose data scopes. */
+  htmlSource?: string | null;
   /** Skip the audience chooser when the caller already knows the destination. */
   initialMode?: Mode;
   onClose: () => void;
@@ -57,11 +75,16 @@ function defaultAppName(filePath: string | undefined): string {
   return filePath.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ') || 'Untitled app';
 }
 
+function readOnlyInferredTables(inferred: readonly AppDataScope[]): AppDataScope[] {
+  return splitGmailScope(inferred).tables.filter((scope) => scope.mode === 'read');
+}
+
 export function CreateAppFlow({
   orgId,
   projectId: initialProjectId,
   projectName: initialProjectName,
   filePath: initialFilePath,
+  htmlSource,
   initialMode,
   onClose,
   onCreated,
@@ -91,6 +114,13 @@ export function CreateAppFlow({
   const [grants, setGrants] = useState<DraftGrant[]>([]);
   const [teamGrants, setTeamGrants] = useState<DraftTeamGrant[]>([]);
   const [denials, setDenials] = useState<string[]>([]);
+  const [tableScopes, setTableScopes] = useState<AppDataScope[]>(() =>
+    readOnlyInferredTables(inferAppScopesFromHtml(htmlSource)),
+  );
+  const [inferredScopes, setInferredScopes] = useState<AppDataScope[]>(() =>
+    inferAppScopesFromHtml(htmlSource),
+  );
+  const [allowOrgWrites, setAllowOrgWrites] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [liveUrl, setLiveUrl] = useState<string | null>(null);
@@ -122,6 +152,23 @@ export function CreateAppFlow({
       }
     })();
   }, [lockedFile, projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const text =
+        htmlSource ??
+        (projectId && filePath ? await fetchProjectFileText(projectId, filePath) : null);
+      if (cancelled) return;
+      const inferred = inferAppScopesFromHtml(text);
+      setInferredScopes(inferred);
+      setAllowOrgWrites(false);
+      setTableScopes(readOnlyInferredTables(inferred));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath, htmlSource, projectId]);
 
   useEffect(() => {
     if (!showAdvanced) return;
@@ -163,9 +210,24 @@ export function CreateAppFlow({
     setGrants((prev) => prev.filter((g) => g.memberId !== memberId));
   };
 
+  const inferredWrites = splitGmailScope(inferredScopes).tables.filter((scope) => scope.mode === 'write');
+  const needsWriteConsent = inferredWrites.length > 0 || appRequestsTableWrites(tableScopes);
+
+  const setOrgWriteConsent = (allow: boolean) => {
+    setAllowOrgWrites(allow);
+    setTableScopes((current) => applyOrgDataWriteConsent(current, inferredScopes, allow));
+  };
+
   const submitOrgApp = useCallback(async () => {
     if (!projectId || !filePath || !name.trim()) {
       setError(t('apps.create.needFile'));
+      return;
+    }
+    const grantedTables = allowOrgWrites
+      ? applyOrgDataWriteConsent(tableScopes, inferredScopes, true)
+      : tableScopes;
+    if ((inferredWrites.length > 0 || appRequestsTableWrites(grantedTables)) && !allowOrgWrites) {
+      setError(t('apps.create.dataAccessNeedConsent'));
       return;
     }
     setBusy(true);
@@ -179,7 +241,7 @@ export function CreateAppFlow({
         visibility: 'org',
         accessMode,
         pinned,
-        ...(allowGmail ? { dataScopes: [{ table: APP_GMAIL_SCOPE_TABLE, mode: 'write' as const }] } : {}),
+        dataScopes: withGmailScope(grantedTables, allowGmail),
         ...(accessMode === 'restricted' ? { grants, teamGrants } : {}),
         ...(denials.length ? { denials: denials.map((memberId) => ({ memberId })) } : {}),
       });
@@ -193,10 +255,13 @@ export function CreateAppFlow({
   }, [
     accessMode,
     allowGmail,
+    allowOrgWrites,
     denials,
     description,
     filePath,
     grants,
+    inferredScopes,
+    inferredWrites.length,
     teamGrants,
     name,
     onCreated,
@@ -204,6 +269,7 @@ export function CreateAppFlow({
     pinned,
     projectId,
     t,
+    tableScopes,
   ]);
 
   const submitPublic = useCallback(async () => {
@@ -330,6 +396,7 @@ export function CreateAppFlow({
         ) : (
           <div className={styles.form}>
             <p className={styles.hint}>{t('apps.create.publishToWebHint')}</p>
+            <p className={styles.hint}>{t('apps.create.publicNoData')}</p>
             <label className={styles.label}>
               {t('apps.create.name')}
               <Input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
@@ -447,15 +514,32 @@ export function CreateAppFlow({
             <Input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
           </label>
 
-          <label className={styles.check}>
-            <input
-              type="checkbox"
-              checked={allowGmail}
-              onChange={(event) => setAllowGmail(event.target.checked)}
-            />
-            <span>{t('apps.create.gmailSend')}</span>
-          </label>
-          {allowGmail ? <p className={styles.hint}>{t('apps.create.gmailSendHint')}</p> : null}
+          <AppDataScopePicker
+            orgId={orgId}
+            value={tableScopes}
+            onChange={setTableScopes}
+            allowGmail={allowGmail}
+            onAllowGmailChange={setAllowGmail}
+            suggested={inferredScopes}
+          />
+
+          {needsWriteConsent ? (
+            <div className={styles.consent} data-testid="app-data-write-consent">
+              <p className={styles.consentAsk}>
+                {t('apps.create.dataAccessAsk', { org: orgName || t('apps.create.thisOrg') })}
+              </p>
+              <label className={styles.check}>
+                <input
+                  type="checkbox"
+                  checked={allowOrgWrites}
+                  onChange={(event) => setOrgWriteConsent(event.target.checked)}
+                  data-testid="app-data-write-consent-check"
+                />
+                <span>{t('apps.create.dataAccessConsent')}</span>
+              </label>
+              <p className={styles.hint}>{t('apps.create.dataAccessConsentHint')}</p>
+            </div>
+          ) : null}
 
           <label className={styles.check}>
             <input

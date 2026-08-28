@@ -1,9 +1,11 @@
 // After sign-up: join a workspace or create one, then (for a new workspace)
-// pull branding from the company website so later work starts on-brand.
+// pull branding from the company website and offer a first import so the
+// company is not dropped into an empty database.
 //
 // This has to work for someone who has never seen the product. Two clear
-// choices, a paste field that accepts a link or a code, and a website step
-// that can be skipped if they do not have a site yet.
+// choices, a paste field that accepts a link or a code, a website step
+// that can be skipped, and a data step that accepts a spreadsheet, a public
+// page, or a connector — also skippable.
 
 import { useEffect, useState } from 'react';
 import { Button, Input } from '@open-design/components';
@@ -20,9 +22,11 @@ import {
   updateOrganization,
 } from '../../providers/registry';
 import { navigate } from '../../router';
+import { OrgMark } from './OrgMark';
+import { SetupDataImport } from './SetupDataImport';
 import styles from './WorkspaceSetupView.module.css';
 
-type Step = 'choose' | 'join' | 'create' | 'brand';
+type Step = 'choose' | 'join' | 'create' | 'brand' | 'import';
 
 interface Props {
   onApplyDesignSystem?: (designSystemId: string) => void;
@@ -42,20 +46,29 @@ function normalizeWebsite(raw: string): string {
 export function WorkspaceSetupView({ onApplyDesignSystem }: Props) {
   const t = useT();
   const org = useOptionalOrg() ?? NO_ORG_CONTEXT;
-  const pendingBrand = Boolean(
+  const pendingSetup = Boolean(
     org.activeOrg && org.role === 'owner' && !org.activeOrg.setupCompletedAt,
   );
-  const [step, setStep] = useState<Step>(() => (pendingBrand ? 'brand' : 'choose'));
+  const [step, setStep] = useState<Step>(() =>
+    pendingSetup ? (org.activeOrg?.websiteUrl ? 'import' : 'brand') : 'choose',
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [joinInput, setJoinInput] = useState('');
   const [orgName, setOrgName] = useState('');
   const [website, setWebsite] = useState('');
+  const [designSystemId, setDesignSystemId] = useState<string | null>(
+    org.activeOrg?.defaultDesignSystemId ?? null,
+  );
   const [pending, setPending] = useState<Array<{ id: string; orgName: string }>>([]);
 
   useEffect(() => {
-    if (pendingBrand) setStep('brand');
-  }, [pendingBrand]);
+    if (!pendingSetup) return;
+    setStep((current) => {
+      if (current === 'brand' || current === 'import') return current;
+      return org.activeOrg?.websiteUrl ? 'import' : 'brand';
+    });
+  }, [pendingSetup, org.activeOrg?.websiteUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,7 +99,7 @@ export function WorkspaceSetupView({ onApplyDesignSystem }: Props) {
       const result = await acceptInvite(token);
       await org.refresh();
       org.setActiveOrg(result.organization.id);
-      navigate({ kind: 'home', view: 'home' });
+      navigate({ kind: 'home', view: 'workspace' });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -102,7 +115,7 @@ export function WorkspaceSetupView({ onApplyDesignSystem }: Props) {
       const result = await acceptPendingInvite(id);
       await org.refresh();
       org.setActiveOrg(result.organization.id);
-      navigate({ kind: 'home', view: 'home' });
+      navigate({ kind: 'home', view: 'workspace' });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -129,7 +142,10 @@ export function WorkspaceSetupView({ onApplyDesignSystem }: Props) {
     }
   }
 
-  async function finishSetup(designSystemId: string | null) {
+  async function finishSetup(dest: {
+    view: 'workspace' | 'tables' | 'integrations';
+    tableName?: string;
+  }) {
     const orgId = org.activeOrgId;
     if (!orgId) return;
     await updateOrganization(orgId, {
@@ -139,7 +155,20 @@ export function WorkspaceSetupView({ onApplyDesignSystem }: Props) {
     });
     if (designSystemId) onApplyDesignSystem?.(designSystemId);
     await org.refresh();
-    navigate({ kind: 'home', view: 'home' });
+    navigate({ kind: 'home', ...dest });
+  }
+
+  async function goToImport(nextDesignSystemId: string | null) {
+    const orgId = org.activeOrgId;
+    if (orgId && website.trim()) {
+      await updateOrganization(orgId, {
+        websiteUrl: normalizeWebsite(website),
+        ...(nextDesignSystemId ? { defaultDesignSystemId: nextDesignSystemId } : {}),
+      });
+      await org.refresh();
+    }
+    setDesignSystemId(nextDesignSystemId);
+    setStep('import');
   }
 
   async function handleBrand() {
@@ -150,15 +179,15 @@ export function WorkspaceSetupView({ onApplyDesignSystem }: Props) {
     setError(null);
     try {
       const started = await startBrandExtract(url);
-      let designSystemId = started.designSystemId ?? null;
+      let extractedId = started.designSystemId ?? null;
       const deadline = Date.now() + 45_000;
-      while (!designSystemId && Date.now() < deadline) {
+      while (!extractedId && Date.now() < deadline) {
         await new Promise((resolve) => window.setTimeout(resolve, 1500));
         const detail = await fetchBrandDetail(started.id);
-        designSystemId = detail.meta.designSystemId ?? null;
+        extractedId = detail.meta.designSystemId ?? null;
         if (detail.meta.status === 'ready' || detail.meta.status === 'failed') break;
       }
-      await finishSetup(designSystemId);
+      await goToImport(extractedId);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -171,7 +200,7 @@ export function WorkspaceSetupView({ onApplyDesignSystem }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await finishSetup(null);
+      await goToImport(null);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -179,9 +208,33 @@ export function WorkspaceSetupView({ onApplyDesignSystem }: Props) {
     }
   }
 
+  async function handleFinish(
+    dest: { view: 'workspace' | 'tables' | 'integrations'; tableName?: string },
+  ) {
+    setBusy(true);
+    setError(null);
+    try {
+      await finishSetup(dest);
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
+  const orgId = org.activeOrgId;
+  const markWebsite = step === 'brand' ? website : org.activeOrg?.websiteUrl || website;
+
   return (
     <div className={styles.root} data-testid="workspace-setup">
-      <div className={styles.card}>
+      <div className={step === 'import' ? `${styles.card} ${styles.cardWide}` : styles.card}>
+        <OrgMark
+          orgId={step === 'import' ? orgId : null}
+          markVersion={org.activeOrg?.updatedAt}
+          websiteUrl={step === 'brand' || step === 'import' ? markWebsite : null}
+          className={styles.logo}
+          size={64}
+          data-testid="setup-logo"
+        />
         {step === 'choose' ? (
           <>
             <p className={styles.eyebrow}>{t('setup.eyebrow')}</p>
@@ -325,6 +378,17 @@ export function WorkspaceSetupView({ onApplyDesignSystem }: Props) {
               </Button>
             </div>
           </>
+        ) : null}
+
+        {step === 'import' && orgId ? (
+          <SetupDataImport
+            orgId={orgId}
+            busy={busy}
+            onBusy={setBusy}
+            onImported={(tableName) => handleFinish({ view: 'tables', tableName })}
+            onSkip={() => handleFinish({ view: 'workspace' })}
+            onConnect={() => handleFinish({ view: 'integrations' })}
+          />
         ) : null}
 
         {error ? (

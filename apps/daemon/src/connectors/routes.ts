@@ -1,10 +1,9 @@
-import net from 'node:net';
-
 import type { Express, Request, RequestHandler, Response } from 'express';
 
 import { checkConnectorAccess, type ToolTokenGrant } from '../tool-tokens.js';
 import { validateBoundedJsonObject } from '../live-artifacts/schema.js';
 import { executeConnectorTool, listConnectorTools } from '../tools/connectors.js';
+import { browserFacingOrigin } from '../origin-validation.js';
 import { readComposioConfig, readPublicComposioConfig, writeComposioConfig } from './composio-config.js';
 import type { ConnectorToolUseCase } from './catalog.js';
 import { connectorService, ConnectorService, ConnectorServiceError, deleteConnectorCredentialsByProvider } from './service.js';
@@ -70,14 +69,6 @@ function sendConnectorRouteError(res: Response, err: unknown, sendApiError: Conn
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
-  if (normalized === 'localhost') return true;
-  if (normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') return true;
-  if (normalized.startsWith('::ffff:')) return isLoopbackHostname(normalized.slice('::ffff:'.length));
-  return net.isIP(normalized) === 4 && (normalized === '127.0.0.1' || normalized.startsWith('127.'));
 }
 
 function parseConnectorToolUseCase(value: unknown): ConnectorToolUseCase | undefined {
@@ -265,17 +256,10 @@ async function proxyComposioLogo(req: Request, res: Response): Promise<void> {
 }
 
 function connectorCallbackUrl(req: Request): string {
-  const host = req.get('host') ?? 'localhost';
-  let hostname = 'localhost';
-  try {
-    hostname = new URL(`http://${host}`).hostname;
-  } catch {
-    throw new ConnectorServiceError('CONNECTOR_EXECUTION_FAILED', 'connector OAuth callback host is invalid', 400, { host });
-  }
-  if (!isLoopbackHostname(hostname)) {
-    throw new ConnectorServiceError('CONNECTOR_EXECUTION_FAILED', 'connector OAuth callback host must be loopback', 400, { host });
-  }
-  return `${req.protocol}://${host}/api/connectors/oauth/callback`;
+  // Behind the AWS nginx proxy, Host is rewritten to loopback. Composio's
+  // redirect has to land on the browser-facing origin (OD_PUBLIC_BASE_URL
+  // or X-Forwarded-Host), not 127.0.0.1.
+  return `${browserFacingOrigin(req)}/api/connectors/oauth/callback`;
 }
 
 function escapeHtml(value: string): string {

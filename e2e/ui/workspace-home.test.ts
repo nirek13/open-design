@@ -60,8 +60,10 @@ test('the main view finds, creates, and builds', async ({ page, toolsDev }) => {
   await expect(page.getByTestId('workspace-search-results')).toBeVisible();
   await expect(page.getByText('Northwind Builders')).toBeVisible();
 
-  // Clearing search returns to the create surface.
+  // Clearing search returns to recent work; new records live under Create.
   await page.getByTestId('workspace-search').fill('');
+  await expect(page.getByText('INV-1001')).toBeVisible();
+  await page.getByTestId('workspace-create').click();
   await expect(page.getByTestId('workspace-new-invoices')).toBeVisible();
 
   // Creating a document opens a form generated from the table's own schema.
@@ -74,6 +76,7 @@ test('the main view finds, creates, and builds', async ({ page, toolsDev }) => {
   await expect(editor).toHaveCount(0);
 
   // All three routes to a custom tool are offered.
+  await page.getByTestId('workspace-create').click();
   await page.getByTestId('workspace-build-tool').click();
   await expect(page.getByTestId('tool-builder')).toBeVisible();
   await expect(page.getByTestId('builder-describe')).toBeVisible();
@@ -89,5 +92,6 @@ test('the main view finds, creates, and builds', async ({ page, toolsDev }) => {
   await expect(page.getByTestId('tool-builder')).toHaveCount(0, { timeout: 15_000 });
 
   // And the new table shows up as somewhere to add records.
-  await expect(page.getByText('site_visits')).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId('workspace-create').click();
+  await expect(page.getByTestId('workspace-new-site_visits')).toBeVisible({ timeout: 15_000 });
 });

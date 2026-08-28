@@ -58,7 +58,8 @@ const FIELD_TYPE_SET = new Set<string>(WORKSPACE_FIELD_TYPES);
 const TABLE_COLS = `
   id, name, display_name AS displayName, description, status,
   schema_version AS schemaVersion, protection, created_by AS createdBy,
-  created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt
+  created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt,
+  public_write AS publicWrite
 `;
 
 const FIELD_COLS = `
@@ -86,7 +87,12 @@ function normalizeFieldRow(row: Record<string, any>): WorkspaceField {
 }
 
 function normalizeTableRow(row: Record<string, any>, fields: WorkspaceField[]): WorkspaceTable {
-  return { ...(row as Omit<WorkspaceTable, 'fields'>), fields };
+  const { publicWrite, ...rest } = row;
+  return {
+    ...(rest as Omit<WorkspaceTable, 'fields' | 'publicWrite'>),
+    publicWrite: publicWrite === 1 || publicWrite === true,
+    fields,
+  };
 }
 
 export function uniqueIndexNameForField(fieldId: string): string {
@@ -317,8 +323,8 @@ export function createTable(
     db.prepare(
       `INSERT INTO od_tables
          (id, name, display_name, description, status, schema_version, protection,
-          created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', 1, 'open', ?, ?, ?)`,
+          created_by, created_at, updated_at, public_write)
+       VALUES (?, ?, ?, ?, 'active', 1, 'open', ?, ?, ?, 0)`,
     ).run(
       tableId,
       name,
@@ -411,6 +417,35 @@ export function resolveTable(db: SqliteDb, ref: string): WorkspaceTable {
   }
   if (ref.startsWith('tbl-')) return loadTable(db, ref);
   return loadTableByName(db, ref);
+}
+
+/** Open or close a table to anonymous appends. Existing rows stay private. */
+export function setTablePublicWrite(
+  db: SqliteDb,
+  table: WorkspaceTable,
+  actor: WorkspaceActor,
+  publicWrite: boolean,
+): WorkspaceTable {
+  if (table.status !== 'active') {
+    throw new WorkspaceDataError('WORKSPACE_TABLE_NOT_FOUND', 404, `table ${table.id} is archived`);
+  }
+  const now = Date.now();
+  db.prepare(`UPDATE od_tables SET public_write = ?, updated_at = ? WHERE id = ?`).run(
+    publicWrite ? 1 : 0,
+    now,
+    table.id,
+  );
+  appendAuditEvent(db, {
+    actor,
+    op: publicWrite ? 'table.public_write.enable' : 'table.public_write.disable',
+    subjectKind: 'table',
+    subjectId: table.id,
+    tableId: table.id,
+    summary: publicWrite
+      ? `opened table '${table.name}' to public submissions`
+      : `closed table '${table.name}' to public submissions`,
+  });
+  return loadTable(db, table.id);
 }
 
 function typeIssueFor(

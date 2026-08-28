@@ -54,6 +54,14 @@ describe('DesignKitView iframe sandboxing', () => {
     }
     expect(container.innerHTML).not.toContain('allow-popups-to-escape-sandbox');
     expect(container.innerHTML).not.toContain('allow-same-origin');
+    // Project-raw kit/asset previews authenticate via parent fetch + srcDoc.
+    // A `src=/api/projects/.../raw/...` navigation would 401 in this sandbox.
+    const networked = iframes.filter((iframe) => iframe.hasAttribute('src'));
+    expect(networked.every((iframe) => {
+      const src = iframe.getAttribute('src') ?? '';
+      return src === '' || src === 'about:blank' || src.startsWith('data:') || src.startsWith('blob:');
+    })).toBe(true);
+    expect(container.querySelector('iframe[data-preview-src="/raw/projects/preview/system/kit.html"]')).toBeTruthy();
   });
 
   it('renders new kit actions with the active non-English locale', () => {
@@ -246,7 +254,7 @@ describe('DesignKitView iframe sandboxing', () => {
     );
 
     expect(screen.queryByRole('button', { name: 'Open full system' })).toBeNull();
-    expect(container.querySelector('iframe[src="/raw/projects/preview/system/kit.html"]')).toBeTruthy();
+    expect(container.querySelector('iframe[data-preview-src="/raw/projects/preview/system/kit.html"]')).toBeTruthy();
   });
 
   it('opens the component kit on the light file before explicit dark selection', () => {
@@ -265,14 +273,14 @@ describe('DesignKitView iframe sandboxing', () => {
       </I18nProvider>,
     );
 
-    expect(container.querySelector('iframe[src="/raw/projects/preview/system/kit.html"]')).toBeTruthy();
-    expect(container.querySelector('iframe[src="/raw/projects/preview/system/kit.dark.html"]')).toBeNull();
+    expect(container.querySelector('iframe[data-preview-src="/raw/projects/preview/system/kit.html"]')).toBeTruthy();
+    expect(container.querySelector('iframe[data-preview-src="/raw/projects/preview/system/kit.dark.html"]')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Dark' }));
-    expect(container.querySelector('iframe[src="/raw/projects/preview/system/kit.dark.html"]')).toBeTruthy();
+    expect(container.querySelector('iframe[data-preview-src="/raw/projects/preview/system/kit.dark.html"]')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Light' }));
-    expect(container.querySelector('iframe[src="/raw/projects/preview/system/kit.html"]')).toBeTruthy();
+    expect(container.querySelector('iframe[data-preview-src="/raw/projects/preview/system/kit.html"]')).toBeTruthy();
   });
 
   it('lets users browse design-system images inside the preview modal', () => {

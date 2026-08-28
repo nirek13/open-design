@@ -1051,6 +1051,7 @@ function DesignSystemDetail({
     editable: isUser,
     host,
     reloadKey,
+    ready: Boolean(detail?.body?.trim()) || published,
   });
 
   async function handleDownload() {

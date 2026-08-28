@@ -14,8 +14,9 @@
 // So instead: the app keeps `connect-src 'none'` and gets **no network at
 // all**. It runs in an iframe sandboxed without `allow-same-origin`, so it has
 // an opaque origin, no cookies, and no access to the host page. It asks for
-// data by `postMessage`, and the host — which is already authenticated as the
-// member looking at it — decides whether to make that call.
+// data by `postMessage`. When a member is running the app, the host is already
+// authenticated as that person. On a public share link the host is a trusted
+// wrapper page that may only append to tables marked public-write.
 //
 // Three consequences, all good:
 //
@@ -145,6 +146,36 @@ export function scopeAllows(
     : { allowed: false, reason: `this app may only read '${table}', not change it` };
 }
 
+const HTML_TABLE_CALL =
+  /\b(?:window\s*\.\s*)?(?:od|api)\s*\.\s*(query|describe|create|update)\s*\(\s*(['"`])([^'"`]+)\2/g;
+
+const HTML_MAIL_CALL = /\b(?:window\s*\.\s*)?(?:od|api)\s*\.\s*mail\s*\.\s*send\b/;
+
+/** Tables an HTML app actually talks to, inferred from `od.*` / `api.*` calls.
+ *
+ * Used to *propose* scopes at publish time — never to grant them. Write is
+ * only inferred from `create` / `update`; `query` / `describe` stay read.
+ * A write on a table replaces a read for the same name. */
+export function inferAppScopesFromHtml(source: string | null | undefined): AppDataScope[] {
+  if (!source) return [];
+  const modes = new Map<string, 'read' | 'write'>();
+  HTML_TABLE_CALL.lastIndex = 0;
+  for (const match of source.matchAll(HTML_TABLE_CALL)) {
+    const method = match[1];
+    const table = match[3]?.trim() ?? '';
+    if (!table || table === APP_GMAIL_SCOPE_TABLE) continue;
+    const mode = method === 'create' || method === 'update' ? 'write' : 'read';
+    if (modes.get(table) === 'write') continue;
+    modes.set(table, mode);
+  }
+  const out: AppDataScope[] = [...modes.entries()].map(([table, mode]) => ({ table, mode }));
+  HTML_MAIL_CALL.lastIndex = 0;
+  if (HTML_MAIL_CALL.test(source)) {
+    out.push({ table: APP_GMAIL_SCOPE_TABLE, mode: 'write' });
+  }
+  return normalizeAppScopes(out);
+}
+
 /** Normalize and bound a declared scope list. Rejects nothing — a malformed
  * entry is dropped rather than throwing, because a publish should not fail on
  * a stray value, and dropping is the safe direction. */
@@ -184,3 +215,57 @@ export function describeAppScopes(scopes: readonly AppDataScope[]): string {
   if (parts.length === 0) return 'This app does not read or change any of your data.';
   return `This app can ${parts.join('; ')}.`;
 }
+
+/** True when the app asked to write workspace tables (not Gmail). Those apps
+ * get a host-side backend on a public share link so the untrusted page still
+ * has no network of its own. */
+export function appRequestsTableWrites(scopes: readonly AppDataScope[]): boolean {
+  return scopes.some((scope) => scope.table !== APP_GMAIL_SCOPE_TABLE && scope.mode === 'write');
+}
+
+/** Anonymous visitors on a share link. They may only append to tables that
+ * both the app declared write access to and a person marked as public-write.
+ * Query, update, and mail are refused even if the app itself could do them
+ * when run by a member. */
+export function publicScopeAllows(
+  scopes: readonly AppDataScope[],
+  publicWriteTables: ReadonlySet<string>,
+  request: { kind: string; table?: string },
+): ScopeDecision {
+  if (request.kind === 'scopes') return { allowed: true };
+
+  if (request.kind === 'query' || request.kind === 'update' || request.kind === 'mail.send') {
+    return {
+      allowed: false,
+      reason: 'anonymous visitors may only add rows, not read or change existing ones',
+    };
+  }
+
+  const gated = scopeAllows(scopes, request);
+  if (!gated.allowed) return gated;
+
+  const table = typeof request.table === 'string' ? request.table.trim() : '';
+  if (!table) return { allowed: false, reason: 'the request did not name a table' };
+  if (!publicWriteTables.has(table)) {
+    return {
+      allowed: false,
+      reason: `table '${table}' does not allow public submissions`,
+    };
+  }
+  return { allowed: true };
+}
+
+/** The scopes a public visitor may actually use: write grants on tables that
+ * a person marked as accepting public forms. Gmail is never public. */
+export function publicFacingScopes(
+  scopes: readonly AppDataScope[],
+  publicWriteTables: ReadonlySet<string>,
+): AppDataScope[] {
+  return scopes.filter(
+    (scope) =>
+      scope.table !== APP_GMAIL_SCOPE_TABLE &&
+      scope.mode === 'write' &&
+      publicWriteTables.has(scope.table),
+  );
+}
+

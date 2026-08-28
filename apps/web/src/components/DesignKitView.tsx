@@ -45,6 +45,68 @@ import styles from './BrandPreviewCard.module.css';
 const IMAGE_CAP = 8;
 const DESIGN_KIT_PREVIEW_SANDBOX = 'allow-scripts allow-popups';
 
+/** Directory of a `/raw/.../file.html?cacheBust=` URL, for srcDoc `<base href>`. */
+function rawUrlDirectory(url: string): string {
+  const pathOnly = url.split('?')[0] ?? url;
+  const slash = pathOnly.lastIndexOf('/');
+  return slash >= 0 ? pathOnly.slice(0, slash + 1) : pathOnly;
+}
+
+/**
+ * Kit/asset tiles used to set iframe `src` to `/api/projects/:id/raw/...`.
+ * Those navigations run in an opaque sandbox (no `allow-same-origin`), so the
+ * SameSite=Lax `od_session` cookie is withheld and Clerk returns 401. Fetch
+ * from the parent (Bearer + cookie) and paint the HTML via srcDoc instead.
+ */
+function AuthenticatedHtmlFrame({
+  src,
+  title,
+  className,
+  sandbox,
+  loading,
+  tabIndex,
+  'aria-hidden': ariaHidden,
+}: {
+  src: string;
+  title: string;
+  className?: string;
+  sandbox: string;
+  loading?: 'lazy' | 'eager';
+  tabIndex?: number;
+  'aria-hidden'?: boolean | 'true';
+}) {
+  const [srcDoc, setSrcDoc] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setSrcDoc(null);
+    void fetch(src, { cache: 'no-store', credentials: 'include' })
+      .then(async (resp) => {
+        if (!resp.ok || cancelled) return;
+        const html = await resp.text();
+        if (cancelled) return;
+        setSrcDoc(buildSrcdoc(html, { baseHref: rawUrlDirectory(src) }));
+      })
+      .catch(() => {
+        // Missing or unreadable preview — leave the frame blank.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+  return (
+    <iframe
+      className={className}
+      title={title}
+      sandbox={sandbox}
+      srcDoc={srcDoc ?? undefined}
+      data-preview-src={src}
+      loading={loading}
+      tabIndex={tabIndex}
+      aria-hidden={ariaHidden}
+    />
+  );
+}
+
 type DesignMdModuleId = 'identity' | 'typography' | 'palette' | 'voice' | 'imageryLayout' | 'designSystem';
 
 interface DesignMdModuleSpec {
@@ -168,6 +230,10 @@ export function useBrandFonts(
 
   useEffect(() => {
     if (!projectId) return;
+    // Harvested webfonts land in fonts/manifest.json only after extraction
+    // writes them. Skip the request while the kit has no typefaces so an
+    // in-flight brand does not 404 this file on every mount.
+    if (fonts.length === 0) return;
     let cancelled = false;
     let styleEl: HTMLStyleElement | null = null;
     void (async () => {
@@ -205,7 +271,7 @@ export function useBrandFonts(
       cancelled = true;
       if (styleEl) styleEl.remove();
     };
-  }, [projectId]);
+  }, [fonts.length, projectId]);
 }
 
 interface BrandTokenSubset {
@@ -1585,7 +1651,7 @@ function DesignKitViewInner({
                   </div>
                   <span className={styles.dsCap}>{kit.system.kitLabel ?? 'system/kit.html'}</span>
                 </div>
-                <iframe
+                <AuthenticatedHtmlFrame
                   key={dsKitUrl}
                   className={styles.dsFrame}
                   src={dsKitUrl}
@@ -1632,7 +1698,7 @@ function DesignKitViewInner({
                     }}
                   >
                     <div className={styles.assetFrame}>
-                      <iframe
+                      <AuthenticatedHtmlFrame
                         src={a.url}
                         loading="lazy"
                         tabIndex={-1}
@@ -1758,7 +1824,7 @@ function DesignKitViewInner({
                         </button>
                       </div>
                     </div>
-                    <iframe
+                    <AuthenticatedHtmlFrame
                       className={styles.assetModalFrame}
                       src={assetPreview.url}
                       title={assetPreview.label}

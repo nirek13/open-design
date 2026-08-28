@@ -103,6 +103,9 @@ export interface WorkspaceTable {
   status: WorkspaceTableStatus;
   schemaVersion: number;
   protection: WorkspaceTableProtection;
+  /** Anonymous visitors may append rows (intake forms). They still cannot
+   * read or edit existing rows. Off by default. */
+  publicWrite: boolean;
   /** Member id of the creator. */
   createdBy: string;
   createdAt: number;
@@ -125,6 +128,11 @@ export interface CreateWorkspaceTableRequest {
   displayName?: string;
   description?: string;
   fields: WorkspaceFieldInput[];
+}
+
+export interface UpdateWorkspaceTableRequest {
+  /** Turn public appends on or off. Omit to leave other fields unchanged. */
+  publicWrite?: boolean;
 }
 
 export interface WorkspaceRecord {

@@ -586,6 +586,14 @@ export interface DesignKitSource {
   host?: string;
   /** Bump to force a brand.json re-read after an upload writes a module. */
   reloadKey?: number;
+  /** When false, skip kit/asset iframe URLs — those files only exist after finalize. */
+  ready?: boolean;
+  /** Skip network reads for files the project listing does not yet contain. */
+  knownFiles?: readonly string[];
+}
+
+function hasKnownFile(knownFiles: readonly string[] | undefined, name: string): boolean {
+  return !knownFiles || knownFiles.includes(name);
 }
 
 function tryParseBrand(raw: string | null): Brand | null {
@@ -619,9 +627,12 @@ export function useDesignKit(source: DesignKitSource): { kit: DesignKit | null; 
     editable,
     host,
     reloadKey,
+    ready,
+    knownFiles,
   } = source;
   const [kit, setKit] = useState<DesignKit | null>(null);
   const [loading, setLoading] = useState(false);
+  const knownFilesKey = knownFiles?.join('\0') ?? '';
 
   useEffect(() => {
     let cancelled = false;
@@ -651,10 +662,14 @@ export function useDesignKit(source: DesignKitSource): { kit: DesignKit | null; 
       // Fetch brand.json (richest) and DESIGN.md (fallback) together so the kit
       // resolves in a single async hop — brand.json wins when it is a valid kit.
       const [rawBrand, rawDesignMd] = await Promise.all([
-        fetchProjectFileText(projectId, 'brand.json', { cache: 'no-store', cacheBustKey: reloadKey }),
+        hasKnownFile(knownFiles, 'brand.json')
+          ? fetchProjectFileText(projectId, 'brand.json', { cache: 'no-store', cacheBustKey: reloadKey })
+          : Promise.resolve(null),
         body != null
           ? Promise.resolve(body)
-          : fetchProjectFileText(projectId, 'DESIGN.md', { cache: 'no-store', cacheBustKey: reloadKey }),
+          : hasKnownFile(knownFiles, 'DESIGN.md')
+            ? fetchProjectFileText(projectId, 'DESIGN.md', { cache: 'no-store', cacheBustKey: reloadKey })
+            : Promise.resolve(null),
       ]);
       if (cancelled) return;
       const brand = tryParseBrand(rawBrand);
@@ -666,6 +681,10 @@ export function useDesignKit(source: DesignKitSource): { kit: DesignKit | null; 
           host,
           showcaseHtml,
           reloadKey,
+          // Kit/asset iframe URLs 401 under the opaque preview sandbox until
+          // finalize writes system/*; do not point at them unless the caller
+          // confirmed those files exist (or the system is already ready).
+          ready: ready === true,
         });
         setKit(mergeBrandKitWithDesignMd(brandKit, rawDesignMd ?? '', {
           designSystemId,
@@ -697,6 +716,8 @@ export function useDesignKit(source: DesignKitSource): { kit: DesignKit | null; 
     editable,
     host,
     reloadKey,
+    ready,
+    knownFilesKey,
   ]);
 
   return { kit, loading };

@@ -2596,10 +2596,12 @@
 
 .entry {
   display: grid;
-  grid-template-columns: var(--entry-rail-width, 64px) 1fr;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   background: var(--bg);
+  overflow: visible;
 }
 
 .entry-side {

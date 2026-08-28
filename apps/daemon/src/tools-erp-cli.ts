@@ -21,8 +21,10 @@ const ERP_USAGE = `Usage:
   od tools erp propose --input proposal.json
 
 Magic import:
-  Pulls a public Google Sheet, CSV, JSON array, or HTML table and creates (or
-  appends) a workspace table. Default commits. Pass --plan-only to preview.
+  Pulls a public Google Sheet, CSV, JSON, HTML table, open-data dump, or any
+  public page (AI scrapes unstructured pages into rows) and creates a
+  workspace table. Re-importing the same link updates matching unique keys
+  instead of duplicating rows. Default commits. Pass --plan-only to preview.
 
 Ask:
   Interprets a sentence against the live schema. Queries run immediately.

@@ -126,6 +126,7 @@ function RegistryDesignSystemKitPreview({
     showcaseHtml: null,
     editable: isUserSystem(system),
     host,
+    ready: Boolean(detail?.body?.trim()) || system.status === 'published',
   });
 
   const pending = !detailResolved || loading || !kit;

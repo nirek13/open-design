@@ -313,7 +313,7 @@ describe('EntryShell chrome', () => {
     renderHome();
 
     await waitFor(() => {
-      expect(screen.getByTestId('entry-rail-toggle')).toBeTruthy();
+      expect(screen.getByTestId('entry-nav-logo')).toBeTruthy();
     });
 
     expect(screen.queryByTestId('entry-star-badge')).toBeNull();
@@ -339,8 +339,7 @@ describe('EntryShell team chat canvas', () => {
     window.localStorage.removeItem('od.entry.railOpen');
   });
 
-  it('opens team chat fullscreen with the nav rail collapsed even if it was previously docked', async () => {
-    window.localStorage.setItem('od.entry.railOpen', 'true');
+  it('opens team chat fullscreen with the compass still on the stage', async () => {
     renderHome({}, '/team');
 
     await waitFor(() => {
@@ -348,18 +347,17 @@ describe('EntryShell team chat canvas', () => {
     });
     expect(document.querySelector('.entry')?.classList.contains('entry--rail-open')).toBe(false);
     expect(document.querySelector('.entry-main__inner--fullscreen')).toBeTruthy();
-    expect(screen.getByTestId('entry-rail-toggle').getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByTestId('entry-nav-logo')).toBeTruthy();
+    expect(screen.queryByTestId('entry-rail-toggle')).toBeNull();
   });
 
-  it('lets the user dock the rail from team chat without leaving the view', async () => {
-    window.localStorage.setItem('od.entry.railOpen', 'true');
+  it('keeps team chat open while the compass stays on the stage', async () => {
     renderHome({}, '/team');
 
     await waitFor(() => {
       expect(screen.getByTestId('entry-view-team').getAttribute('data-active')).toBe('true');
     });
-    fireEvent.click(screen.getByTestId('entry-rail-toggle'));
-    expect(document.querySelector('.entry')?.classList.contains('entry--rail-open')).toBe(true);
+    expect(screen.getByTestId('entry-nav-logo')).toBeTruthy();
     expect(screen.getByTestId('entry-view-team').getAttribute('data-active')).toBe('true');
   });
 });
@@ -401,7 +399,7 @@ describe('EntryShell route scroll isolation', () => {
     fireEvent.click(screen.getByTestId('entry-nav-home'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('entry-view-home').getAttribute('data-active')).toBe('true');
+      expect(screen.getByTestId('entry-view-workspace').getAttribute('data-active')).toBe('true');
     });
     expect(scrollContainer.scrollTop).toBe(0);
   });
@@ -447,7 +445,6 @@ describe('EntryShell new project rail', () => {
     globalThis.fetch = fetchMock as typeof fetch;
     const props = renderHome();
 
-    fireEvent.click(screen.getByTestId('entry-rail-toggle'));
     fireEvent.click(screen.getByTestId('entry-nav-new-project'));
 
     await waitFor(() => {
@@ -528,7 +525,6 @@ describe('EntryShell new project rail', () => {
       ],
     });
 
-    fireEvent.click(screen.getByTestId('entry-rail-toggle'));
     fireEvent.click(screen.getByTestId('entry-nav-projects'));
     fireEvent.click(screen.getByTestId('designs-new-project'));
 

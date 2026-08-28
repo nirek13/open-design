@@ -199,6 +199,11 @@ describe('agent runtime tool environment', () => {
     expect(prompt).toContain('do not print, persist, or override it');
     expect(prompt).toContain('tools pages');
     expect(prompt).toContain('tools data');
+    expect(prompt).toContain('window.od');
+    expect(prompt).toContain("api.create('leads'");
+    expect(prompt).toContain('org_data_write');
+    expect(prompt).toContain('--scope <table>:write');
+    expect(prompt).toContain('Public web links can append rows only to tables marked Public form');
     expect(prompt).not.toContain('secret-run-token');
   });
 

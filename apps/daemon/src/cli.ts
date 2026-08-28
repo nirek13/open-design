@@ -20,7 +20,7 @@ import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
 import { requestJsonIpc } from '@open-design/sidecar';
 import { SIDECAR_ENV, SIDECAR_MESSAGES } from '@open-design/sidecar-proto';
-import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS, parseJoinInput } from '@open-design/contracts';
+import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS, composeImportRefreshPrompt, parseJoinInput } from '@open-design/contracts';
 import { buildExportCliRequestBody, buildExportCliResultEnvelope, resolveExportCliDeckMode } from './export-cli-request.js';
 import { exportRoutePath } from './export-cli-routing.js';
 import {
@@ -348,7 +348,7 @@ const RECOVERABLE_EXIT_CODES = {
 // still be in TDZ.
 const ORG_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'name', 'role', 'expires-in', 'max-uses', 'email', 'username',
-  'description', 'member', 'to',
+  'description', 'member', 'to', 'out',
 ]);
 const ORG_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 const SEARCH_STRING_FLAGS = new Set([
@@ -359,7 +359,7 @@ const ME_STRING_FLAGS = new Set(['daemon-url', 'username', 'name', 'bio', 'avata
 const ME_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 const APP_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'name', 'description', 'project', 'file', 'visibility', 'access', 'grant', 'expires-in',
-  'channel', 'to', 'message', 'team', 'except',
+  'channel', 'to', 'message', 'team', 'except', 'scope',
 ]);
 const APP_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'include-archived', 'all-orgs', 'pin', 'unpin']);
 const DATA_STRING_FLAGS = new Set([
@@ -367,12 +367,12 @@ const DATA_STRING_FLAGS = new Set([
   'expected-revision', 'limit', 'cursor', 'sort', 'direction', 'subject',
 ]);
 const DATA_BOOLEAN_FLAGS = new Set([
-  'help', 'h', 'json', 'include-deleted', 'include-archived',
+  'help', 'h', 'json', 'include-deleted', 'include-archived', 'off',
 ]);
 const ERP_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'workspace', 'data', 'data-file', 'file', 'table', 'to',
   'limit', 'status', 'period', 'start', 'end', 'as-of', 'name', 'question', 'from',
-  'group-by', 'restore', 'type', 'formula', 'options', 'url',
+  'group-by', 'restore', 'type', 'formula', 'options', 'url', 'refresh',
 ]);
 const ERP_BOOLEAN_FLAGS = new Set([
   'help', 'h', 'json', 'off', 'pin', 'save', 'required', 'accept-data-loss',
@@ -399,6 +399,10 @@ const SLACK_STRING_FLAGS = new Set([
   'thread', 'emoji', 'prompt-file',
 ]);
 const SLACK_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const PHONE_STRING_FLAGS = new Set([
+  'daemon-url', 'channel', 'label', 'reply-url', 'reply-token', 'text', 'prompt-file',
+]);
+const PHONE_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 const GITHUB_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'query', 'q', 'title', 'body', 'prompt-file', 'method',
 ]);
@@ -460,6 +464,7 @@ const SUBCOMMAND_MAP = {
   mail: runMail,
   gmail: runMail,
   slack: runSlack,
+  phone: runPhone,
   github: runGithub,
   dev: runGithub,
   calendar: runCalendar,
@@ -809,6 +814,12 @@ function printRootHelp() {
       Automations tab, so an external agent (hermes, openclaw, ...) can
       schedule, trigger, or harvest results from a routine without
       opening the web UI.
+
+  od phone <list|connect|pause|resume|delete|rotate|inbound-url> [args]
+      Pair Slack or iMessage so you can text Open Design from your phone.
+      Same store as Integrations → Phone. Slack watches a channel or DM
+      through the connected Slack account; iMessage uses a webhook
+      (BlueBubbles or an Apple Shortcut).
 
   od message-center <list|read|read-all> [args]
       Read and acknowledge message-center inbox items through the same
@@ -10790,6 +10801,8 @@ Subcommands:
   tables list                          List tables (--include-archived)
   tables show <table>                  Show one table (name or id)
   tables create --data-file <path|->   Create a table from a schema JSON
+  tables public-write <table>          Allow anonymous form submissions
+                                       (--off to close it again)
   query <table>                        Query records (--data/--data-file for
                                        filters/sort, --limit, --cursor,
                                        --include-deleted)
@@ -10819,6 +10832,7 @@ Examples:
   JSON
   od data insert employees --data '{"full_name":"Ada","email":"ada@co.com"}'
   od data query employees --data '{"filters":[{"field":"email","op":"contains","value":"@co.com"}]}' --json
+  od data tables public-write leads
 `);
 }
 
@@ -10926,7 +10940,8 @@ async function runData(args) {
       const data = await request('GET', `/api/data/orgs/${orgId}/tables${suffix}`);
       if (flags.json) return writeJsonOut(data);
       for (const table of data.tables) {
-        console.log(`${table.id}\t${table.name}\t${table.fields.length} fields\tv${table.schemaVersion}\t${table.status}`);
+        const mark = table.publicWrite ? '\tpublic-write' : '';
+        console.log(`${table.id}\t${table.name}\t${table.fields.length} fields\tv${table.schemaVersion}\t${table.status}${mark}`);
       }
       return;
     }
@@ -10939,7 +10954,7 @@ async function runData(args) {
       const data = await request('GET', `/api/data/orgs/${orgId}/tables/${encodeURIComponent(ref)}`);
       if (flags.json) return writeJsonOut(data);
       const table = data.table;
-      console.log(`${table.id}\t${table.name}\tv${table.schemaVersion}\t${table.status}`);
+      console.log(`${table.id}\t${table.name}\tv${table.schemaVersion}\t${table.status}${table.publicWrite ? '\tpublic-write' : ''}`);
       for (const field of table.fields) {
         const marks = [field.required ? 'required' : '', field.unique ? 'unique' : ''].filter(Boolean).join(',');
         console.log(`  ${field.name}\t${field.type}${marks ? `\t${marks}` : ''}`);
@@ -10951,6 +10966,23 @@ async function runData(args) {
       const data = await request('POST', `/api/data/orgs/${orgId}/tables`, schema);
       if (flags.json) return writeJsonOut(data);
       console.log(`[data] created table ${data.table.id} (${data.table.name}) with ${data.table.fields.length} fields`);
+      return;
+    }
+    if (action === 'public-write') {
+      const ref = positionals[2];
+      if (!ref) {
+        console.error('tables public-write requires a table name or id');
+        process.exit(2);
+      }
+      const data = await request('PATCH', `/api/data/orgs/${orgId}/tables/${encodeURIComponent(ref)}`, {
+        publicWrite: !flags.off,
+      });
+      if (flags.json) return writeJsonOut(data);
+      console.log(
+        data.table.publicWrite
+          ? `[data] table ${data.table.name} now accepts public form submissions`
+          : `[data] table ${data.table.name} is members-only again`,
+      );
       return;
     }
     console.error(`unknown tables action: ${action}`);
@@ -11149,8 +11181,10 @@ Subcommands:
   import plan --file <path|->          Read a spreadsheet, show what we found
   import commit --file <path|->        Import it (--table to name the table)
   import plan --url <https://...>      Magic-import a public Sheet / CSV /
-                                       JSON / HTML table (same preview)
+                                       JSON / HTML table / open-data dump
   import commit --url <https://...>    Fetch and import in one step
+                                       [--refresh daily|hourly|weekdays]
+                                       schedules a rescrape into the same table
 
 Options:
   --org <id>         Organization to operate in (default: your first)
@@ -11172,6 +11206,7 @@ Examples:
   od erp search "INV-1001"
   od erp import plan --file customers.csv
   od erp import commit --url https://docs.google.com/spreadsheets/d/…/edit
+  od erp import commit --url https://example.com/tenders.csv --refresh daily
   od erp ledger post --data '{"date":"2026-04-02","memo":"Opening balance",
     "lines":[{"accountCode":"1000","direction":"debit","amount":500000},
              {"accountCode":"3000","direction":"credit","amount":500000}]}'
@@ -11700,6 +11735,34 @@ async function runErp(args) {
       if (plan.skipped?.length) console.log(`  ${plan.skipped.length} rows skipped`);
       if (action === 'commit') {
         console.log(`[erp] imported ${data.imported ?? 0} rows into ${plan.tableName}`);
+        if (data.updated) console.log(`[erp] updated ${data.updated} existing rows`);
+        if (data.removed) console.log(`[erp] removed ${data.removed} rows that left the feed`);
+        if (flags.refresh) {
+          let schedule;
+          try {
+            const raw = String(flags.refresh);
+            schedule =
+              raw === 'daily'
+                ? { kind: 'daily', time: '06:00', timezone: 'UTC' }
+                : raw === 'hourly'
+                  ? { kind: 'hourly', minute: 0 }
+                  : raw === 'weekdays'
+                    ? { kind: 'weekdays', time: '06:00', timezone: 'UTC' }
+                    : parseScheduleFlag(raw);
+          } catch (err) {
+            console.error(String(err?.message ?? err));
+            process.exit(2);
+          }
+          const routine = await request('POST', '/api/routines', {
+            name: `Refresh ${plan.tableName}`,
+            prompt: composeImportRefreshPrompt({ url: flags.url, tableName: plan.tableName }),
+            schedule,
+            target: { mode: 'create_each_run' },
+            enabled: true,
+          });
+          if (flags.json) return writeJsonOut({ ...data, routine: routine.routine ?? routine });
+          console.log(`[erp] refresh scheduled (${routine.routine?.id ?? routine.id})`);
+        }
       } else {
         console.log('[erp] run the same command with `commit` to import');
       }
@@ -13116,6 +13179,179 @@ async function runSlack(args) {
   process.exit(2);
 }
 
+// od phone — Slack / iMessage inbound channels (same HTTP as Integrations → Phone).
+
+function printPhoneHelp() {
+  console.log(`Usage: od phone <subcommand> [options]
+
+Subcommands:
+  list                         Linked Slack and iMessage channels
+  slack-channels               Slack channels/DMs you can watch
+  connect slack --channel <id> Watch a Slack channel or DM
+  connect imessage             Create an iMessage webhook (--reply-url)
+  inbound-url <id>             Print the inbound webhook URL
+  pause <id>                   Stop listening
+  resume <id>                  Start listening again
+  rotate <id>                  Mint a new inbound token (shown once)
+  delete <id>                  Remove the channel
+
+Options:
+  --channel <id>               Slack channel or DM id
+  --label <text>               Display name
+  --reply-url <url>            BlueBubbles or Shortcut reply endpoint
+  --reply-token <token>        Optional bearer token for the reply URL
+  --json                       Machine-readable output
+  --daemon-url <url>           Daemon base URL
+
+Examples:
+  od phone connect slack --channel D0123ABCD --json
+  od phone connect imessage --reply-url http://127.0.0.1:1234/api/v1/message/text
+  od phone list --json
+`);
+}
+
+async function runPhone(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printPhoneHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: PHONE_STRING_FLAGS, boolean: PHONE_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(String(err?.message ?? err));
+    process.exit(2);
+  }
+  const positionals = positionalArgs(args, PHONE_STRING_FLAGS);
+  const sub = positionals[0];
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJsonOut = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  async function request(method, routePath, body) {
+    let resp;
+    try {
+      resp = await fetch(`${base}${routePath}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    return resp.status === 204 ? null : resp.json();
+  }
+
+  if (sub === 'list') {
+    const data = await request('GET', '/api/phone/channels');
+    if (flags.json) return writeJsonOut(data);
+    if (!data.slackConnected) console.log('Slack connector: not connected');
+    const channels = data.channels ?? [];
+    if (channels.length === 0) {
+      console.log('No phone channels. Connect Slack or iMessage with `od phone connect`.');
+      return;
+    }
+    for (const channel of channels) {
+      console.log(`${channel.id}\t${channel.kind}\t${channel.status}\t${channel.label}`);
+    }
+    return;
+  }
+
+  if (sub === 'slack-channels') {
+    const data = await request('GET', '/api/phone/slack-channels');
+    if (flags.json) return writeJsonOut(data);
+    if (!data.connected) {
+      console.log('Slack is not connected. Open Integrations and connect Slack first.');
+      return;
+    }
+    for (const channel of data.channels ?? []) {
+      const kind = channel.isIm || channel.isMpim ? 'dm' : (channel.isPrivate ? 'private' : 'channel');
+      console.log(`${channel.id}\t${kind}\t${channel.name}`);
+    }
+    return;
+  }
+
+  if (sub === 'connect') {
+    const kind = positionals[1];
+    if (kind !== 'slack' && kind !== 'imessage') {
+      console.error('usage: od phone connect slack --channel <id> | od phone connect imessage [--reply-url <url>]');
+      process.exit(2);
+    }
+    const body = {
+      kind,
+      ...(typeof flags.label === 'string' ? { label: flags.label } : {}),
+      ...(typeof flags.channel === 'string' ? { slackChannelId: flags.channel } : {}),
+      ...(typeof flags['reply-url'] === 'string' ? { replyUrl: flags['reply-url'] } : {}),
+      ...(typeof flags['reply-token'] === 'string' ? { replyToken: flags['reply-token'] } : {}),
+    };
+    const data = await request('POST', '/api/phone/channels', body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`${data.kind}\t${data.id}\t${data.status}`);
+    if (data.inboundToken) console.log(`token\t${data.inboundToken}`);
+    if (data.inboundUrl) console.log(`inbound\t${data.inboundUrl}`);
+    if (data.pairingCode) console.log(`pairing\t${data.pairingCode}`);
+    return;
+  }
+
+  const id = positionals[1];
+  if (sub === 'inbound-url') {
+    if (!id) {
+      console.error('usage: od phone inbound-url <id>');
+      process.exit(2);
+    }
+    const data = await request('GET', '/api/phone/channels');
+    const channel = (data.channels ?? []).find((row) => row.id === id);
+    if (!channel) {
+      console.error('phone channel not found');
+      process.exit(1);
+    }
+    if (flags.json) return writeJsonOut(channel);
+    console.log(channel.inboundUrl);
+    return;
+  }
+
+  if (sub === 'pause' || sub === 'resume') {
+    if (!id) {
+      console.error(`usage: od phone ${sub} <id>`);
+      process.exit(2);
+    }
+    const data = await request('PATCH', `/api/phone/channels/${encodeURIComponent(id)}`, {
+      status: sub === 'pause' ? 'paused' : 'active',
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`${data.id}\t${data.status}`);
+    return;
+  }
+
+  if (sub === 'rotate') {
+    if (!id) {
+      console.error('usage: od phone rotate <id>');
+      process.exit(2);
+    }
+    const data = await request('POST', `/api/phone/channels/${encodeURIComponent(id)}/rotate-token`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`${data.id}\ttoken\t${data.inboundToken}`);
+    return;
+  }
+
+  if (sub === 'delete') {
+    if (!id) {
+      console.error('usage: od phone delete <id>');
+      process.exit(2);
+    }
+    await request('DELETE', `/api/phone/channels/${encodeURIComponent(id)}`);
+    if (flags.json) return writeJsonOut({ ok: true, id });
+    console.log(`deleted\t${id}`);
+    return;
+  }
+
+  console.error(`unknown subcommand: ${sub}`);
+  printPhoneHelp();
+  process.exit(2);
+}
+
 function printGithubHelp() {
   console.log(`Usage: od github <subcommand> [options]
 
@@ -13921,6 +14157,7 @@ Subcommands:
   list                         Organizations you belong to
   create --name <name>         Create an organization (you become its owner)
   show                         Show the active organization
+  mark [--out <path>]          Fetch the scraped site logo for the dock
   rename --name <name>         Rename the active organization
   members                      List members and their roles
   role <member-id> --role <r>  Set a member's role (owner|admin|member)
@@ -13951,6 +14188,7 @@ Options:
 Examples:
   od org create --name "Acme" --json
   od org invite --email teammate@acme.com --role member
+  od erp import commit --url https://example.com/customers.csv
   od org invite --username jane --role admin
   od org invite --role member --expires-in 168 --max-uses 25
   od org pending
@@ -14046,6 +14284,31 @@ async function runOrg(args) {
     const data = await request('GET', `/api/orgs/${encodeURIComponent(await activeOrgId())}`);
     if (flags.json) return writeJsonOut(data);
     console.log(`${data.organization.id}\t${data.organization.name}`);
+    return;
+  }
+
+  if (sub === 'mark') {
+    const orgId = await activeOrgId();
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/orgs/${encodeURIComponent(orgId)}/mark`, {
+        headers: { ...(flags.org ? { 'x-od-org': flags.org } : {}) },
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const contentType = resp.headers.get('content-type') || 'application/octet-stream';
+    if (flags.out) {
+      writeFileSync(flags.out, buf);
+      if (flags.json) return writeJsonOut({ path: flags.out, bytes: buf.length, contentType });
+      console.log(`[org] wrote ${buf.length} bytes (${contentType}) to ${flags.out}`);
+      return;
+    }
+    if (flags.json) return writeJsonOut({ bytes: buf.length, contentType });
+    console.log(`[org] mark ${contentType} ${buf.length} bytes — pass --out <path> to save`);
     return;
   }
 
@@ -14306,10 +14569,12 @@ Subcommands:
   publish --project <id> --file <path> --name <name>
                                 [--visibility <v>] [--access org|restricted] [--pin]
                                 [--grant <memberId:view|edit>]…
+                                [--scope <table:read|write>]…
                                 Publish a project file as an app
   show <app-id>                 Show one app
   update <app-id> [--name <n>] [--description <d>] [--visibility <v>]
                 [--file <path>] [--access org|restricted] [--pin|--unpin]
+                [--scope <table:read|write>]…
                                 Change an app
   archive <app-id>              Hide an app from the gallery (nothing is deleted)
   grants <app-id>               List who can view/edit a restricted app
@@ -14336,6 +14601,12 @@ Access (--access):
   org         whole organization can view (default); --except hides named people
   restricted  only listed --grant members and --team teams (plus you and admins)
 
+Data (--scope):
+  table:read   the app may query that workspace table
+  table:write  the app may create and change rows (write implies read)
+  Repeat --scope. Write is never implied — omit --scope and the app
+  cannot change organization data. Public web links never receive these grants.
+
 Options:
   --org <id>         Organization to act in (default: your first)
   --json             Machine-readable output
@@ -14343,6 +14614,7 @@ Options:
 
 Examples:
   od app publish --project proj-1 --file expenses.html --name "Expense form" --pin
+  od app publish --project proj-1 --file form.html --name "Lead form" --scope leads:write --pin
   od app publish --project proj-1 --file board.html --name "Board" --access restricted --grant mem-2:edit
   od app share app-1234 --expires-in 72
   od app send app-1234 --channel general --message "try this"
@@ -14412,6 +14684,23 @@ async function runApp(args) {
         if (!id || seen.has(id)) continue;
         seen.add(id);
         out.push({ memberId: id });
+      }
+    }
+    return out;
+  }
+
+  function parseScopeFlags() {
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--scope' && typeof args[i + 1] === 'string') {
+        const [table, mode] = String(args[i + 1]).split(':');
+        if (!table?.trim() || (mode !== 'read' && mode !== 'write')) continue;
+        const name = table.trim();
+        const key = `${name}:${mode}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ table: name, mode });
       }
     }
     return out;
@@ -14490,6 +14779,7 @@ async function runApp(args) {
     const grants = parseGrantFlags(flags.grant);
     const teamGrants = parseTeamGrantFlags();
     const denials = parseExceptFlags();
+    const dataScopes = parseScopeFlags();
     const data = await request('POST', await orgPath(''), {
       name: flags.name,
       projectId: flags.project,
@@ -14501,6 +14791,7 @@ async function runApp(args) {
       ...(grants.length ? { grants } : {}),
       ...(teamGrants.length ? { teamGrants } : {}),
       ...(denials.length ? { denials } : {}),
+      ...(dataScopes.length ? { dataScopes } : {}),
     });
     if (flags.json) return writeJsonOut(data);
     console.log(`[app] published ${data.app.id} (${data.app.name}) — ${data.app.visibility}/${data.app.accessMode}${data.app.pinned ? ' pinned' : ''}`);
@@ -14516,7 +14807,10 @@ async function runApp(args) {
     }
     const data = await request('GET', await orgPath(`/${encodeURIComponent(appId)}`));
     if (flags.json) return writeJsonOut(data);
-    console.log(`${data.app.id}\t${data.app.name}\t${data.app.visibility}\t${data.app.accessMode}\t${data.app.pinned ? 'pinned' : ''}\t${data.app.projectId}/${data.app.filePath}`);
+    const scopes = (data.app.dataScopes ?? [])
+      .map((scope) => `${scope.table}:${scope.mode}`)
+      .join(',') || 'no-data';
+    console.log(`${data.app.id}\t${data.app.name}\t${data.app.visibility}\t${data.app.accessMode}\t${data.app.pinned ? 'pinned' : ''}\t${data.app.projectId}/${data.app.filePath}\t${scopes}`);
     return;
   }
 
@@ -14614,6 +14908,7 @@ async function runApp(args) {
       if (flags.access) body.accessMode = flags.access;
       if (flags.pin) body.pinned = true;
       if (flags.unpin) body.pinned = false;
+      if (args.includes('--scope')) body.dataScopes = parseScopeFlags();
     }
     const data = await request('PATCH', await orgPath(`/${encodeURIComponent(appId)}`), body);
     if (flags.json) return writeJsonOut(data);

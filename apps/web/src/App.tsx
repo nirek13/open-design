@@ -506,7 +506,7 @@ function AppInner() {
   const [settingsWelcome, setSettingsWelcome] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>('execution');
   const [settingsHighlight, setSettingsHighlight] = useState<SettingsHighlight>(null);
-  const [integrationInitialTab, setIntegrationInitialTab] = useState<IntegrationTab>('mcp');
+  const [integrationInitialTab, setIntegrationInitialTab] = useState<IntegrationTab>('connectors');
   const [daemonLive, setDaemonLive] = useState(false);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const amrModelsRef = useRef<AmrModelsResponse | null>(null);
@@ -2151,7 +2151,7 @@ function AppInner() {
     iframeKeepAlivePool.evictProject(id, { includeActive: true });
     setProjects((curr) => curr.filter((p) => p.id !== id));
     if (route.kind === 'project' && route.projectId === id) {
-      navigate({ kind: 'home', view: 'home' });
+      navigate({ kind: 'home', view: 'workspace' });
     }
     return true;
   }, [clearLocalProject, iframeKeepAlivePool, route]);
@@ -2170,7 +2170,7 @@ function AppInner() {
   // can leave an in-app history entry that points back to the same project.
   const handleBack = useCallback(() => {
     const currentProjectId = route.kind === 'project' ? route.projectId : null;
-    navigate({ kind: 'home', view: 'home' });
+    navigate({ kind: 'home', view: 'workspace' });
     if (currentProjectId && typeof window !== 'undefined') {
       window.setTimeout(() => {
         iframeKeepAlivePool.evictProject(currentProjectId, { includeActive: true });
@@ -2330,7 +2330,7 @@ function AppInner() {
         staleRequest && pendingLocalProjectIdsRef.current.has(route.projectId);
       if (!fetchedProject && !knownLocalProject) {
         setProjectOpenError(t('project.missing'));
-        navigate({ kind: 'home', view: 'home' }, { replace: true });
+        navigate({ kind: 'home', view: 'workspace' }, { replace: true });
       }
     })();
     return () => {
@@ -2546,7 +2546,7 @@ function AppInner() {
   let appMain: ReactNode;
   const pendingFirstRunOnboardingRoute =
     route.kind === 'home' &&
-    route.view === 'home' &&
+    route.view === 'workspace' &&
     config.onboardingCompleted !== true &&
     !daemonConfigLoaded;
   if (pendingFirstRunOnboardingRoute) {
@@ -2595,7 +2595,7 @@ function AppInner() {
         }}
         onSystemsRefresh={refreshDesignSystems}
         config={config}
-        onOpenConnectorsTab={() => openSettings('composio')}
+        onOpenConnectorsTab={openConnectorIntegrations}
       />
     );
   } else if (route.kind === 'design-system-detail') {
@@ -2799,7 +2799,7 @@ function AppInner() {
       <SearchPalette open={searchPaletteOpen} onClose={() => setSearchPaletteOpen(false)} />
       <UpdateDialog />
       <AmrArtifactUpgradeGate
-        homeVisible={route.kind === 'home' && route.view === 'home'}
+        homeVisible={route.kind === 'home' && route.view === 'workspace'}
         activeProjectId={route.kind === 'project' ? route.projectId : null}
         activeConversationId={
           route.kind === 'project' ? route.conversationId ?? null : null
@@ -2852,6 +2852,13 @@ function AppInner() {
             setSettingsOpen(false);
             settingsDraftConfigRef.current = null;
             setSettingsHighlight(null);
+          }}
+          onOpenConnectPage={(tab = 'connectors') => {
+            setSettingsOpen(false);
+            settingsDraftConfigRef.current = null;
+            setSettingsHighlight(null);
+            setIntegrationInitialTab(tab);
+            navigate({ kind: 'home', view: 'integrations' });
           }}
           onRefreshAgents={refreshAgents}
           onAmrLoginStatusChange={handleAmrLoginStatusChange}

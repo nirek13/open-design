@@ -120,6 +120,9 @@ export interface UpdateAppRequest {
   filePath?: string;
   accessMode?: AppAccessMode;
   pinned?: boolean;
+  /** Replace the tables this app may read or change. Omit to leave them
+   * unchanged; pass `[]` to revoke every grant. Malformed entries drop. */
+  dataScopes?: AppDataScope[];
 }
 
 export interface SetAppGrantsRequest {

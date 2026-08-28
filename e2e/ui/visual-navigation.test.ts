@@ -1,5 +1,5 @@
 import { expect, test } from '@/playwright/suite';
-import { ensureRailOpen } from '@/playwright/rail';
+import { clickEntryNav, ensureRailOpen } from '@/playwright/rail';
 import {
   captureVisual,
   configureVisualPage,
@@ -41,8 +41,7 @@ test('[P2] captures the design systems page surface', async ({ page }) => {
   await configureVisualPage(page);
   await gotoVisualHome(page);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-design-systems').click();
+  await clickEntryNav(page, 'entry-nav-design-systems');
   await expect(page).toHaveURL(/\/design-systems$/);
   await expect(page.getByTestId('design-systems-tab')).toBeVisible();
   await page.getByRole('tab', { name: 'Official presets' }).click();
@@ -57,8 +56,7 @@ test('[P2] captures the design system detail preview surface', async ({ page }) 
   await configureVisualPage(page);
   await gotoVisualHome(page);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-design-systems').click();
+  await clickEntryNav(page, 'entry-nav-design-systems');
   await page.getByRole('tab', { name: 'Official presets' }).click();
   await page.getByTestId('design-system-card-agentic').click();
   const detail = page.getByTestId('design-system-detail-agentic');
@@ -74,8 +72,7 @@ test('[P2] captures the plugins page surface', async ({ page }) => {
   await configureVisualPage(page);
   await gotoVisualHome(page);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-plugins').click();
+  await clickEntryNav(page, 'entry-nav-plugins');
   await expect(page).toHaveURL(/\/plugins$/);
   const plugins = page.getByTestId('entry-view-plugins');
   await expect(plugins.getByRole('heading', { name: 'Plugins', exact: true })).toBeVisible();
@@ -90,8 +87,7 @@ test('[P2] captures the integrations page surface', async ({ page }) => {
   await configureVisualPage(page);
   await gotoVisualHome(page);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-integrations').click();
+  await clickEntryNav(page, 'entry-nav-integrations');
   await expect(page).toHaveURL(/\/integrations$/);
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
   await expect(page.getByTestId('integrations-tab-connectors')).toBeVisible();
@@ -104,8 +100,7 @@ test('[P2] captures the integrations use everywhere surface', async ({ page }) =
   await configureVisualPage(page);
   await gotoVisualHome(page);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-integrations').click();
+  await clickEntryNav(page, 'entry-nav-integrations');
   await page.getByTestId('integrations-tab-use-everywhere').click();
   await expect(page.getByTestId('integrations-tab-use-everywhere')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByText('CLI, HTTP, MCP').first()).toBeVisible();
@@ -118,8 +113,7 @@ test('[P2] captures the integrations MCP surface', async ({ page }) => {
   await configureVisualPage(page);
   await gotoVisualHome(page);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-integrations').click();
+  await clickEntryNav(page, 'entry-nav-integrations');
   await page.getByTestId('integrations-tab-mcp').click();
   await expect(page.getByTestId('integrations-tab-mcp')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByText(/MCP/i).first()).toBeVisible();
@@ -132,8 +126,7 @@ test('[P2] captures the tasks page surface', async ({ page }) => {
   await configureVisualPage(page);
   await gotoVisualHome(page);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-tasks').click();
+  await clickEntryNav(page, 'entry-nav-tasks');
   await expect(page).toHaveURL(/\/automations$/);
   await expect(page.getByTestId('tasks-view')).toBeVisible();
   await expect(page.getByText('No automations yet')).toBeVisible();

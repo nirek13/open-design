@@ -741,5 +741,65 @@ describe('business layer', () => {
       expect(plan.skipped).toHaveLength(1);
       expect(plan.skipped[0]!.reason).toMatch(/but the header has/);
     });
+
+    it('strips a UTF-8 BOM so the first header is not prefixed', () => {
+      const rows = parseDelimited('\uFEFF"name","qty"\n"Ada","2"');
+      expect(rows[0]).toEqual(['name', 'qty']);
+    });
+
+    it('reads ISO datetimes as datetime, not free text', () => {
+      expect(guessColumnType('Closing', ['2026-09-11T15:00:00', '2026-09-12T09:30:00']).type).toBe(
+        'datetime',
+      );
+      expect(coerceCell('2026-09-11T15:00:00', 'datetime')).toBe(Date.parse('2026-09-11T15:00:00'));
+    });
+
+    it('reads a CanadaBuys-style bilingual open-data dump and refreshes without duplicates', () => {
+      const csv = [
+        '\uFEFF"title-titre-eng","title-titre-fra","referenceNumber-numeroReference","tenderClosingDate-appelOffresDateCloture"',
+        '"NPP computer support","APM soutien","cb-245-1","2026-09-11T15:00:00"',
+        '"Office chairs","Chaises","cb-245-2","2026-09-12T15:00:00"',
+      ].join('\n');
+
+      const plan = buildImportPlan(records(), {
+        content: csv,
+        fileName: 'newTenderNotice-nouvelAvisAppelOffres.csv',
+        sourceUrl: 'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
+      });
+      expect(plan.tableName).toBe('new_tender_notice');
+      expect(plan.columns.map((c) => c.fieldName)).toEqual([
+        'title_eng',
+        'title_fra',
+        'reference_number',
+        'tender_closing_date',
+      ]);
+      expect(plan.columns.find((c) => c.fieldName === 'reference_number')?.unique).toBe(true);
+      expect(plan.columns.find((c) => c.fieldName === 'tender_closing_date')?.type).toBe('datetime');
+
+      const first = commitImport(records(), actor, plan, csv);
+      expect(first.imported).toBe(2);
+
+      const updatedCsv = [
+        csv.split('\n')[0],
+        '"NPP computer support (amended)","APM soutien","cb-245-1","2026-09-11T15:00:00"',
+        '"Snow clearing","Deneigement","cb-245-3","2026-09-20T15:00:00"',
+      ].join('\n');
+      const refresh = buildImportPlan(records(), {
+        content: updatedCsv,
+        fileName: 'newTenderNotice-nouvelAvisAppelOffres.csv',
+        sourceUrl: 'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
+      });
+      expect(refresh.appendingToExisting).toBe(true);
+      const second = commitImport(records(), actor, refresh, updatedCsv);
+      expect(second.imported).toBe(1);
+      expect(second.updated).toBe(1);
+      expect(second.removed).toBe(1);
+
+      const table = loadTableByName(records(), plan.tableName);
+      const { records: rows } = queryRecords(records(), table, { limit: 50 });
+      expect(rows).toHaveLength(2);
+      const titles = rows.map((row) => String(row.data.title_eng)).sort();
+      expect(titles).toEqual(['NPP computer support (amended)', 'Snow clearing']);
+    });
   });
 });

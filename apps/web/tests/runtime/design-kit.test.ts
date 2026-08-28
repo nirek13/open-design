@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { Brand } from '@open-design/contracts';
 
 import { parseDesignMd } from '../../src/runtime/design-md-parse';
-import { parsedToKit } from '../../src/runtime/design-kit';
+import { brandToKit, parsedToKit } from '../../src/runtime/design-kit';
 
 describe('parsedToKit package static assets', () => {
   it('falls back to declared components and omits missing artifacts when packaged system files are absent', () => {
@@ -72,5 +73,26 @@ describe('parsedToKit package static assets', () => {
         url: '/api/design-systems/bento/static?path=system%2Fartifacts%2Flanding.html',
       },
     ]);
+  });
+});
+
+describe('brandToKit extraction gating', () => {
+  it('omits kit and asset iframe urls until the brand is ready', () => {
+    const kit = brandToKit(
+      {
+        name: 'Stripe',
+        sourceUrl: 'https://stripe.com/',
+        colors: [],
+        typography: {},
+      } as Brand,
+      {
+        designSystemId: 'user:stripe',
+        projectId: 'brand-stripe',
+        editable: true,
+        ready: false,
+      },
+    );
+    expect(kit.system).toBeUndefined();
+    expect(kit.assets).toBeUndefined();
   });
 });

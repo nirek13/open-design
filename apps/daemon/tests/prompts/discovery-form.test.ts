@@ -12,6 +12,9 @@ describe('discovery.ts — on-demand clarification policy', () => {
     expect(DISCOVERY_AND_PHILOSOPHY).toContain(
       'Skip the form whenever the brief and known context are sufficient',
     );
+    expect(DISCOVERY_AND_PHILOSOPHY).toContain(
+      'If the first user message is already a specific brief',
+    );
   });
 
   it('asks only for unresolved information that materially changes the result', () => {

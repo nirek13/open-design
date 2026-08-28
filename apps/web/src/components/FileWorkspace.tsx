@@ -104,6 +104,7 @@ import {
   type LocalizedText,
   type WorkspaceContextItem,
 } from '@open-design/contracts';
+import { isOpenDesignHostAvailable } from '@open-design/host';
 import { createTerminal, killTerminal, listPlugins } from '../state/projects';
 import { DesignFilesPanel, type DesignFilesNavState } from './DesignFilesPanel';
 import {
@@ -177,11 +178,13 @@ interface Props {
   commentSendDisabled?: boolean;
   openRequest?: { name: string; nonce: number } | null;
   browserOpenRequest?: BrowserOpenRequest | null;
-  // Browser tab whose <webview> must stay mounted even while another workspace
-  // tab is active. Set for programmatic brand extraction: the chat "Continue
-  // extraction" handler reads the live, post-wall DOM out of this tab's webview,
-  // so tearing it down on a tab switch (or a refresh-driven remount) would
-  // silently drop the read back to a re-walled server fetch.
+  // Browser tab whose desktop <webview> must stay mounted even while another
+  // workspace tab is active. Set for programmatic brand extraction: the chat
+  // "Continue extraction" handler reads the live, post-wall DOM out of this
+  // tab's webview, so tearing it down on a tab switch (or a refresh-driven
+  // remount) would silently drop the read back to a re-walled server fetch.
+  // Web has no readable webview — pinning would iframe the source site and
+  // trip its frame-ancestors CSP — so FileWorkspace ignores the pin there.
   pinnedBrowserTabId?: string | null;
   // Open the named file AND surface its Share/Export menu. Drives the chat-side
   // "Share" next-step action without a dedicated share backend.
@@ -1398,10 +1401,16 @@ export function FileWorkspace({
   // activated this session (a refresh can remount the workspace with brand.html
   // active and the LRU empty). Keeping its <webview> alive is what lets the chat
   // "Continue extraction" handler read the live, post-wall DOM instead of
-  // silently degrading to a re-walled server fetch.
+  // silently degrading to a re-walled server fetch. On web the fallback is a
+  // cross-origin iframe that cannot be read and that the source site's
+  // frame-ancestors CSP blocks, so the pin is desktop-webview only.
   const mountedBrowserTabIds = useMemo(() => {
     const ids = new Set(liveBrowserTabIds);
-    if (pinnedBrowserTabId && browserTabs.some((tab) => tab.id === pinnedBrowserTabId)) {
+    if (
+      pinnedBrowserTabId
+      && isOpenDesignHostAvailable()
+      && browserTabs.some((tab) => tab.id === pinnedBrowserTabId)
+    ) {
       ids.add(pinnedBrowserTabId);
     }
     return ids;
@@ -4092,11 +4101,18 @@ function DesignSystemProjectPanel({
     ]);
   }, [brandId, onDesignSystemsRefresh, onRefreshFiles, projectId]);
 
+  const projectFileNames = useMemo(() => new Set(files.map((file) => file.name)), [files]);
+  const hasBrandJson = projectFileNames.has('brand.json');
+  const hasDesignMd = projectFileNames.has('DESIGN.md');
+  const hasSystemKit = projectFileNames.has('system/kit.html');
+
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
-      readDesignMd(projectId),
-      fetchProjectFileText(projectId, 'brand.json', { cache: 'no-store' }),
+      hasDesignMd ? readDesignMd(projectId) : Promise.resolve(''),
+      hasBrandJson
+        ? fetchProjectFileText(projectId, 'brand.json', { cache: 'no-store' })
+        : Promise.resolve(null),
     ]).then(([designMd, brandJson]) => {
       if (cancelled) return;
       setDesignMdBody(designMd);
@@ -4109,7 +4125,7 @@ function DesignSystemProjectPanel({
     return () => {
       cancelled = true;
     };
-  }, [projectId, kitReloadKey]);
+  }, [hasBrandJson, hasDesignMd, projectId, kitReloadKey]);
   const kitHost = system.provenance?.sourceUrls?.[0]
     ? hostnameOf(system.provenance.sourceUrls[0])
     : undefined;
@@ -4138,6 +4154,8 @@ function DesignSystemProjectPanel({
     editable,
     host: kitHost,
     reloadKey: kitReloadKey,
+    ready: hasSystemKit || system.status === 'ready',
+    knownFiles: files.map((file) => file.name),
   });
   async function persistDesignMd(nextBody: string) {
     const updated = await updateDesignSystemDraft(system.id, { body: nextBody });
@@ -5954,7 +5972,7 @@ function pageCreatorPresetVisible(preset: ProjectPagePreset): boolean {
 }
 
 function pagePresetSourceLabel(preset: ProjectPagePreset, t: TranslateFn): string {
-  return preset.source === 'blank' ? t('workspace.newBlankPage') : t('pluginsHome.title');
+  return preset.source === 'blank' ? t('workspace.newBlankPage') : t('pluginsHome.titleFallback');
 }
 
 function pagePresetRemotePreviewUrl(preset: ProjectPagePreset): string | null {
@@ -7268,10 +7286,10 @@ function PageCreatorDialog({
     (preset) => pagePresetMatchesCategory(preset, category) && preset.source !== 'blank',
   ).length;
   // Resolve the type chip shown on a card. Prefer the commercial category
-  // ("品类") so the Create page cards read like the Community gallery and Home
-  // example row (Genspark / Skywork reference), then fall back to the plugin's
+  // ("品类") so the Create page cards read like the Home gallery and example
+  // row (Genspark / Skywork reference), then fall back to the plugin's
   // sub-category (e.g. "Landing / marketing") and finally the preset's own
-  // category label so no card just reads "Community".
+  // category label so no card just reads the gallery source.
   const presetTagLabel = (preset: ProjectPagePreset): string => {
     if (preset.plugin) {
       const commercial = pluginCategoryLabel(preset.plugin, t);

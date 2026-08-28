@@ -101,3 +101,30 @@ export const QUICK_PICK_BRANDS: BrandReference[] = (() => {
 export function brandFaviconUrl(domain: string, size = 64): string {
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size}`;
 }
+
+// A hostname we can reasonably look up: at least one dot and a letter TLD, no
+// spaces. "stripe.com" and "www.bbc.co.uk" pass; "stripe", "localhost", and
+// IPs do not — those keep the product glyph rather than a guessed icon.
+const LOOKUP_HOST_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
+
+/** Favicon URL for a company website pasted during onboarding, or null when
+ *  the input is not a real-looking domain yet. Accepts a bare host or a full
+ *  URL. Callers fall back to the Substrate glyph when this returns null. */
+export function websiteFaviconUrl(
+  raw: string | null | undefined,
+  size = 64,
+): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let host = '';
+  try {
+    host = new URL(withProtocol).hostname;
+  } catch {
+    return null;
+  }
+  host = host.replace(/^www\./i, '').toLowerCase();
+  if (!LOOKUP_HOST_RE.test(host)) return null;
+  return brandFaviconUrl(host, size);
+}

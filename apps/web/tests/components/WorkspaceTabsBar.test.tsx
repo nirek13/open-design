@@ -24,10 +24,12 @@ vi.mock('../../src/i18n', () => ({
       'common.untitled': 'Untitled',
       'entry.navDesignSystems': 'Design systems',
       'entry.navHome': 'Home',
+      'entry.navWorkspace': 'Workspace',
       'entry.navProjects': 'Projects',
       'entry.navTasks': 'Automations',
       'entry.navPlugins': 'Plugins',
-      'entry.navIntegrations': 'Integrations',
+      'entry.navIntegrations': 'Connect',
+      'workspace.askHint': 'Describe the work.',
       'settings.welcomeTitle': 'Welcome',
     };
     return labels[key] ?? key;
@@ -44,7 +46,7 @@ vi.mock('../../src/router', async () => {
   };
 });
 
-const homeRoute: Route = { kind: 'home', view: 'home' };
+const homeRoute: Route = { kind: 'home', view: 'workspace' };
 const projectRoute: Route = {
   kind: 'project',
   projectId: 'project-alpha',
@@ -149,7 +151,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
 
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
-      expect(labels.filter((label) => label.includes('Home'))).toHaveLength(1);
+      expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(1);
     });
 
     // Navigate to projectRoute using rerender with a fresh object reference
@@ -158,7 +160,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toHaveLength(2);
-      expect(labels.some((label) => label.includes('Home'))).toBe(true);
+      expect(labels.some((label) => label.includes('Workspace'))).toBe(true);
       expect(labels.some((label) => label.includes('Project Alpha'))).toBe(true);
     });
 
@@ -170,7 +172,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
       const labels = tabs.map((tab) => tab.textContent ?? '');
       // Expect that we still have 2 tabs (Home and Project Alpha)
       expect(tabs).toHaveLength(2);
-      expect(labels.filter((label) => label.includes('Home'))).toHaveLength(1);
+      expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(1);
       expect(labels.filter((label) => label.includes('Project Alpha'))).toHaveLength(1);
     });
   });
@@ -202,7 +204,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels.some((label) => label.includes('Welcome'))).toBe(false);
-      expect(labels.some((label) => label.includes('Home'))).toBe(true);
+      expect(labels.some((label) => label.includes('Workspace'))).toBe(true);
       expect(labels.some((label) => label.includes('Project Alpha'))).toBe(true);
     });
   });
@@ -245,7 +247,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels.some((label) => label.includes('Design systems'))).toBe(false);
-      expect(labels.some((label) => label.includes('Home'))).toBe(true);
+      expect(labels.some((label) => label.includes('Workspace'))).toBe(true);
       expect(labels.some((label) => label.includes('Project Alpha'))).toBe(true);
     });
   });
@@ -286,7 +288,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
       { view: 'tasks', label: 'Automations' },
       { view: 'design-systems', label: 'Design systems' },
       { view: 'plugins', label: 'Plugins' },
-      { view: 'integrations', label: 'Integrations' },
+      { view: 'integrations', label: 'Connect' },
     ];
 
     for (const section of sections) {
@@ -360,7 +362,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toHaveLength(2);
-      expect(labels.some((label) => label.includes('Home'))).toBe(true);
+      expect(labels.some((label) => label.includes('Workspace'))).toBe(true);
       expect(labels.some((label) => label.includes('Project Alpha'))).toBe(true);
     });
   });
@@ -423,7 +425,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toEqual([
-        expect.stringContaining('Home'),
+        expect.stringContaining('Workspace'),
         expect.stringContaining('Project Alpha'),
       ]);
     });
@@ -434,7 +436,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toHaveLength(2);
-      expect(labels.filter((label) => label.includes('Home'))).toHaveLength(1);
+      expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(1);
       expect(labels.filter((label) => label.includes('Project Alpha'))).toHaveLength(1);
     });
   });
@@ -476,7 +478,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toEqual([
-        expect.stringContaining('Home'),
+        expect.stringContaining('Workspace'),
         expect.stringContaining('Project Alpha'),
         expect.stringContaining('Project Beta'),
       ]);
@@ -554,7 +556,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       // Expect that the duplicate Home tabs are deduplicated to exactly one Home tab
-      expect(labels.filter((label) => label.includes('Home'))).toHaveLength(1);
+      expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(1);
     });
   });
 
@@ -567,7 +569,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
 
     const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
     expect(labels).toHaveLength(1);
-    expect(labels[0]).toContain('Home');
+    expect(labels[0]).toContain('Workspace');
   });
 
   it('maps the browser new-tab shortcut to the workspace new-tab action', async () => {
@@ -582,7 +584,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toHaveLength(2);
-      expect(labels.some((label) => label.includes('Home'))).toBe(true);
+      expect(labels.some((label) => label.includes('Workspace'))).toBe(true);
       expect(labels.some((label) => label.includes('Project Alpha'))).toBe(true);
     });
     expect(navigate).toHaveBeenCalledWith(homeRoute);
@@ -606,7 +608,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     // project tab. The deferred shortcut must not add or change tabs.
     const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
     expect(labels).toEqual([
-      expect.stringContaining('Home'),
+      expect.stringContaining('Workspace'),
       expect.stringContaining('Project Alpha'),
     ]);
     expect(navigate).not.toHaveBeenCalled();
@@ -649,7 +651,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toHaveLength(1);
-      expect(labels[0]).toContain('Home');
+      expect(labels[0]).toContain('Workspace');
     });
     expect(navigate).toHaveBeenCalledWith(homeRoute);
   });
@@ -875,7 +877,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toEqual([
-        expect.stringContaining('Home'),
+        expect.stringContaining('Workspace'),
         expect.stringContaining('Project Alpha'),
         expect.stringContaining('Project Beta'),
       ]);
@@ -894,7 +896,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toEqual([
-        expect.stringContaining('Home'),
+        expect.stringContaining('Workspace'),
         expect.stringContaining('Project Beta'),
         expect.stringContaining('Project Alpha'),
       ]);
@@ -906,7 +908,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toEqual([
-        expect.stringContaining('Home'),
+        expect.stringContaining('Workspace'),
         expect.stringContaining('Project Beta'),
         expect.stringContaining('Project Alpha'),
       ]);
@@ -967,7 +969,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toEqual([
-        expect.stringContaining('Home'),
+        expect.stringContaining('Workspace'),
         expect.stringContaining('Project Alpha'),
         expect.stringContaining('Project Beta'),
       ]);
@@ -982,7 +984,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels).toEqual([
-        expect.stringContaining('Home'),
+        expect.stringContaining('Workspace'),
         expect.stringContaining('Project Beta'),
         expect.stringContaining('Project Alpha'),
       ]);

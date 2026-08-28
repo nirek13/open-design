@@ -89,7 +89,11 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header Authorization "Bearer ${PROXY_API_TOKEN}";
+        # Pass the browser Clerk JWT through. Replacing Authorization with
+        # OD_API_TOKEN made IdentityService treat the infrastructure token as
+        # a session and 401 every signed-in /api call. The daemon is loopback
+        # in this task, so the API-token middleware already skips the proxy hop.
+        proxy_set_header Authorization $http_authorization;
         proxy_buffering off;
         proxy_read_timeout ${PROXY_READ_TIMEOUT};
         proxy_send_timeout ${PROXY_READ_TIMEOUT};
@@ -182,11 +186,27 @@ for c in td["containerDefinitions"]:
         env["OD_PUBLIC_BASE_URL"] = {"name": "OD_PUBLIC_BASE_URL", "value": origin}
         env.setdefault("OD_BIND_HOST", {"name": "OD_BIND_HOST", "value": "127.0.0.1"})
         env.setdefault("OD_PORT", {"name": "OD_PORT", "value": "7456"})
+        env["OD_HOSTING_SUPABASE_URL"] = {
+            "name": "OD_HOSTING_SUPABASE_URL",
+            "value": "https://lzaccytcieffcifofzvh.supabase.co",
+        }
+        env["OD_HOSTING_FUNCTIONS_URL"] = {
+            "name": "OD_HOSTING_FUNCTIONS_URL",
+            "value": "https://lzaccytcieffcifofzvh.functions.supabase.co",
+        }
+        env["OD_HOSTING_ANON_KEY"] = {
+            "name": "OD_HOSTING_ANON_KEY",
+            "value": "sb_publishable_6SpjBr4C4X42Ivy3dY6F5w_ua5G-UgP",
+        }
+        env["OD_SITES_DOMAIN"] = {"name": "OD_SITES_DOMAIN", "value": "sites.nirekshetty.com"}
         c["environment"] = list(env.values())
-        if openai_arn:
-            secrets = {s["name"]: s for s in c.get("secrets") or []}
-            secrets["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "valueFrom": openai_arn}
-            secrets["OD_OPENAI_API_KEY"] = {"name": "OD_OPENAI_API_KEY", "valueFrom": openai_arn}
+        secrets = {s["name"]: s for s in c.get("secrets") or []}
+        openai_from = openai_arn or (secrets.get("OPENAI_API_KEY") or {}).get("valueFrom") or (secrets.get("OD_OPENAI_API_KEY") or {}).get("valueFrom")
+        if openai_from:
+            secrets["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "valueFrom": openai_from}
+            secrets["OD_OPENAI_API_KEY"] = {"name": "OD_OPENAI_API_KEY", "valueFrom": openai_from}
+            secrets["OD_DEFAULT_OPENAI_API_KEY"] = {"name": "OD_DEFAULT_OPENAI_API_KEY", "valueFrom": openai_from}
+        if secrets:
             c["secrets"] = list(secrets.values())
     elif c["name"] == "auth-proxy":
         c["entryPoint"] = ["/bin/sh", "-c"]

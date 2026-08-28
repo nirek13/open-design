@@ -139,7 +139,7 @@ function routeForTab(tab: WorkspaceChromeTab): Route {
       ? { kind: 'marketplace-detail', pluginId: tab.pluginId }
       : { kind: 'marketplace' };
   }
-  return { kind: 'home', view: tab.view };
+  return { kind: 'home', view: tab.view === 'home' ? 'workspace' : tab.view };
 }
 
 function reviveTab(value: unknown): WorkspaceChromeTab | null {
@@ -153,6 +153,8 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
     const view = record.view;
     if (
       view === 'home'
+      || view === 'workspace'
+      || view === 'search'
       || view === 'projects'
       || view === 'tasks'
       || view === 'plugins'
@@ -194,7 +196,7 @@ function uniqueIdForTab(tab: WorkspaceChromeTab): string {
 }
 
 function normalizeTabsState(state: WorkspaceTabsState): WorkspaceTabsState {
-  let sourceTabs = state.tabs.length > 0 ? state.tabs : [createEntryTab('home')];
+  let sourceTabs = state.tabs.length > 0 ? state.tabs : [createEntryTab('workspace')];
 
   // Deduplicate entry tabs (singleton constraint): all sidebar sections
   // (home / projects / tasks / design-systems / plugins / integrations) share
@@ -257,7 +259,7 @@ function normalizeTabsState(state: WorkspaceTabsState): WorkspaceTabsState {
   // tab always exists and is leftmost" holds for migrated state too.
   const entryIndex = sourceTabs.findIndex((tab) => tab.kind === 'entry');
   if (entryIndex < 0) {
-    sourceTabs = [createEntryTab('home'), ...sourceTabs];
+    sourceTabs = [createEntryTab('workspace'), ...sourceTabs];
   } else if (entryIndex > 0) {
     const [entryTab] = sourceTabs.splice(entryIndex, 1);
     sourceTabs = [entryTab!, ...sourceTabs];
@@ -562,7 +564,7 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false,
         tabs: current.tabs.map((tab) =>
           tab.kind === 'entry' &&
           (tab.view === 'onboarding' || (resetDesignSystemsEntry && tab.view === 'design-systems'))
-            ? { ...tab, view: 'home' }
+            ? { ...tab, view: 'workspace' }
             : tab,
         ),
       });
@@ -828,14 +830,14 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false,
         ...normalized,
         activeTabId: existingEntryTab.id,
       });
-      navigate({ kind: 'home', view: 'home' });
+      navigate({ kind: 'home', view: 'workspace' });
     } else {
-      const tab = createEntryTab('home');
+      const tab = createEntryTab('workspace');
       setState({
         tabs: [...normalized.tabs, tab],
         activeTabId: tab.id,
       });
-      navigate({ kind: 'home', view: 'home' });
+      navigate({ kind: 'home', view: 'workspace' });
     }
     setTabsMenuOpen(false);
   }
@@ -853,7 +855,7 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false,
     const nextTabs = normalized.tabs.filter((tab) => tab.id !== tabId);
     let nextState: WorkspaceTabsState;
     if (nextTabs.length === 0) {
-      const homeTab = createEntryTab('home');
+      const homeTab = createEntryTab('workspace');
       nextRoute = routeForTab(homeTab);
       nextState = { tabs: [homeTab], activeTabId: homeTab.id };
     } else if (normalized.activeTabId !== tabId) {
@@ -1252,7 +1254,7 @@ function displayTabFor(
     };
   }
   const entryTitle: Record<EntryHomeView, string> = {
-    home: t('entry.navHome'),
+    home: t('entry.navWorkspace'),
     search: t('entry.navSearch'),
     onboarding: t('settings.welcomeTitle'),
     projects: t('entry.navProjects'),
@@ -1318,7 +1320,7 @@ function displayTabFor(
   return {
     id: tab.id,
     title: entryTitle[tab.view],
-    meta: tab.view === 'home' ? 'Start a new project' : 'Workspace',
+    meta: tab.view === 'workspace' || tab.view === 'home' ? t('workspace.askHint') : t('entry.navWorkspace'),
     icon: entryIcon[tab.view],
     tab,
   };

@@ -72,6 +72,12 @@ export interface UrlLoadDecision {
    * buildSrcdoc) is present to detect and break the loop.
    */
   needsRedirectGuard?: boolean;
+  /**
+   * The HTML talks to workspace data through `window.od` / `od.query`.
+   * That SDK is injected only on the srcDoc path; URL-load serves the file
+   * raw and the page throws `od is not defined`.
+   */
+  needsAppSdk?: boolean;
 }
 
 /**
@@ -117,11 +123,20 @@ export function shouldUrlLoadHtmlPreview(d: UrlLoadDecision): boolean {
   // redirect-loop guard is in place; URL-load serves it raw with no guard and
   // the iframe reloads itself forever (nexu-io/open-design#710).
   if (d.needsRedirectGuard) return false;
+  if (d.needsAppSdk) return false;
   // Root-relative project asset refs only resolve after the srcDoc pipeline
   // normalizes them (normalizeRootRelativeProjectAssetRefs); the URL-load
   // path serves the document untouched and the browser 404s each asset.
   if (d.projectRootAssetRefs) return false;
   return true;
+}
+
+/** True when the page expects the injected `window.od` data SDK. */
+export function htmlNeedsAppSdk(source: string | null | undefined): boolean {
+  if (!source) return false;
+  if (/\bwindow\s*\.\s*od\b/.test(source)) return true;
+  if (/\bod\s*\.\s*(?:query|describe|create|update|scopes|mail)\b/.test(source)) return true;
+  return false;
 }
 
 export function hasUrlModeBridge(source: string | null | undefined): boolean {

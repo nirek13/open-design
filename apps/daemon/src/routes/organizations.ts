@@ -19,6 +19,7 @@ import type { Express, Request as ExpressRequest, Response } from 'express';
 import multer from 'multer';
 import {
   ORG_HEADER,
+  appRequestsTableWrites,
   createApiError,
   type CreateOrgInviteRequest,
   type CreateOrganizationRequest,
@@ -39,6 +40,14 @@ import type { IdentityService, Viewer } from '../auth/identity.js';
 import type { ConnectorService } from '../connectors/service.js';
 import type { WorkspaceDbManager } from '../storage/workspace-db.js';
 import { WorkspaceDataError } from '../workspace-data/errors.js';
+import type { WorkspaceDataEvents } from '../workspace-data/events.js';
+import {
+  PUBLIC_APP_HOST_CSP,
+  allowPublicIngest,
+  handlePublicAppBridge,
+  renderPublicAppHost,
+  setPublicIngestCors,
+} from '../workspace-data/public-app-host.js';
 import {
   acceptOrgInvite,
   acceptPendingInvite,
@@ -103,6 +112,7 @@ import {
   readAvatarFile,
   writeAvatarFile,
 } from '../workspace-data/avatars.js';
+import { resolveOrgMark } from '../workspace-data/org-mark.js';
 
 type Request = ExpressRequest<Record<string, string>>;
 
@@ -121,6 +131,17 @@ export interface OrganizationRouteServices {
     res: Response,
     input: { projectId: string; filePath: string },
   ) => Promise<void>;
+  /** HTML source for wrapping a data-connected public share. */
+  loadAppHtml?: (input: { projectId: string; filePath: string }) => Promise<string | null>;
+  /** Live-update fan-out when a public form appends a row. */
+  events?: WorkspaceDataEvents;
+  /** User design-system root. Used to find the harvested logo of the default kit. */
+  userDesignSystemsRoot?: string;
+  /** Managed-project root. Harvested brand logos live under `{project}/logos`. */
+  projectsRoot?: string;
+  getProject?: (projectId: string) => { metadata?: Record<string, unknown> } | null | undefined;
+  /** Injectable so tests never scrape the public internet. */
+  harvestWebsiteMark?: (siteUrl: string, logosDir: string) => Promise<void>;
 }
 
 export interface RegisterOrganizationRoutesDeps extends RouteDeps<'db'> {
@@ -128,8 +149,36 @@ export interface RegisterOrganizationRoutesDeps extends RouteDeps<'db'> {
 }
 
 export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizationRoutesDeps) {
-  const { manager, identity, serveAppFile, connectors, dataDir } = ctx.organizations;
+  const {
+    manager,
+    identity,
+    serveAppFile,
+    loadAppHtml,
+    events,
+    connectors,
+    dataDir,
+    userDesignSystemsRoot,
+    projectsRoot,
+    getProject,
+    harvestWebsiteMark,
+  } = ctx.organizations;
   const directory = () => manager.directoryExecutor;
+
+  function orgMarkInput(org: {
+    id: string;
+    websiteUrl?: string | null;
+    defaultDesignSystemId?: string | null;
+  }) {
+    return {
+      dataDir,
+      org,
+      userDesignSystemsRoot,
+      projectsRoot,
+      getProject,
+      harvest: harvestWebsiteMark,
+    };
+  }
+
   const avatarUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: AVATAR_MAX_BYTES, files: 1 },
@@ -292,6 +341,18 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
     res.json({ organization: await getOrganization(directory(), orgId) });
   }));
 
+  app.get('/api/orgs/:orgId/mark', handle(async (req, res) => {
+    const { orgId } = await scope(req);
+    const organization = await getOrganization(directory(), orgId);
+    const mark = await resolveOrgMark(orgMarkInput(organization));
+    if (!mark) {
+      throw new WorkspaceDataError('NOT_FOUND', 404, 'mark not found');
+    }
+    res.setHeader('Content-Type', mark.mime);
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.send(mark.buffer);
+  }));
+
   app.patch('/api/orgs/:orgId', handle(async (req, res) => {
     const { orgId } = await scope(req, 'admin');
     const body = (req.body ?? {}) as UpdateOrganizationRequest;
@@ -300,16 +361,18 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
       body.defaultDesignSystemId !== undefined ||
       body.setupCompleted !== undefined;
     if (hasBrandingPatch || (typeof body.name === 'string' && body.name.trim())) {
-      res.json({
-        organization: await updateOrganization(directory(), orgId, {
-          ...(typeof body.name === 'string' ? { name: body.name } : {}),
-          ...(body.websiteUrl !== undefined ? { websiteUrl: body.websiteUrl } : {}),
-          ...(body.defaultDesignSystemId !== undefined
-            ? { defaultDesignSystemId: body.defaultDesignSystemId }
-            : {}),
-          ...(body.setupCompleted !== undefined ? { setupCompleted: body.setupCompleted } : {}),
-        }),
+      const organization = await updateOrganization(directory(), orgId, {
+        ...(typeof body.name === 'string' ? { name: body.name } : {}),
+        ...(body.websiteUrl !== undefined ? { websiteUrl: body.websiteUrl } : {}),
+        ...(body.defaultDesignSystemId !== undefined
+          ? { defaultDesignSystemId: body.defaultDesignSystemId }
+          : {}),
+        ...(body.setupCompleted !== undefined ? { setupCompleted: body.setupCompleted } : {}),
       });
+      if (body.websiteUrl !== undefined && organization.websiteUrl) {
+        void resolveOrgMark(orgMarkInput(organization)).catch(() => undefined);
+      }
+      res.json({ organization });
       return;
     }
     const name = typeof body.name === 'string' ? body.name : '';
@@ -697,19 +760,73 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
   // Deliberately outside /api and without any auth: the unguessable token is
   // the entire credential. Registered before the SPA fallback so it wins.
   //
-  // Link-shared apps are served through the locked-down preview headers,
-  // which set `connect-src 'none'`. That is the security line: an anonymous
-  // viewer gets the interface, never a channel into organization data.
+  // Static pages keep the locked-down preview headers (`connect-src 'none'`).
+  // Data-connected apps (write scopes) are wrapped in a trusted host that
+  // proxies appends to POST /s/:token/data. The untrusted iframe still has
+  // no network of its own, so a logged-in member's cookies never reach the
+  // app and cannot be used to read organization data.
+
+  function isHtmlAppPath(filePath: string): boolean {
+    const lower = filePath.toLowerCase();
+    return lower.endsWith('.html') || lower.endsWith('.htm');
+  }
+
+  app.options('/s/:token/data', (_req, res) => {
+    setPublicIngestCors(res);
+    res.status(204).end();
+  });
+
+  app.post('/s/:token/data', handle(async (req, res) => {
+    setPublicIngestCors(res);
+    const token = param(req, 'token');
+    if (!allowPublicIngest(token)) {
+      throw new WorkspaceDataError('RATE_LIMITED', 429, 'too many submissions; try again shortly');
+    }
+    const route = await resolveShareRoute(directory(), token);
+    if (!route) {
+      throw new WorkspaceDataError('APP_SHARE_INVALID', 404, 'this share link is not valid');
+    }
+    const appsDb = manager.workspaceExecutor(route.orgId);
+    const { app: sharedApp, share } = await resolveShareToken(appsDb, route.orgId, token);
+    const recordsDb = manager.openWorkspace(route.orgId);
+    const { response, created } = handlePublicAppBridge(recordsDb, sharedApp, share.id, req.body);
+    if (created) {
+      events?.emitRecordChange({
+        workspaceId: route.orgId,
+        tableId: created.tableId,
+        recordId: created.recordId,
+        op: 'create',
+      });
+    }
+    res.json(response);
+  }));
+
   app.get('/s/:token', handle(async (req, res) => {
     const token = param(req, 'token');
     const route = await resolveShareRoute(directory(), token);
     if (!route) {
       throw new WorkspaceDataError('APP_SHARE_INVALID', 404, 'this share link is not valid');
     }
-    const db = manager.workspaceExecutor(route.orgId);
-    const { app: sharedApp, share } = await resolveShareToken(db, route.orgId, token);
-    await recordShareView(db, share.id);
-    await recordAppOpen(db, sharedApp.id);
+    const appsDb = manager.workspaceExecutor(route.orgId);
+    const { app: sharedApp, share } = await resolveShareToken(appsDb, route.orgId, token);
+    await recordShareView(appsDb, share.id);
+    await recordAppOpen(appsDb, sharedApp.id);
+
+    if (appRequestsTableWrites(sharedApp.dataScopes ?? []) && isHtmlAppPath(sharedApp.filePath)) {
+      const html = loadAppHtml
+        ? await loadAppHtml({ projectId: sharedApp.projectId, filePath: sharedApp.filePath })
+        : null;
+      if (html == null) {
+        throw new WorkspaceDataError('FILE_NOT_FOUND', 404, 'file not found');
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', PUBLIC_APP_HOST_CSP);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(renderPublicAppHost({ appHtml: html, title: sharedApp.name }));
+      return;
+    }
+
     await serveAppFile(req, res, {
       projectId: sharedApp.projectId,
       filePath: sharedApp.filePath,

@@ -449,6 +449,13 @@ describe('agent-driven brand extraction engine', () => {
     expect(seeded).toContain('"status":"extracting"');
     expect(seeded).toContain('acme.com');
 
+    const brandJsonPath = path.join(projectsRoot, result.projectId, 'brand.json');
+    expect(existsSync(brandJsonPath)).toBe(true);
+    expect(JSON.parse(readFileSync(brandJsonPath, 'utf8'))).toMatchObject({
+      name: 'acme.com',
+      sourceUrl: 'https://acme.com/',
+    });
+
     const tabs = listTabs(db, result.projectId) as {
       active: string | null;
       browserTabs?: Array<{ url?: string }>;

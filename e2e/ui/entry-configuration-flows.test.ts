@@ -1,5 +1,5 @@
 import { expect, test } from '@/playwright/suite';
-import { ensureRailOpen, openNewProjectModal } from '@/playwright/rail';
+import { clickEntryNav, openNewProjectModal } from '@/playwright/rail';
 import { expectStableCount } from '@/playwright/assertions';
 import { routeAgents } from '@/playwright/mock-factory';
 import { T } from '@/timeouts';
@@ -395,8 +395,7 @@ async function gotoEntryHome(page: Page) {
 }
 
 async function openIntegrationsConnectors(page: Page): Promise<Locator> {
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-integrations').click();
+  await clickEntryNav(page, 'entry-nav-integrations');
   await expect(page).toHaveURL(/\/integrations$/);
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
   await page.getByTestId('integrations-tab-connectors').click();

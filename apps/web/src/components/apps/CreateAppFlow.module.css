@@ -189,6 +189,23 @@
   cursor: pointer;
 }
 
+.consent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid rgba(76, 124, 243, 0.45);
+  border-radius: 12px;
+  background: rgba(76, 124, 243, 0.08);
+}
+
+.consentAsk {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
 .advancedToggle {
   align-self: flex-start;
   border: none;

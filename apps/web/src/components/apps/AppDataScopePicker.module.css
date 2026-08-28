@@ -1,0 +1,86 @@
+.fieldset {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.fieldset legend {
+  padding: 0 4px;
+  font-size: 0.78rem;
+}
+
+.hint {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.error {
+  margin: 0 0 8px;
+  color: var(--danger, #c44);
+  font-size: 0.82rem;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.publicMark {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(76, 124, 243, 0.16);
+}
+
+.modes {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.mode,
+.modeActive {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 0.75rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.modeActive {
+  border-color: rgba(76, 124, 243, 0.55);
+  background: rgba(76, 124, 243, 0.16);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 0.88rem;
+  cursor: pointer;
+}

@@ -791,7 +791,7 @@ export function LibrarySection({ active, onOpenProject }: Props) {
       if (!files.length) return;
       setHomeComposerAssetSeed({ files });
       setSelectedIds(new Set());
-      navigate({ kind: 'home', view: 'home' });
+      navigate({ kind: 'home', view: 'workspace' });
     } finally {
       setDsBusy(false);
     }

@@ -9,6 +9,7 @@ import {
   trackSettingsConnectorAuthResult,
 } from '../analytics/events';
 import { ConnectorSection } from './SettingsDialog';
+import { PhoneChannelsPanel } from './phone/PhoneChannelsPanel';
 import { Icon } from './Icon';
 import { McpClientSection } from './McpClientSection';
 import { SkillsSection } from './SkillsSection';
@@ -27,11 +28,8 @@ interface Props {
   onSkillsChanged?: (affectedSkillId?: string) => void;
 }
 
-const INTEGRATION_TABS: ReadonlyArray<{
-  id: IntegrationTab;
-}> = [
+const ADVANCED_TABS: ReadonlyArray<{ id: Exclude<IntegrationTab, 'connectors'> }> = [
   { id: 'mcp' },
-  { id: 'connectors' },
   { id: 'skills' },
   { id: 'use-everywhere' },
 ];
@@ -45,7 +43,7 @@ function integrationTabToTrackingElement(
 
 export function IntegrationsView({
   config,
-  initialTab = 'mcp',
+  initialTab = 'connectors',
   composioConfigLoading = false,
   onConfigPersist,
   onPersistComposioKey,
@@ -90,6 +88,15 @@ export function IntegrationsView({
   const liveDaemonUrl =
     typeof window !== 'undefined' ? window.location.origin : undefined;
 
+  function selectTab(id: IntegrationTab) {
+    trackIntegrationsTabClick(analytics.track, {
+      page_name: 'integrations',
+      area: 'integrations_tab',
+      element: integrationTabToTrackingElement(id),
+    });
+    setActiveTab(id);
+  }
+
   return (
     <section className="integrations-view" aria-labelledby="integrations-title">
       <header className="integrations-view__hero">
@@ -108,41 +115,21 @@ export function IntegrationsView({
         </div>
       </header>
 
-      <nav
-        className="integrations-view__tabs"
-        role="tablist"
-        aria-label={t('integrations.areasAria')}
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === 'connectors'}
+        className={`integrations-view__accounts${activeTab === 'connectors' ? ' is-active' : ''}`}
+        onClick={() => selectTab('connectors')}
+        data-testid="integrations-tab-connectors"
       >
-        {INTEGRATION_TABS.map((tab) => {
-          const active = tab.id === activeTab;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              className={`integrations-view__tab${active ? ' is-active' : ''}`}
-              onClick={() => {
-                trackIntegrationsTabClick(analytics.track, {
-                  page_name: 'integrations',
-                  area: 'integrations_tab',
-                  element: integrationTabToTrackingElement(tab.id),
-                });
-                setActiveTab(tab.id);
-              }}
-              data-testid={`integrations-tab-${tab.id}`}
-            >
-              <span className="integrations-view__tab-label">{integrationTabLabel(tab.id, t)}</span>
-              <span className="integrations-view__tab-hint">{integrationTabHint(tab.id, t)}</span>
-            </button>
-          );
-        })}
-      </nav>
+        <span className="integrations-view__tab-label">{t('entry.tabConnectors')}</span>
+        <span className="integrations-view__tab-hint">{t('integrations.tabHint.connectors')}</span>
+      </button>
 
-      <div className="integrations-view__panel">
-        {activeTab === 'mcp' ? <McpClientSection /> : null}
-
-        {activeTab === 'connectors' ? (
+      {activeTab === 'connectors' ? (
+        <div className="integrations-view__panel">
+          <PhoneChannelsPanel />
           <ConnectorSection
             cfg={localConfig}
             setCfg={setLocalConfig}
@@ -166,43 +153,74 @@ export function IntegrationsView({
               })
             }
           />
-        ) : null}
+        </div>
+      ) : null}
 
-        {activeTab === 'skills' ? (
-          <SkillsSection
-            cfg={localConfig}
-            setCfg={updateLocalConfig}
-            onSkillsRefresh={onSkillsRefresh}
-            onSkillsChanged={onSkillsChanged}
-          />
-        ) : null}
+      <section className="integrations-view__advanced">
+        <h2 className="integrations-view__advanced-title">{t('integrations.advanced')}</h2>
+        <nav
+          className="integrations-view__tabs"
+          role="tablist"
+          aria-label={t('integrations.advancedAria')}
+        >
+          {ADVANCED_TABS.map((tab) => {
+            const active = tab.id === activeTab;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`integrations-view__tab${active ? ' is-active' : ''}`}
+                onClick={() => selectTab(tab.id)}
+                data-testid={`integrations-tab-${tab.id}`}
+              >
+                <span className="integrations-view__tab-label">{integrationTabLabel(tab.id, t)}</span>
+                <span className="integrations-view__tab-hint">{integrationTabHint(tab.id, t)}</span>
+              </button>
+            );
+          })}
+        </nav>
 
-        {activeTab === 'use-everywhere' ? (
-          <div className="integrations-view__use-everywhere">
-            <UseEverywhereGuidePanel
-              onOpenSettings={() => setActiveTab('mcp')}
-              {...(liveDaemonUrl ? { daemonUrl: liveDaemonUrl } : {})}
-            />
+        {activeTab !== 'connectors' ? (
+          <div className="integrations-view__panel">
+            {activeTab === 'mcp' ? <McpClientSection /> : null}
+
+            {activeTab === 'skills' ? (
+              <SkillsSection
+                cfg={localConfig}
+                setCfg={updateLocalConfig}
+                onSkillsRefresh={onSkillsRefresh}
+                onSkillsChanged={onSkillsChanged}
+              />
+            ) : null}
+
+            {activeTab === 'use-everywhere' ? (
+              <div className="integrations-view__use-everywhere">
+                <UseEverywhereGuidePanel
+                  onOpenSettings={() => setActiveTab('mcp')}
+                  {...(liveDaemonUrl ? { daemonUrl: liveDaemonUrl } : {})}
+                />
+              </div>
+            ) : null}
           </div>
         ) : null}
-      </div>
+      </section>
     </section>
   );
 }
 
-function integrationTabLabel(id: IntegrationTab, t: ReturnType<typeof useT>): string {
+function integrationTabLabel(id: Exclude<IntegrationTab, 'connectors'>, t: ReturnType<typeof useT>): string {
   switch (id) {
     case 'mcp': return t('integrations.tabLabel.mcp');
-    case 'connectors': return t('entry.tabConnectors');
     case 'skills': return t('integrations.tabLabel.skills');
     case 'use-everywhere': return t('entry.useEverywhereTitle');
   }
 }
 
-function integrationTabHint(id: IntegrationTab, t: ReturnType<typeof useT>): string {
+function integrationTabHint(id: Exclude<IntegrationTab, 'connectors'>, t: ReturnType<typeof useT>): string {
   switch (id) {
     case 'mcp': return t('integrations.tabHint.mcp');
-    case 'connectors': return t('integrations.tabHint.connectors');
     case 'skills': return t('settings.skillsHint');
     case 'use-everywhere': return t('integrations.tabHint.useEverywhere');
   }

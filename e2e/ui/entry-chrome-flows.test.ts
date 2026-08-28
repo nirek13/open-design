@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@/playwright/suite';
-import { ensureRailOpen } from '@/playwright/rail';
+import { clickEntryNav, ensureRailOpen } from '@/playwright/rail';
 import type { Locator, Page, Request } from '@playwright/test';
 import { applyStandardMocks, fulfillAgentsRoute, routeSuccessfulRuns, STORAGE_KEY } from '@/playwright/mock-factory';
 import { T } from '@/timeouts';
@@ -138,10 +138,6 @@ test('[P0] @critical entry chrome exposes the primary home creation surface and 
   await expect(page.getByTestId('workspace-tabs-trailing')).toBeVisible();
   await expect(page.getByTestId('entry-settings-menu-trigger')).toBeVisible();
   await expect(page.getByTestId('recent-projects-strip')).toHaveCount(0);
-  // The nav rail is collapsed by default — only the topbar toggle shows.
-  // Expand it to assert the rail and its logo are reachable.
-  await expect(page.getByTestId('entry-rail-toggle')).toBeVisible();
-  await page.getByTestId('entry-rail-toggle').click();
   await expect(page.locator('.entry-nav-rail')).toBeVisible();
   await expect(page.getByTestId('entry-nav-logo')).toBeVisible();
   await expect(page.locator('.entry-brand')).toHaveCount(0);
@@ -319,12 +315,11 @@ test('[P1] entry top navigation matches the current home tab structure', async (
   await expect(page.getByTestId('entry-nav-home')).toHaveAttribute('aria-current', 'page');
   await expect(page.getByTestId('entry-nav-new-project')).toBeVisible();
   await expect(page.getByTestId('entry-nav-projects')).toBeVisible();
-  await expect(page.getByTestId('entry-nav-tasks')).toBeVisible();
-  await expect(page.getByTestId('entry-nav-design-systems')).toBeVisible();
-  await expect(page.locator('.entry-nav-rail__group').getByTestId('entry-nav-plugins')).toBeVisible();
-  await expect(page.locator('.entry-nav-rail__group').getByTestId('entry-nav-integrations')).toBeVisible();
-  await expect(page.locator('.entry-nav-rail__footer').getByTestId('entry-nav-plugins')).toHaveCount(0);
-  await expect(page.locator('.entry-nav-rail__footer').getByTestId('entry-nav-integrations')).toHaveCount(0);
+  await expect(page.getByTestId('entry-nav-pages')).toBeVisible();
+  await expect(page.getByTestId('entry-nav-team')).toBeVisible();
+  await expect(page.getByTestId('entry-nav-apps')).toBeVisible();
+  await expect(page.getByTestId('entry-nav-dock').getByTestId('entry-nav-plugins')).toHaveCount(0);
+  await expect(page.getByTestId('entry-nav-dock').getByTestId('entry-nav-integrations')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-template-picker')).toBeVisible();
   await expect(page.getByTestId('home-hero-template-section')).toBeVisible();
   await expect(page.getByTestId('home-hero-type-tabs')).toBeVisible();
@@ -405,11 +400,9 @@ test('[P1] design systems page is reachable from entry nav and supports search, 
   });
 
   await gotoEntryHome(page);
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-design-systems').click();
+  await clickEntryNav(page, 'entry-nav-design-systems');
 
   await expect(page).toHaveURL(/\/design-systems$/);
-  await expect(page.getByTestId('entry-nav-design-systems')).toHaveAttribute('aria-current', 'page');
   await expect(page.getByRole('heading', { name: 'Design systems' })).toBeVisible();
   await expect(page.getByTestId('design-systems-tab')).toBeVisible();
   await page.getByRole('tab', { name: 'Official presets' }).click();
@@ -493,8 +486,7 @@ test('[P1] disabled design systems are filtered from entry creation surfaces', a
   await page.keyboard.press('Escape');
   await expect(modal).toHaveCount(0);
 
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-design-systems').click();
+  await clickEntryNav(page, 'entry-nav-design-systems');
   await page.getByRole('tab', { name: 'Official presets' }).click();
   await expect(page.getByTestId('design-system-card-agentic')).toBeVisible();
   await expect(page.getByTestId('design-system-card-airbnb')).toHaveCount(0);
@@ -915,7 +907,7 @@ test('[P2] entry help menu exposes community links and Integrations hosts Use ev
     'https://discord.gg/mHAjSMV6gz',
   );
 
-  await page.getByTestId('entry-nav-integrations').click();
+  await clickEntryNav(page, 'entry-nav-integrations');
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
   await page.getByTestId('integrations-tab-use-everywhere').click();
   await expect(page.getByTestId('integrations-tab-use-everywhere')).toHaveAttribute(
@@ -964,8 +956,7 @@ test('[P1] Use everywhere guide uses daemon MCP install info and copies an agent
   });
 
   await gotoEntryHome(page);
-  await ensureRailOpen(page);
-  await page.getByTestId('entry-nav-integrations').click();
+  await clickEntryNav(page, 'entry-nav-integrations');
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
   await page.getByTestId('integrations-tab-use-everywhere').click();
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
@@ -1035,8 +1026,7 @@ test('[P1] entry execution pill remains available across secondary entry pages',
   ];
 
   for (const destination of destinations) {
-    await ensureRailOpen(page);
-    await page.getByTestId(destination.nav).click();
+    await clickEntryNav(page, destination.nav);
     await expect(
       page.locator('h1').filter({ hasText: destination.heading }).first(),
     ).toBeVisible();
@@ -1066,7 +1056,6 @@ test('[P1] home starters can browse registry and use a starter from Home', async
   await expect(home.getByTestId('plugins-home-browse-registry')).toBeVisible();
   await home.getByTestId('plugins-home-browse-registry').click();
   await expect(page).toHaveURL(/\/plugins$/);
-  await expect(page.getByTestId('entry-nav-plugins')).toHaveAttribute('aria-current', 'page');
   await expect(page.locator('h1').filter({ hasText: 'Plugins' })).toBeVisible();
   await expect(page.getByTestId('plugins-tab-installed')).toBeVisible();
   await expect(page.getByTestId('plugins-tab-available')).toBeVisible();
@@ -2415,28 +2404,14 @@ test('[P0] @critical home hero attachment-only submit uploads the file and sends
   await expect(page.locator('.user-attachments').getByText('reference.txt', { exact: true })).toBeVisible();
 });
 
-test('[P1] collapsed rail stays out of the keyboard tab order on the home view', async ({ page }) => {
+test('[P1] sidebar stays keyboard-reachable on the home view', async ({ page }) => {
   await gotoEntryHome(page);
 
-  // Collapsed by default: the rail must be inert so its still-mounted logo and
-  // nav buttons cannot receive keyboard focus before the visible toggle/hero.
   const rail = page.locator('.entry-nav-rail');
-  await expect(rail).toHaveAttribute('inert', '');
-
-  // Tabbing from the top of the document must never land inside the rail.
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  for (let i = 0; i < 6; i++) {
-    await page.keyboard.press('Tab');
-    const inRail = await page.evaluate(
-      () => !!document.activeElement?.closest('.entry-nav-rail'),
-    );
-    expect(inRail).toBe(false);
-  }
-
-  // Once expanded the rail becomes interactive again and drops inert.
-  await ensureRailOpen(page);
   await expect(rail).not.toHaveAttribute('inert', '');
   await expect(page.getByTestId('entry-nav-new-project')).toBeVisible();
+  await page.getByTestId('entry-nav-new-project').focus();
+  await expect(page.getByTestId('entry-nav-new-project')).toBeFocused();
 });
 
 test('[P1] collapsed new-user templates gallery stays out of the keyboard tab order', async ({ page }) => {
@@ -2470,11 +2445,7 @@ test('[P1] collapsed new-user templates gallery stays out of the keyboard tab or
   await expect(body).not.toHaveAttribute('inert', '');
 });
 
-test('[P1] rail can be collapsed again on coarse-pointer / non-hover devices', async ({ page }) => {
-  // Emulate a touch device where `(hover: none)` matches: the collapse button
-  // can't be revealed by hover and the topbar toggle is display:none once the
-  // rail docks, so the rail must stay foldable through the always-visible
-  // collapse control. emulateMedia() doesn't cover `hover`, so use CDP.
+test('[P1] Places catalog can close from the org mark on coarse-pointer devices', async ({ page }) => {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setEmulatedMedia', {
     features: [
@@ -2486,13 +2457,11 @@ test('[P1] rail can be collapsed again on coarse-pointer / non-hover devices', a
   await gotoEntryHome(page);
   await ensureRailOpen(page);
 
-  // Without a hover, the collapse control must still be visible and tappable,
-  // and tapping it must actually fold the rail back.
-  const collapse = page.getByTestId('entry-nav-collapse');
-  await collapse.focus();
-  await expect(collapse).toBeVisible();
-  await collapse.click();
-  await expect(page.locator('.entry')).not.toHaveClass(/entry--rail-open/);
+  const compass = page.getByTestId('entry-nav-logo');
+  await compass.click();
+  await expect(page.getByTestId('entry-nav-atlas')).toBeVisible();
+  await compass.click();
+  await expect(page.getByTestId('entry-nav-atlas')).toHaveCount(0);
 });
 
 async function gotoEntryHome(page: Page) {

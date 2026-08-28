@@ -1,18 +1,8 @@
-// Lovart-style left navigation rail for the entry view.
+// Slim left sidebar: icon-first, hover to read labels, yours to arrange.
 //
-// Renders a narrow icon-only column. The first slot is the brand logo,
-// followed by the primary destinations users expect to keep in reach:
-// New project, home, projects, brand kit, automations, plugins,
-// and integrations. Footer controls are reserved for lower-frequency
-// support affordances such as the help launcher.
-// Language switching and other account-scoped controls live behind the
-// floating settings cog in the top-right corner of the main content.
-//
-// Destination icons behave like a macOS Dock: click to open, drag to
-// rearrange, drag off or right-click to remove, and add shortcuts back
-// from the dock plus menu. When the stack is taller than the rail, the
-// dock scrolls as a cylinder — icons tilt and fade at the rim so every
-// app stays reachable without a scrollbar.
+// Destinations you pin live in a narrow rail that does not cover the page.
+// Everything else stays in Places (the org mark). Add apps or sections from
+// the plus menu; drag to reorder; right-click to remove.
 
 import {
   useCallback,
@@ -25,19 +15,19 @@ import {
   type ReactNode,
 } from 'react';
 import { EntryHelpMenu } from './EntryHelpMenu';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
 import { isMacPlatform } from '../utils/platform';
 import { useT } from '../i18n';
-import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
 import { DATABASE_UI_VISIBLE } from '../features/databaseUi';
 import type { OrgAppWithOrgName } from '@open-design/contracts';
-import { fetchAllOrgApps, recordOrgAppOpen } from '../providers/registry';
+import { fetchAllOrgApps, recordOrgAppOpen, updateOrgApp } from '../providers/registry';
+import { useOptionalOrg } from '../org/OrgContext';
+import { OrgMark } from './org/OrgMark';
 import { useOptionalRunningApp } from './apps/RunningAppContext';
 import { isErpEntryView } from './erp/ErpShell';
 import {
-  dockMagnifyScale,
-  dockWheelPose,
   ENTRY_NAV_DRAG_THRESHOLD_PX,
+  ENTRY_NAV_ISLANDS,
   hideEntryNavItem,
   isPinnedEntryNavId,
   moveEntryNavItem,
@@ -50,6 +40,7 @@ import {
   writeEntryNavHidden,
   writeEntryNavOrder,
 } from './entry-nav-order';
+import styles from './EntryNavRail.module.css';
 
 export type EntryView =
   | 'home'
@@ -88,57 +79,62 @@ interface Props {
   onViewChange: (view: EntryView) => void;
   onNewProject: () => void;
   newProjectDisabled?: boolean;
-  /** When false the rail is collapsed (hidden off-canvas) on the entry view. */
+  /** Kept so existing shells/tests compile; the sidebar is always present. */
   open: boolean;
-  /** Collapse the rail — called after a destination is chosen or the user dismisses it. */
   onClose: () => void;
 }
 
-interface NavButtonProps {
-  active?: boolean;
-  ariaLabel: string;
-  tooltip: string;
-  onClick: () => void;
-  disabled?: boolean;
-  testId?: string;
-  fixed?: boolean;
-  onKeyDown?: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
-  children: ReactNode;
+type LabelKey =
+  | 'entry.navSearch'
+  | 'entry.navWorkspace'
+  | 'entry.navErp'
+  | 'entry.navTeam'
+  | 'entry.navPages'
+  | 'entry.navCalendar'
+  | 'entry.navMail'
+  | 'entry.navSlack'
+  | 'entry.navDev'
+  | 'entry.navProjects'
+  | 'entry.navDesignSystems'
+  | 'entry.navLibrary'
+  | 'entry.navTasks'
+  | 'entry.navPlugins'
+  | 'entry.navApps'
+  | 'entry.navDatabase'
+  | 'entry.navIntegrations'
+  | 'entry.navOrganization';
+
+interface StaticDest {
+  id: string;
+  view: EntryView;
+  icon: IconName;
+  labelKey: LabelKey;
+  testId: string;
+  isActive: (view: EntryView) => boolean;
 }
 
-function NavButton({
-  active,
-  ariaLabel,
-  tooltip,
-  onClick,
-  disabled,
-  testId,
-  fixed = false,
-  onKeyDown,
-  children,
-}: NavButtonProps) {
-  return (
-    <button
-      type="button"
-      className={`entry-nav-rail__btn${active ? ' is-active' : ''}${fixed ? ' entry-nav-rail__btn--fixed' : ''}`}
-      onClick={onClick}
-      onKeyDown={onKeyDown}
-      disabled={disabled}
-      aria-label={ariaLabel}
-      aria-current={active ? 'page' : undefined}
-      data-tooltip={tooltip}
-      {...(testId ? { 'data-testid': testId } : {})}
-    >
-      {children}
-    </button>
-  );
-}
+const STATIC_DESTINATIONS: readonly StaticDest[] = [
+  { id: 'search', view: 'search', icon: 'search', labelKey: 'entry.navSearch', testId: 'entry-nav-search', isActive: (v) => v === 'search' },
+  { id: 'erp', view: 'books', icon: 'grid', labelKey: 'entry.navErp', testId: 'entry-nav-erp', isActive: isErpEntryView },
+  { id: 'team', view: 'team', icon: 'message-circle', labelKey: 'entry.navTeam', testId: 'entry-nav-team', isActive: (v) => v === 'team' },
+  { id: 'pages', view: 'pages', icon: 'file-text', labelKey: 'entry.navPages', testId: 'entry-nav-pages', isActive: (v) => v === 'pages' },
+  { id: 'calendar', view: 'calendar', icon: 'history', labelKey: 'entry.navCalendar', testId: 'entry-nav-calendar', isActive: (v) => v === 'calendar' },
+  { id: 'mail', view: 'mail', icon: 'mail', labelKey: 'entry.navMail', testId: 'entry-nav-mail', isActive: (v) => v === 'mail' },
+  { id: 'slack', view: 'slack', icon: 'hash', labelKey: 'entry.navSlack', testId: 'entry-nav-slack', isActive: (v) => v === 'slack' },
+  { id: 'dev', view: 'dev', icon: 'github', labelKey: 'entry.navDev', testId: 'entry-nav-dev', isActive: (v) => v === 'dev' },
+  { id: 'home', view: 'workspace', icon: 'home', labelKey: 'entry.navWorkspace', testId: 'entry-nav-home', isActive: (v) => v === 'workspace' || v === 'home' },
+  { id: 'projects', view: 'projects', icon: 'folder', labelKey: 'entry.navProjects', testId: 'entry-nav-projects', isActive: (v) => v === 'projects' },
+  { id: 'design-systems', view: 'design-systems', icon: 'palette', labelKey: 'entry.navDesignSystems', testId: 'entry-nav-design-systems', isActive: (v) => v === 'design-systems' },
+  { id: 'library', view: 'library', icon: 'layers-filled', labelKey: 'entry.navLibrary', testId: 'entry-nav-library', isActive: (v) => v === 'library' },
+  { id: 'tasks', view: 'tasks', icon: 'kanban', labelKey: 'entry.navTasks', testId: 'entry-nav-tasks', isActive: (v) => v === 'tasks' },
+  { id: 'plugins', view: 'plugins', icon: 'grid', labelKey: 'entry.navPlugins', testId: 'entry-nav-plugins', isActive: (v) => v === 'plugins' },
+  { id: 'apps', view: 'apps', icon: 'blocks', labelKey: 'entry.navApps', testId: 'entry-nav-apps', isActive: (v) => v === 'apps' },
+  { id: 'database', view: 'database', icon: 'layout', labelKey: 'entry.navDatabase', testId: 'entry-nav-database', isActive: (v) => v === 'database' },
+  { id: 'integrations', view: 'integrations', icon: 'link', labelKey: 'entry.navIntegrations', testId: 'entry-nav-integrations', isActive: (v) => v === 'integrations' },
+  { id: 'organization', view: 'organization', icon: 'orbit', labelKey: 'entry.navOrganization', testId: 'entry-nav-organization', isActive: (v) => v === 'organization' },
+];
 
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
+const STATIC_BY_ID = new Map(STATIC_DESTINATIONS.map((item) => [item.id, item]));
 
 function dockItemLabel(
   id: string,
@@ -149,27 +145,28 @@ function dockItemLabel(
     const appId = id.slice('pinned:'.length);
     return pinnedApps.find((app) => app.id === appId)?.name ?? appId;
   }
-  switch (id) {
-    case 'search': return t('entry.navSearch');
-    case 'erp': return t('entry.navErp');
-    case 'team': return t('entry.navTeam');
-    case 'pages': return t('entry.navPages');
-    case 'calendar': return t('entry.navCalendar');
-    case 'mail': return t('entry.navMail');
-    case 'slack': return t('entry.navSlack');
-    case 'dev': return t('entry.navDev');
-    case 'home': return t('entry.navHome');
-    case 'projects': return t('entry.navProjects');
-    case 'design-systems': return t('entry.navDesignSystems');
-    case 'library': return 'Library';
-    case 'tasks': return t('entry.navTasks');
-    case 'plugins': return t('entry.navPlugins');
-    case 'apps': return t('entry.navApps');
-    case 'database': return t('entry.navDatabase');
-    case 'integrations': return t('entry.navIntegrations');
-    case 'organization': return t('entry.navOrganization');
-    default: return id;
+  const dest = STATIC_BY_ID.get(id);
+  return dest ? t(dest.labelKey) : id;
+}
+
+function dropTargetFromPoint(
+  list: HTMLElement,
+  clientY: number,
+  order: readonly string[],
+  dragId: string,
+): { targetId: string; place: 'before' | 'after' } | null {
+  const slots = [...list.querySelectorAll<HTMLElement>('[data-nav-id]')];
+  if (slots.length === 0) return null;
+  for (const slot of slots) {
+    const id = slot.getAttribute('data-nav-id');
+    if (!id || id === dragId) continue;
+    const rect = slot.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) {
+      return { targetId: id, place: 'before' };
+    }
   }
+  const last = order.filter((id) => id !== dragId).at(-1);
+  return last ? { targetId: last, place: 'after' } : null;
 }
 
 export function EntryNavRail({
@@ -177,100 +174,102 @@ export function EntryNavRail({
   onViewChange,
   onNewProject,
   newProjectDisabled = false,
-  open,
-  onClose,
 }: Props) {
   const t = useT();
   const brandLabel = t('app.brand');
-  const homeLabel = t('entry.navHome');
-  const isHome = view === 'home';
-  const [pinnedApps, setPinnedApps] = useState<OrgAppWithOrgName[]>([]);
+  const activeOrg = useOptionalOrg()?.activeOrg ?? null;
+  const websiteUrl = activeOrg?.websiteUrl ?? null;
+  const logoLabel = websiteUrl && activeOrg?.name ? activeOrg.name : brandLabel;
+  const [allApps, setAllApps] = useState<OrgAppWithOrgName[]>([]);
   const runningApp = useOptionalRunningApp();
   const [order, setOrder] = useState<string[]>(() => readEntryNavOrder() ?? []);
   const [hidden, setHidden] = useState<string[]>(() => readEntryNavHidden());
   const [dragId, setDragId] = useState<string | null>(null);
-  const [drop, setDrop] = useState<{ id: string; place: 'before' | 'after' } | null>(null);
-  const [removing, setRemoving] = useState(false);
-  const [scales, setScales] = useState<Record<string, number>>({});
-  const [poses, setPoses] = useState<Record<string, { rotateX: number; opacity: number; z: number }>>({});
-  const [overflowing, setOverflowing] = useState(false);
-  const [tip, setTip] = useState<{ label: string; x: number; y: number; rtl?: boolean } | null>(null);
+  const [dropHint, setDropHint] = useState<{ targetId: string; place: 'before' | 'after' } | null>(null);
+  const [atlasOpen, setAtlasOpen] = useState(false);
+  const [atlasQuery, setAtlasQuery] = useState('');
+  const [tip, setTip] = useState<{ label: string; x: number; y: number } | null>(null);
   const [contextPos, setContextPos] = useState<{ x: number; y: number } | null>(null);
   const [contextId, setContextId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const slotRefs = useRef(new Map<string, HTMLElement>());
-  const dockRef = useRef<HTMLDivElement | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const dragStartRef = useRef<{ id: string; x: number; y: number; pointerId: number } | null>(null);
+  const atlasSearchRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const dragStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const draggingRef = useRef(false);
   const suppressClickRef = useRef(false);
-  const magFrameRef = useRef(0);
-  const hoverYRef = useRef<number | null>(null);
   const dockOrderRef = useRef<string[]>([]);
-  const dropRef = useRef<{ id: string; place: 'before' | 'after' } | null>(null);
-  const removingRef = useRef(false);
+  const dropHintRef = useRef<{ targetId: string; place: 'before' | 'after' } | null>(null);
   const hiddenRef = useRef(hidden);
-  const commitDockRef = useRef<(nextOrder: string[], nextHidden: string[]) => void>(() => {});
+  hiddenRef.current = hidden;
+  dropHintRef.current = dropHint;
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const apps = await fetchAllOrgApps({ pinnedOnly: true });
-        if (!cancelled) setPinnedApps(apps);
+        const apps = await fetchAllOrgApps();
+        if (!cancelled) setAllApps(Array.isArray(apps) ? apps : []);
       } catch {
-        if (!cancelled) setPinnedApps([]);
+        if (!cancelled) setAllApps([]);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [view, open]);
+  }, [view]);
 
   const selectView = (next: EntryView) => {
+    setAtlasOpen(false);
     onViewChange(next);
   };
 
   const openPinned = (app: OrgAppWithOrgName) => {
+    setAtlasOpen(false);
     void recordOrgAppOpen(app.orgId, app.id).catch(() => {});
     if (!runningApp) return;
-    void runningApp.openApp(app.orgId, app).catch(() => {
-      // openApp already surfaces openError on the provider; pinned clicks
-      // stay silent so the rail doesn't grow an error banner.
-    });
+    void runningApp.openApp(app.orgId, app).catch(() => {});
   };
+
+  const apps = Array.isArray(allApps) ? allApps : [];
 
   const availableIds = useMemo(() => {
     const ids: string[] = [
+      'home',
+      'pages',
+      'team',
+      'mail',
+      'calendar',
+      'slack',
+      'projects',
+      'apps',
       'search',
       'erp',
-      'team',
-      'pages',
-      'calendar',
-      'mail',
-      'slack',
       'dev',
-      'home',
-      'projects',
       'design-systems',
+      'library',
     ];
-    if (LIBRARY_UI_VISIBLE) ids.push('library');
-    ids.push('tasks', 'plugins', 'apps');
-    for (const app of pinnedApps) ids.push(pinnedEntryNavId(app.id));
+    ids.push('tasks', 'plugins');
+    for (const app of apps) ids.push(pinnedEntryNavId(app.id));
     if (DATABASE_UI_VISIBLE) ids.push('database');
     ids.push('integrations', 'organization');
     return ids;
-  }, [pinnedApps]);
+  }, [apps]);
+
+  const effectiveHidden = useMemo(() => {
+    const extra = apps
+      .filter((app) => !app.pinned)
+      .map((app) => pinnedEntryNavId(app.id))
+      .filter((id) => !order.includes(id) && !hidden.includes(id));
+    return extra.length === 0 ? hidden : [...hidden, ...extra];
+  }, [apps, hidden, order]);
 
   const dockOrder = useMemo(
-    () => normalizeEntryNavOrder(order, availableIds, hidden),
-    [availableIds, hidden, order],
+    () => normalizeEntryNavOrder(order, availableIds, effectiveHidden),
+    [availableIds, effectiveHidden, order],
   );
   dockOrderRef.current = dockOrder;
-  dropRef.current = drop;
-  removingRef.current = removing;
-  hiddenRef.current = hidden;
 
   const commitDock = useCallback((nextOrder: string[], nextHidden: string[]) => {
     setOrder(nextOrder);
@@ -278,7 +277,25 @@ export function EntryNavRail({
     writeEntryNavOrder(nextOrder);
     writeEntryNavHidden(nextHidden);
   }, []);
-  commitDockRef.current = commitDock;
+
+  const addDockItem = (id: string) => {
+    const next = showEntryNavItem(dockOrder, hidden, id);
+    commitDock(next.order, next.hidden);
+    if (isPinnedEntryNavId(id)) {
+      const appId = id.slice('pinned:'.length);
+      const app = apps.find((item) => item.id === appId);
+      if (app && !app.pinned) {
+        void updateOrgApp(app.orgId, app.id, { pinned: true })
+          .then(() => {
+            setAllApps((rows) => rows.map((row) => (
+              row.id === app.id ? { ...row, pinned: true } : row
+            )));
+          })
+          .catch(() => {});
+      }
+    }
+    setAddOpen(false);
+  };
 
   const activate = (fn: () => void) => () => {
     if (suppressClickRef.current) {
@@ -292,137 +309,58 @@ export function EntryNavRail({
 
   const handleNudgeKey = (id: string, event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (!event.altKey) return;
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    const dir = event.key === 'ArrowUp' ? 'up' : event.key === 'ArrowDown' ? 'down' : null;
+    if (!dir) return;
     event.preventDefault();
-    commitDock(
-      nudgeEntryNavItem(dockOrderRef.current, id, event.key === 'ArrowUp' ? 'up' : 'down'),
-      hiddenRef.current,
-    );
+    commitDock(nudgeEntryNavItem(dockOrderRef.current, id, dir), hidden);
   };
 
-  const updateDockVisuals = (clientY: number | null = hoverYRef.current) => {
-    if (magFrameRef.current) cancelAnimationFrame(magFrameRef.current);
-    magFrameRef.current = requestAnimationFrame(() => {
-      const dock = dockRef.current;
-      const reduce = prefersReducedMotion();
-      const nextScales: Record<string, number> = {};
-      const nextPoses: Record<string, { rotateX: number; opacity: number; z: number }> = {};
-      let nextOverflowing = false;
-      if (dock) {
-        nextOverflowing = dock.scrollHeight > dock.clientHeight + 1;
-        const dockRect = dock.getBoundingClientRect();
-        const midY = dockRect.top + dockRect.height / 2;
-        const half = Math.max(1, dockRect.height / 2);
-        const hoverActive = clientY != null && !draggingRef.current && !reduce && !contextId && !addOpen;
-        for (const [id, el] of slotRefs.current) {
-          const rect = el.getBoundingClientRect();
-          const center = rect.top + rect.height / 2;
-          const pose = reduce
-            ? { rotateX: 0, scale: 1, opacity: 1, translateZ: 0 }
-            : dockWheelPose(center - midY, half, nextOverflowing);
-          nextPoses[id] = { rotateX: pose.rotateX, opacity: pose.opacity, z: pose.translateZ };
-          const hover = hoverActive && clientY != null
-            ? dockMagnifyScale(Math.abs(clientY - center))
-            : 1;
-          nextScales[id] = pose.scale * hover;
-        }
-      }
-      setOverflowing(nextOverflowing);
-      setScales((prev) => {
-        const keys = Object.keys(nextScales);
-        if (keys.length === 0 && Object.keys(prev).length === 0) return prev;
-        return nextScales;
-      });
-      setPoses(nextPoses);
-      if (clientY == null || draggingRef.current || contextId || addOpen) {
-        setTip(null);
-      }
-    });
-  };
-
-  const updateDockVisualsRef = useRef(updateDockVisuals);
-  updateDockVisualsRef.current = updateDockVisuals;
-
-  const onDockPointerDown = (id: string, event: ReactPointerEvent<HTMLDivElement>) => {
+  const onItemPointerDown = (id: string, event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
-    dragStartRef.current = { id, x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    dragStartRef.current = { id, x: event.clientX, y: event.clientY };
     draggingRef.current = false;
-    setContextId(null);
-    setAddOpen(false);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
       const start = dragStartRef.current;
       if (!start) return;
-      const dist = Math.hypot(event.clientX - start.x, event.clientY - start.y);
-      if (!draggingRef.current && dist < ENTRY_NAV_DRAG_THRESHOLD_PX) return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
       if (!draggingRef.current) {
+        if (Math.hypot(dx, dy) < ENTRY_NAV_DRAG_THRESHOLD_PX) return;
         draggingRef.current = true;
-        suppressClickRef.current = true;
         setDragId(start.id);
         setTip(null);
-        setScales({});
-        const slot = slotRefs.current.get(start.id);
-        try {
-          slot?.setPointerCapture(event.pointerId);
-        } catch {
-          // Capture is optional; document listeners still track the pointer.
-        }
+        setContextId(null);
+        setAddOpen(false);
       }
-      const hit = document.elementFromPoint(event.clientX, event.clientY)
-        ?.closest('[data-nav-id]');
-      const id = hit?.getAttribute('data-nav-id');
-      if (id && id !== start.id && hit) {
-        const hitRect = hit.getBoundingClientRect();
-        setRemoving(false);
-        setDrop({
-          id,
-          place: event.clientY < hitRect.top + hitRect.height / 2 ? 'before' : 'after',
-        });
-        return;
+      const list = listRef.current;
+      if (list) {
+        const next = dropTargetFromPoint(list, event.clientY, dockOrderRef.current, start.id);
+        dropHintRef.current = next;
+        setDropHint(next);
       }
-      const dock = dockRef.current;
-      if (dock) {
-        const rect = dock.getBoundingClientRect();
-        const edge = 28;
-        if (event.clientY < rect.top + edge) dock.scrollTop -= 12;
-        else if (event.clientY > rect.bottom - edge) dock.scrollTop += 12;
-        const pad = 36;
-        const outside = event.clientX > rect.right + pad
-          || event.clientX < rect.left - pad
-          || event.clientY < rect.top - pad
-          || event.clientY > rect.bottom + pad;
-        setRemoving(outside);
-      }
-      setDrop(null);
-      updateDockVisualsRef.current();
     };
-    const onUp = (event: PointerEvent) => {
+    const onUp = () => {
       const start = dragStartRef.current;
       if (!start) return;
       if (draggingRef.current) {
-        if (removingRef.current) {
-          const next = hideEntryNavItem(dockOrderRef.current, hiddenRef.current, start.id);
-          commitDockRef.current(next.order, next.hidden);
-        } else if (dropRef.current) {
-          commitDockRef.current(
-            moveEntryNavItem(dockOrderRef.current, start.id, dropRef.current.id, dropRef.current.place),
+        suppressClickRef.current = true;
+        const hint = dropHintRef.current;
+        if (hint) {
+          commitDock(
+            moveEntryNavItem(dockOrderRef.current, start.id, hint.targetId, hint.place),
             hiddenRef.current,
           );
         }
       }
-      try {
-        slotRefs.current.get(start.id)?.releasePointerCapture(event.pointerId);
-      } catch {
-        // Capture may already be released.
-      }
       dragStartRef.current = null;
       draggingRef.current = false;
+      dropHintRef.current = null;
       setDragId(null);
-      setDrop(null);
-      setRemoving(false);
-      updateDockVisualsRef.current();
+      setDropHint(null);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -432,15 +370,12 @@ export function EntryNavRail({
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
     };
-  }, []);
+  }, [commitDock]);
 
   useEffect(() => {
-    if (!contextId && !addOpen) return;
     const onDoc = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (contextId) {
-        const slot = slotRefs.current.get(contextId);
-        if (slot && target && slot.contains(target)) return;
         if (contextMenuRef.current && target && contextMenuRef.current.contains(target)) return;
         setContextId(null);
         setContextPos(null);
@@ -455,6 +390,7 @@ export function EntryNavRail({
         setContextId(null);
         setContextPos(null);
         setAddOpen(false);
+        setAtlasOpen(false);
       }
     };
     document.addEventListener('mousedown', onDoc);
@@ -465,498 +401,356 @@ export function EntryNavRail({
     };
   }, [addOpen, contextId]);
 
-  const renderDockButton = (id: string) => {
-    const nudge = (event: ReactKeyboardEvent<HTMLButtonElement>) => handleNudgeKey(id, event);
-    switch (id) {
-      case 'search':
-        return (
-          <NavButton
-            active={view === 'search'}
-            ariaLabel={t('entry.navSearch')}
-            tooltip={`${t('entry.navSearch')} (${isMacPlatform() ? '⌘ Space / ⌘ 1' : 'Ctrl+Space / Ctrl+1'})`}
-            onClick={activate(() => selectView('search'))}
-            testId="entry-nav-search"
-            onKeyDown={nudge}
-          >
-            <Icon name="search" size={18} />
-          </NavButton>
-        );
-      case 'erp':
-        return (
-          <NavButton
-            active={isErpEntryView(view)}
-            ariaLabel={t('entry.navErp')}
-            tooltip={t('entry.navErp')}
-            onClick={activate(() => selectView('workspace'))}
-            testId="entry-nav-erp"
-            onKeyDown={nudge}
-          >
-            <Icon name="grid" size={18} />
-          </NavButton>
-        );
-      case 'team':
-        return (
-          <NavButton
-            active={view === 'team'}
-            ariaLabel={t('entry.navTeam')}
-            tooltip={t('entry.navTeam')}
-            onClick={activate(() => selectView('team'))}
-            testId="entry-nav-team"
-            onKeyDown={nudge}
-          >
-            <Icon name="message-circle" size={18} />
-          </NavButton>
-        );
-      case 'pages':
-        return (
-          <NavButton
-            active={view === 'pages'}
-            ariaLabel={t('entry.navPages')}
-            tooltip={t('entry.navPages')}
-            onClick={activate(() => selectView('pages'))}
-            testId="entry-nav-pages"
-            onKeyDown={nudge}
-          >
-            <Icon name="file-text" size={18} />
-          </NavButton>
-        );
-      case 'calendar':
-        return (
-          <NavButton
-            active={view === 'calendar'}
-            ariaLabel={t('entry.navCalendar')}
-            tooltip={t('entry.navCalendar')}
-            onClick={activate(() => selectView('calendar'))}
-            testId="entry-nav-calendar"
-            onKeyDown={nudge}
-          >
-            <Icon name="history" size={18} />
-          </NavButton>
-        );
-      case 'mail':
-        return (
-          <NavButton
-            active={view === 'mail'}
-            ariaLabel={t('entry.navMail')}
-            tooltip={t('entry.navMail')}
-            onClick={activate(() => selectView('mail'))}
-            testId="entry-nav-mail"
-            onKeyDown={nudge}
-          >
-            <Icon name="mail" size={18} />
-          </NavButton>
-        );
-      case 'slack':
-        return (
-          <NavButton
-            active={view === 'slack'}
-            ariaLabel={t('entry.navSlack')}
-            tooltip={t('entry.navSlack')}
-            onClick={activate(() => selectView('slack'))}
-            testId="entry-nav-slack"
-            onKeyDown={nudge}
-          >
-            <Icon name="hash" size={18} />
-          </NavButton>
-        );
-      case 'dev':
-        return (
-          <NavButton
-            active={view === 'dev'}
-            ariaLabel={t('entry.navDev')}
-            tooltip={t('entry.navDev')}
-            onClick={activate(() => selectView('dev'))}
-            testId="entry-nav-dev"
-            onKeyDown={nudge}
-          >
-            <Icon name="github" size={18} />
-          </NavButton>
-        );
-      case 'home':
-        return (
-          <NavButton
-            active={isHome}
-            ariaLabel={homeLabel}
-            tooltip={homeLabel}
-            onClick={activate(() => selectView('home'))}
-            testId="entry-nav-home"
-            onKeyDown={nudge}
-          >
-            <Icon name="home" size={18} />
-          </NavButton>
-        );
-      case 'projects':
-        return (
-          <NavButton
-            active={view === 'projects'}
-            ariaLabel={t('entry.navProjects')}
-            tooltip={t('entry.navProjects')}
-            onClick={activate(() => selectView('projects'))}
-            testId="entry-nav-projects"
-            onKeyDown={nudge}
-          >
-            <Icon name="folder" size={18} />
-          </NavButton>
-        );
-      case 'design-systems':
-        return (
-          <NavButton
-            active={view === 'design-systems'}
-            ariaLabel={t('entry.navDesignSystems')}
-            tooltip={t('entry.navDesignSystems')}
-            onClick={activate(() => selectView('design-systems'))}
-            testId="entry-nav-design-systems"
-            onKeyDown={nudge}
-          >
-            <Icon name="palette" size={18} />
-          </NavButton>
-        );
-      case 'library':
-        return (
-          <NavButton
-            active={view === 'library'}
-            ariaLabel="Library"
-            tooltip="Library"
-            onClick={activate(() => selectView('library'))}
-            testId="entry-nav-library"
-            onKeyDown={nudge}
-          >
-            <Icon name="layers-filled" size={18} />
-          </NavButton>
-        );
-      case 'tasks':
-        return (
-          <NavButton
-            active={view === 'tasks'}
-            ariaLabel={t('entry.navTasks')}
-            tooltip={t('entry.navTasks')}
-            onClick={activate(() => selectView('tasks'))}
-            testId="entry-nav-tasks"
-            onKeyDown={nudge}
-          >
-            <Icon name="kanban" size={18} />
-          </NavButton>
-        );
-      case 'plugins':
-        return (
-          <NavButton
-            active={view === 'plugins'}
-            ariaLabel={t('entry.navPlugins')}
-            tooltip={t('entry.navPlugins')}
-            onClick={activate(() => selectView('plugins'))}
-            testId="entry-nav-plugins"
-            onKeyDown={nudge}
-          >
-            <Icon name="grid" size={18} />
-          </NavButton>
-        );
-      case 'apps':
-        return (
-          <NavButton
-            active={view === 'apps'}
-            ariaLabel={t('entry.navApps')}
-            tooltip={t('entry.navApps')}
-            onClick={activate(() => selectView('apps'))}
-            testId="entry-nav-apps"
-            onKeyDown={nudge}
-          >
-            <Icon name="blocks" size={18} />
-          </NavButton>
-        );
-      case 'database':
-        return (
-          <NavButton
-            active={view === 'database'}
-            ariaLabel={t('entry.navDatabase')}
-            tooltip={t('entry.navDatabase')}
-            onClick={activate(() => selectView('database'))}
-            testId="entry-nav-database"
-            onKeyDown={nudge}
-          >
-            <Icon name="layout" size={18} />
-          </NavButton>
-        );
-      case 'integrations':
-        return (
-          <NavButton
-            active={view === 'integrations'}
-            ariaLabel={t('entry.navIntegrations')}
-            tooltip={t('entry.navIntegrations')}
-            onClick={activate(() => selectView('integrations'))}
-            testId="entry-nav-integrations"
-            onKeyDown={nudge}
-          >
-            <Icon name="link" size={18} />
-          </NavButton>
-        );
-      case 'organization':
-        return (
-          <NavButton
-            active={view === 'organization'}
-            ariaLabel={t('entry.navOrganization')}
-            tooltip={t('entry.navOrganization')}
-            onClick={activate(() => selectView('organization'))}
-            testId="entry-nav-organization"
-            onKeyDown={nudge}
-          >
-            <Icon name="orbit" size={18} />
-          </NavButton>
-        );
-      default: {
-        if (!isPinnedEntryNavId(id)) return null;
-        const appId = id.slice('pinned:'.length);
-        const app = pinnedApps.find((item) => item.id === appId);
-        if (!app) return null;
-        return (
-          <NavButton
-            ariaLabel={app.name}
-            tooltip={app.name}
-            onClick={activate(() => openPinned(app))}
-            testId={`entry-nav-pinned-app-${app.id}`}
-            onKeyDown={nudge}
-          >
-            <span className="entry-nav-rail__app-pin" aria-hidden="true">
-              {(app.name.trim()[0] || 'A').toUpperCase()}
-            </span>
-          </NavButton>
-        );
-      }
+  useEffect(() => {
+    if (!atlasOpen) return;
+    atlasSearchRef.current?.focus();
+  }, [atlasOpen]);
+
+  const renderIcon = (id: string): ReactNode => {
+    if (isPinnedEntryNavId(id)) {
+      const appId = id.slice('pinned:'.length);
+      const app = apps.find((item) => item.id === appId);
+      const letter = (app?.name.trim()[0] || 'A').toUpperCase();
+      return <span className={styles.appPin} aria-hidden="true">{letter}</span>;
     }
+    const dest = STATIC_BY_ID.get(id);
+    if (!dest) return null;
+    return <Icon name={dest.icon} size={16} />;
   };
 
-  const railRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    const node = railRef.current;
-    if (!node) return;
-    if (open) {
-      node.removeAttribute('inert');
-    } else {
-      node.setAttribute('inert', '');
+  const activateDestination = (id: string) => {
+    if (isPinnedEntryNavId(id)) {
+      const appId = id.slice('pinned:'.length);
+      const app = apps.find((item) => item.id === appId);
+      if (app) openPinned(app);
+      return;
     }
-  }, [open]);
+    const dest = STATIC_BY_ID.get(id);
+    if (dest) selectView(dest.view);
+  };
 
-  useEffect(() => () => {
-    if (magFrameRef.current) cancelAnimationFrame(magFrameRef.current);
-  }, []);
+  const isActiveId = (id: string): boolean => {
+    const dest = STATIC_BY_ID.get(id);
+    return dest ? dest.isActive(view) : false;
+  };
 
-  useEffect(() => {
-    const dock = dockRef.current;
-    if (!dock) return;
-    const onScroll = () => {
-      setContextId(null);
-      setContextPos(null);
-      setTip(null);
-      updateDockVisualsRef.current();
-    };
-    dock.addEventListener('scroll', onScroll, { passive: true });
-    const observer = new ResizeObserver(() => updateDockVisualsRef.current());
-    observer.observe(dock);
-    updateDockVisualsRef.current();
-    return () => {
-      dock.removeEventListener('scroll', onScroll);
-      observer.disconnect();
-    };
-  }, [dockOrder, open]);
+  const renderNavButton = (id: string, variant: 'rail' | 'atlas') => {
+    const label = dockItemLabel(id, t, apps);
+    const dest = STATIC_BY_ID.get(id);
+    const testId = dest?.testId ?? (isPinnedEntryNavId(id)
+      ? `entry-nav-pinned-app-${id.slice('pinned:'.length)}`
+      : undefined);
+    const shortcut = id === 'search'
+      ? ` (${isMacPlatform() ? '⌘ Space / ⌘ 1' : 'Ctrl+Space / Ctrl+1'})`
+      : '';
+    const className = variant === 'rail'
+      ? `${styles.item}${isActiveId(id) ? ` ${styles.itemActive}` : ''}${dragId === id ? ` ${styles.itemDragging}` : ''}`
+      : [
+        styles.islandChip,
+        dockOrder.includes(id) ? styles.islandChipOnStage : '',
+        isActiveId(id) ? styles.islandChipActive : '',
+      ].filter(Boolean).join(' ');
+    return (
+      <button
+        type="button"
+        className={className}
+        onClick={activate(() => activateDestination(id))}
+        onKeyDown={(event) => handleNudgeKey(id, event)}
+        aria-label={label}
+        aria-current={isActiveId(id) ? 'page' : undefined}
+        title={`${label}${shortcut}`}
+        {...(testId && variant === 'rail' ? { 'data-testid': testId } : {})}
+        {...(variant === 'atlas' ? { 'data-testid': `entry-nav-atlas-${id}` } : {})}
+      >
+        <span className={styles.itemIcon}>{renderIcon(id)}</span>
+        <span className={styles.itemLabel}>{label}</span>
+      </button>
+    );
+  };
 
   const hiddenIds = availableIds.filter((id) => !dockOrder.includes(id));
+  const hiddenPlaces = hiddenIds.filter((id) => !isPinnedEntryNavId(id));
+  const hiddenApps = hiddenIds.filter((id) => isPinnedEntryNavId(id));
+  const atlasNeedle = atlasQuery.trim().toLowerCase();
+  const matchesAtlas = (id: string) => {
+    if (!atlasNeedle) return true;
+    return dockItemLabel(id, t, apps).toLowerCase().includes(atlasNeedle);
+  };
+  const expanded = Boolean(dragId);
 
   return (
     <nav
-      ref={railRef}
-      className={`entry-nav-rail${open ? ' is-open' : ''}${dragId ? ' is-reordering' : ''}${removing ? ' is-removing' : ''}`}
+      className={`entry-nav-rail is-open ${styles.rail}${expanded ? ` ${styles.railExpanded}` : ''}${atlasOpen ? ` ${styles.railCatalog}` : ''}${dragId ? ' is-reordering' : ''}`}
       aria-label="Primary"
-      aria-hidden={open ? undefined : true}
     >
-      <div className="entry-nav-rail__group">
-        <div className="entry-nav-rail__brand">
-          <button
-            type="button"
-            className="entry-nav-rail__logo"
-            onClick={() => selectView('home')}
-            aria-label={brandLabel}
-            data-testid="entry-nav-logo"
-          >
-            <span
-              className="entry-nav-rail__logo-img od-brand-glyph"
-              aria-hidden="true"
-            />
-          </button>
-          <button
-            type="button"
-            className="entry-nav-rail__collapse"
-            onClick={onClose}
-            aria-label={t('entry.navCollapse')}
-            title={t('entry.navCollapse')}
-            data-testid="entry-nav-collapse"
-          >
-            <Icon name="panel-left" size={20} />
-          </button>
-        </div>
-        <div className="entry-nav-rail__logo-divider" role="separator" aria-hidden="true" />
-        <NavButton
-          ariaLabel={t('entry.navNewProject')}
-          tooltip={t('entry.navNewProject')}
+      <div className={styles.head}>
+        <button
+          type="button"
+          className={`${styles.logo}${atlasOpen ? ` ${styles.logoOpen}` : ''}`}
+          onClick={() => {
+            setAddOpen(false);
+            setContextId(null);
+            setAtlasOpen((openAtlas) => !openAtlas);
+          }}
+          aria-label={`${logoLabel}. ${t('entry.navOpenAtlas')}`}
+          aria-expanded={atlasOpen}
+          data-testid="entry-nav-logo"
+        >
+          <OrgMark
+            orgId={activeOrg?.id}
+            markVersion={activeOrg?.updatedAt}
+            websiteUrl={websiteUrl}
+            className={styles.logoMark}
+            size={32}
+          />
+        </button>
+        <button
+          type="button"
+          className={styles.tool}
           onClick={onNewProject}
           disabled={newProjectDisabled}
-          testId="entry-nav-new-project"
-          fixed
+          aria-label={t('entry.navNewProject')}
+          title={t('entry.navNewProject')}
+          data-testid="entry-nav-new-project"
         >
-          <Icon name="plus" size={18} />
-        </NavButton>
-        <div
-          ref={dockRef}
-          className={`entry-nav-rail__dock${overflowing ? ' is-overflowing' : ''}`}
-          data-testid="entry-nav-dock"
-          aria-label={t('entry.navDock')}
-          title={t('entry.navDockHint')}
-          onPointerMove={(event) => {
-            if (dragStartRef.current) return;
-            hoverYRef.current = event.clientY;
-            updateDockVisuals(event.clientY);
-          }}
-          onPointerLeave={() => {
-            if (dragStartRef.current) return;
-            hoverYRef.current = null;
-            setTip(null);
-            updateDockVisuals(null);
-          }}
-        >
-          {dockOrder.map((id) => {
-            const button = renderDockButton(id);
-            if (!button) return null;
-            const scale = dragId ? 1 : (scales[id] ?? 1);
-            const pose = poses[id];
-            const rotateX = dragId ? 0 : (pose?.rotateX ?? 0);
-            const opacity = pose?.opacity ?? 1;
-            const translateZ = dragId ? 0 : (pose?.z ?? 0);
-            return (
-              <div
-                key={id}
-                className={[
-                  'entry-nav-rail__slot',
-                  dragId === id ? 'is-dragging' : '',
-                  dragId === id && removing ? 'is-throwing' : '',
-                  drop?.id === id && drop.place === 'before' ? 'is-drop-before' : '',
-                  drop?.id === id && drop.place === 'after' ? 'is-drop-after' : '',
-                ].filter(Boolean).join(' ')}
-                data-nav-id={id}
-                data-testid={`entry-nav-slot-${id}`}
-                style={{
-                  transform: `translateZ(${translateZ}px) rotateX(${rotateX}deg) scale(${scale})`,
-                  opacity,
-                  zIndex: scale > 1.04 || contextId === id ? 4 : 1,
-                }}
-                ref={(node) => {
-                  if (node) slotRefs.current.set(id, node);
-                  else slotRefs.current.delete(id);
-                }}
-                onPointerDown={(event) => onDockPointerDown(id, event)}
-                onPointerEnter={(event) => {
-                  if (dragStartRef.current || contextId) return;
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  const rtl = document.documentElement.dir === 'rtl';
-                  setTip({
-                    label: dockItemLabel(id, t, pinnedApps),
-                    x: rtl ? rect.left - 10 : rect.right + 10,
-                    y: rect.top + rect.height / 2,
-                    rtl,
-                  });
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  setAddOpen(false);
-                  setTip(null);
-                  setContextId(id);
-                  setContextPos({ x: event.clientX + 8, y: event.clientY });
-                }}
-              >
-                {button}
-              </div>
-            );
-          })}
-        </div>
-        {tip && !dragId && !contextId ? (
-          <div
-            className={`entry-nav-rail__wheel-tip${tip.rtl ? ' is-rtl' : ''}`}
-            style={{ top: tip.y, left: tip.x }}
-            role="tooltip"
-          >
-            {tip.label}
-          </div>
-        ) : null}
-        {contextId && contextPos ? (
-          <div
-            ref={contextMenuRef}
-            className="entry-nav-dock-menu entry-nav-dock-menu--fixed"
-            role="menu"
-            data-testid="entry-nav-dock-item-menu"
-            style={{ left: contextPos.x, top: contextPos.y }}
-          >
-            <button
-              type="button"
-              className="entry-nav-dock-menu__item"
-              role="menuitem"
-              data-testid="entry-nav-dock-remove"
-              onClick={() => {
-                const next = hideEntryNavItem(dockOrder, hidden, contextId);
-                commitDock(next.order, next.hidden);
-                setContextId(null);
-                setContextPos(null);
+          <span className={styles.itemIcon}><Icon name="plus" size={16} /></span>
+          <span className={styles.itemLabel}>{t('entry.navNewProject')}</span>
+        </button>
+      </div>
+
+      <div
+        ref={listRef}
+        className={`${styles.list} entry-nav-rail__dock entry-nav-rail__group`}
+        data-testid="entry-nav-dock"
+        aria-label={t('entry.navDock')}
+        title={t('entry.navDockHint')}
+      >
+        {dockOrder.map((id) => {
+          const hintHere = dropHint && dropHint.targetId === id;
+          return (
+            <div
+              key={id}
+              className={[
+                styles.slot,
+                'entry-nav-rail__slot',
+                dragId === id ? 'is-dragging' : '',
+                hintHere && dropHint.place === 'before' ? styles.slotDropBefore : '',
+                hintHere && dropHint.place === 'after' ? styles.slotDropAfter : '',
+              ].filter(Boolean).join(' ')}
+              data-nav-id={id}
+              data-testid={`entry-nav-slot-${id}`}
+              onPointerDown={(event) => onItemPointerDown(id, event)}
+              onPointerEnter={(event) => {
+                if (dragStartRef.current || contextId || atlasOpen || addOpen) return;
+                const rect = event.currentTarget.getBoundingClientRect();
+                setTip({
+                  label: dockItemLabel(id, t, apps),
+                  x: rect.right + 10,
+                  y: rect.top + rect.height / 2,
+                });
+              }}
+              onPointerLeave={() => {
+                if (dragStartRef.current) return;
+                setTip(null);
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setAddOpen(false);
+                setTip(null);
+                setContextId(id);
+                setContextPos({ x: event.clientX + 8, y: event.clientY });
               }}
             >
-              {t('entry.navDockRemove')}
-            </button>
-          </div>
-        ) : null}
-        {removing ? (
-          <div className="entry-nav-dock-remove-hint" data-testid="entry-nav-dock-remove-hint">
-            {t('entry.navDockRemoving')}
-          </div>
-        ) : null}
-        <div className="entry-nav-rail__add" ref={addMenuRef}>
-          <NavButton
-            ariaLabel={t('entry.navDockEdit')}
-            tooltip={t('entry.navDockEdit')}
+              {renderNavButton(id, 'rail')}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className={styles.foot}>
+        <div className={styles.addWrap} ref={addMenuRef}>
+          <button
+            type="button"
+            className={styles.tool}
+            aria-label={t('entry.navDockEdit')}
+            title={t('entry.navDockEdit')}
             onClick={() => {
               setContextId(null);
               setContextPos(null);
+              setAtlasOpen(false);
               setAddOpen((openMenu) => !openMenu);
             }}
-            testId="entry-nav-dock-add"
-            fixed
+            data-testid="entry-nav-dock-add"
           >
-            <Icon name="more-horizontal" size={18} />
-          </NavButton>
+            <span className={styles.itemIcon}><Icon name="plus" size={16} /></span>
+            <span className={styles.itemLabel}>{t('entry.navDockEdit')}</span>
+          </button>
           {addOpen ? (
-            <div className="entry-nav-dock-menu entry-nav-dock-menu--add" role="menu" data-testid="entry-nav-dock-add-menu">
+            <div className={`${styles.menu} ${styles.addMenu} entry-nav-dock-menu`} role="menu" data-testid="entry-nav-dock-add-menu">
               {hiddenIds.length === 0 ? (
-                <div className="entry-nav-dock-menu__empty">{t('entry.navDockEmptyAdd')}</div>
+                <div className={styles.menuEmpty}>{t('entry.navDockEmptyAdd')}</div>
               ) : (
-                hiddenIds.map((id) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className="entry-nav-dock-menu__item"
-                    role="menuitem"
-                    data-testid={`entry-nav-dock-add-${id}`}
-                    onClick={() => {
-                      const next = showEntryNavItem(dockOrder, hidden, id);
-                      commitDock(next.order, next.hidden);
-                      setAddOpen(false);
-                    }}
-                  >
-                    {dockItemLabel(id, t, pinnedApps)}
-                  </button>
-                ))
+                <>
+                  {ENTRY_NAV_ISLANDS.map((island) => {
+                    const ids = island.ids.filter((id) => hiddenPlaces.includes(id));
+                    if (ids.length === 0) return null;
+                    return (
+                      <div key={island.id}>
+                        <div className={styles.menuLabel}>{t(island.labelKey)}</div>
+                        {ids.map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            className={styles.menuItem}
+                            role="menuitem"
+                            data-testid={`entry-nav-dock-add-${id}`}
+                            onClick={() => addDockItem(id)}
+                          >
+                            {dockItemLabel(id, t, apps)}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })}
+                  {hiddenApps.length > 0 ? (
+                    <>
+                      <div className={styles.menuLabel}>{t('entry.navDockApps')}</div>
+                      {hiddenApps.map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-testid={`entry-nav-dock-add-${id}`}
+                          onClick={() => addDockItem(id)}
+                        >
+                          {dockItemLabel(id, t, apps)}
+                        </button>
+                      ))}
+                    </>
+                  ) : null}
+                </>
               )}
             </div>
           ) : null}
         </div>
-      </div>
-      <div className="entry-nav-rail__footer">
-        <div className="entry-nav-rail__divider" role="separator" />
         <EntryHelpMenu />
       </div>
+
+      {tip && !dragId && !contextId && !atlasOpen ? (
+        <div className={styles.tip} style={{ top: tip.y, left: tip.x }} role="tooltip">
+          {tip.label}
+        </div>
+      ) : null}
+
+      {contextId && contextPos ? (
+        <div
+          ref={contextMenuRef}
+          className={`${styles.menu} entry-nav-dock-menu entry-nav-dock-menu--fixed`}
+          role="menu"
+          data-testid="entry-nav-dock-item-menu"
+          style={{ left: contextPos.x, top: contextPos.y }}
+        >
+          <button
+            type="button"
+            className={styles.menuItem}
+            role="menuitem"
+            data-testid="entry-nav-dock-remove"
+            onClick={() => {
+              const next = hideEntryNavItem(dockOrder, hidden, contextId);
+              commitDock(next.order, next.hidden);
+              setContextId(null);
+              setContextPos(null);
+            }}
+          >
+            {t('entry.navDockRemove')}
+          </button>
+        </div>
+      ) : null}
+
+      {atlasOpen ? (
+        <div
+          className={styles.atlas}
+          role="dialog"
+          aria-label={t('entry.navAtlas')}
+          data-testid="entry-nav-atlas"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setAtlasOpen(false);
+          }}
+        >
+          <div className={styles.atlasPanel}>
+            <div className={styles.atlasHead}>
+              <p className={styles.atlasKicker}>{logoLabel}</p>
+              <h2 className={styles.atlasTitle}>{t('entry.navAtlas')}</h2>
+              <p className={styles.atlasHint}>{t('entry.navAtlasHint')}</p>
+              <input
+                ref={atlasSearchRef}
+                className={styles.atlasSearch}
+                value={atlasQuery}
+                onChange={(event) => setAtlasQuery(event.target.value)}
+                placeholder={t('entry.navSearch')}
+                aria-label={t('entry.navSearch')}
+                data-testid="entry-nav-atlas-search"
+              />
+            </div>
+            <div className={styles.islands}>
+              {ENTRY_NAV_ISLANDS.map((island) => {
+                const ids = island.ids.filter((id) => availableIds.includes(id) && matchesAtlas(id));
+                if (ids.length === 0) return null;
+                return (
+                  <section key={island.id} className={styles.island} data-testid={`entry-nav-island-${island.id}`}>
+                    <h3 className={styles.islandTitle}>{t(island.labelKey)}</h3>
+                    <div className={styles.islandChips}>
+                      {ids.map((id) => (
+                        <div key={id} className={styles.islandRow}>
+                          {renderNavButton(id, 'atlas')}
+                          {dockOrder.includes(id) ? null : (
+                            <button
+                              type="button"
+                              className={styles.pinBtn}
+                              aria-label={`${t('entry.navPin')}: ${dockItemLabel(id, t, apps)}`}
+                              data-testid={`entry-nav-pin-${id}`}
+                              onClick={() => addDockItem(id)}
+                            >
+                              <Icon name="plus" size={12} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+              {apps.filter((app) => matchesAtlas(pinnedEntryNavId(app.id))).length > 0 ? (
+                <section className={styles.island} data-testid="entry-nav-island-apps">
+                  <h3 className={styles.islandTitle}>{t('entry.navDockApps')}</h3>
+                  <div className={styles.islandChips}>
+                    {apps.filter((app) => matchesAtlas(pinnedEntryNavId(app.id))).map((app) => {
+                      const id = pinnedEntryNavId(app.id);
+                      return (
+                        <div key={app.id} className={styles.islandRow}>
+                          {renderNavButton(id, 'atlas')}
+                          {dockOrder.includes(id) ? null : (
+                            <button
+                              type="button"
+                              className={styles.pinBtn}
+                              aria-label={`${t('entry.navPin')}: ${app.name}`}
+                              data-testid={`entry-nav-pin-${id}`}
+                              onClick={() => addDockItem(id)}
+                            >
+                              <Icon name="plus" size={12} />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </nav>
   );
 }

@@ -24,9 +24,11 @@ import {
   fetchViewRecords,
   fetchViews,
   fetchWorkspaceTables,
+  patchWorkspaceTable,
   updateView,
   updateWorkspaceRecord,
 } from '../../providers/registry';
+import { RecordGallery } from '../workspace/RecordGallery';
 import { WorkspacePage } from '../workspace/WorkspacePage';
 import { CommandBar } from './CommandBar';
 import { EditableGrid } from './EditableGrid';
@@ -35,18 +37,20 @@ import styles from './TablesView.module.css';
 
 interface Props {
   active: boolean;
+  initialTableName?: string;
 }
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function TablesView({ active }: Props) {
+export function TablesView({ active, initialTableName }: Props) {
   const t = useT();
-  const { activeOrgId } = useOptionalOrg() ?? NO_ORG_CONTEXT;
+  const { activeOrgId, can } = useOptionalOrg() ?? NO_ORG_CONTEXT;
 
   const [tables, setTables] = useState<WorkspaceTable[]>([]);
   const [tableId, setTableId] = useState<string | null>(null);
+  const [layout, setLayout] = useState<'table' | 'cards'>('cards');
   const [views, setViews] = useState<WorkspaceView[]>([]);
   const [viewId, setViewId] = useState<string | null>(null);
   const [records, setRecords] = useState<WorkspaceRecord[]>([]);
@@ -67,14 +71,20 @@ export function TablesView({ active }: Props) {
     try {
       const next = await fetchWorkspaceTables(activeOrgId);
       setTables(next);
-      setTableId((prev) => prev ?? next[0]?.id ?? null);
+      setTableId((prev) => {
+        const wanted = initialTableName
+          ? next.find((candidate) => candidate.name === initialTableName || candidate.id === initialTableName)
+          : null;
+        if (wanted) return wanted.id;
+        return prev ?? next[0]?.id ?? null;
+      });
       setLoaded(true);
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
       setLoaded(true);
     }
-  }, [activeOrgId]);
+  }, [activeOrgId, initialTableName]);
 
   const loadViews = useCallback(async () => {
     if (!activeOrgId || !tableId) return;
@@ -182,6 +192,23 @@ export function TablesView({ active }: Props) {
     [activeOrgId, loadRecords, loadViews, view],
   );
 
+  const togglePublicWrite = useCallback(
+    async (publicWrite: boolean) => {
+      if (!activeOrgId || !table) return;
+      setBusy(true);
+      try {
+        const next = await patchWorkspaceTable(activeOrgId, table.id, { publicWrite });
+        setTables((prev) => prev.map((candidate) => (candidate.id === next.id ? next : candidate)));
+        setError(null);
+      } catch (err) {
+        setError(errorMessage(err));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [activeOrgId, table],
+  );
+
   if (!activeOrgId) {
     return (
       <WorkspacePage title={t('tables.title')} testId="tables-view">
@@ -232,6 +259,9 @@ export function TablesView({ active }: Props) {
                   data-testid={`tables-pick-${candidate.name}`}
                 >
                   {candidate.displayName}
+                  {candidate.publicWrite ? (
+                    <span className={styles.publicMark}>{t('tables.publicWrite')}</span>
+                  ) : null}
                 </button>
               </li>
             ))}
@@ -298,6 +328,36 @@ export function TablesView({ active }: Props) {
                 </select>
               </label>
             ) : null}
+            <div className={styles.layoutToggle} role="group" aria-label={t('tables.display')}>
+              <button
+                type="button"
+                className={layout === 'cards' ? styles.layoutActive : undefined}
+                onClick={() => setLayout('cards')}
+                data-testid="tables-layout-cards"
+              >
+                {t('tables.displayCards')}
+              </button>
+              <button
+                type="button"
+                className={layout === 'table' ? styles.layoutActive : undefined}
+                onClick={() => setLayout('table')}
+                data-testid="tables-layout-table"
+              >
+                {t('tables.displayTable')}
+              </button>
+            </div>
+            {table && can('admin') ? (
+              <label className={styles.publicWrite} title={t('tables.publicWriteHint')}>
+                <input
+                  type="checkbox"
+                  checked={table.publicWrite === true}
+                  disabled={busy}
+                  onChange={(event) => void togglePublicWrite(event.target.checked)}
+                  data-testid="tables-public-write"
+                />
+                <span>{t('tables.publicWrite')}</span>
+              </label>
+            ) : null}
           </div>
 
           {table ? (
@@ -309,16 +369,30 @@ export function TablesView({ active }: Props) {
                       <span>{group.label}</span>
                       <Badge tone="neutral">{group.count}</Badge>
                     </header>
-                    <EditableGrid
-                      table={table}
-                      records={records.filter((record) => group.recordIds.includes(record.id))}
-                      visibleFields={view?.visibleFields ?? null}
-                      onCommit={commitCell}
-                      busy={busy}
-                    />
+                    {layout === 'cards' ? (
+                      <RecordGallery
+                        fields={table.fields}
+                        records={records.filter((record) => group.recordIds.includes(record.id))}
+                        onOpen={setOpenRecordId}
+                      />
+                    ) : (
+                      <EditableGrid
+                        table={table}
+                        records={records.filter((record) => group.recordIds.includes(record.id))}
+                        visibleFields={view?.visibleFields ?? null}
+                        onCommit={commitCell}
+                        busy={busy}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
+            ) : layout === 'cards' ? (
+              <RecordGallery
+                fields={table.fields}
+                records={records}
+                onOpen={setOpenRecordId}
+              />
             ) : (
               <EditableGrid
                 table={table}

@@ -262,7 +262,7 @@ describe('workspace tabs chrome styles', () => {
     expect(ruleValue(fixedToolbarSendDisabled, 'color')).toBe('var(--text-faint)');
   });
 
-  it('uses hairline dividers for the tab chrome and entry rail', () => {
+  it('uses hairline dividers for the tab chrome', () => {
     const chrome = cssDeclarations(shellCss, '.workspace-tabs-chrome.app-chrome-header');
     const chromeDivider = cssDeclarations(shellCss, '.workspace-tabs-chrome.app-chrome-header::after');
     const projectChrome = cssDeclarations(
@@ -270,18 +270,14 @@ describe('workspace tabs chrome styles', () => {
       '.workspace-shell .workspace-tabs-chrome.app-chrome-header',
     );
     const rail = cssDeclarations(entryLayoutCss, '.entry-nav-rail');
-    const railDivider = cssDeclarations(entryLayoutCss, '.entry-nav-rail::after');
 
     const hairlineColor = 'color-mix(in srgb, var(--border) 64%, transparent)';
     expect(ruleValue(chrome, 'border-bottom')).toBe('0');
     expect(ruleValue(projectChrome, 'border-bottom')).toBe('0');
-    expect(ruleValue(rail, 'border-right')).toBe('0');
+    expect(ruleValue(rail, 'border-right')).toBe('1px solid color-mix(in srgb, var(--border) 64%, transparent)');
     expect(ruleValue(chromeDivider, 'height')).toBe('1px');
     expect(ruleValue(chromeDivider, 'background')).toBe(hairlineColor);
     expect(ruleValue(chromeDivider, 'transform')).toBe('scaleY(0.5)');
-    expect(ruleValue(railDivider, 'width')).toBe('1px');
-    expect(ruleValue(railDivider, 'background')).toBe(hairlineColor);
-    expect(ruleValue(railDivider, 'transform')).toBe('scaleX(0.5)');
   });
 
   it('keeps workspace tabs compact and centered in the top chrome', () => {

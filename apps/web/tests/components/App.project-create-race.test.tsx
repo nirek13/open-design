@@ -746,7 +746,7 @@ describe('App project creation routing', () => {
       );
     });
     // Home is /home since the workspace became the front door.
-    expect(window.location.pathname).toBe('/home');
+    expect(window.location.pathname).toBe('/');
     expect(screen.queryByTestId('entry-project-project-existing')).toBeNull();
   });
 

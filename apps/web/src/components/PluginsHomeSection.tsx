@@ -18,6 +18,7 @@ import { Button, Input } from '@open-design/components';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { InstalledPluginRecord } from '@open-design/contracts';
 import { useI18n, useT } from '../i18n';
+import { NO_ORG_CONTEXT, useOptionalOrg } from '../org/OrgContext';
 import type { PluginShareAction } from '../state/projects';
 import { Icon } from './Icon';
 import { PluginCard } from './plugins-home/PluginCard';
@@ -56,7 +57,7 @@ interface Props {
   subtitle?: string;
   emptyMessage?: string;
   // 'gallery' renders each card as a minimal live example.html preview
-  // tile (Community); 'rich' keeps the hover-overlay metadata card.
+  // tile; 'rich' keeps the hover-overlay metadata card.
   cardLayout?: 'rich' | 'gallery';
 }
 
@@ -79,6 +80,13 @@ export function PluginsHomeSection({
   cardLayout = 'rich',
 }: Props) {
   const { locale, t } = useI18n();
+  const { activeOrg } = useOptionalOrg() ?? NO_ORG_CONTEXT;
+  const orgName = activeOrg?.name?.trim() ?? '';
+  const heading = title ?? (
+    orgName
+      ? t('pluginsHome.title', { org: orgName })
+      : t('pluginsHome.titleFallback')
+  );
   const { savedPluginIds, savePluginId } = useSavedPluginIds();
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const initialRenderLimit =
@@ -160,7 +168,7 @@ export function PluginsHomeSection({
     <section className="plugins-home" data-testid="plugins-home-section">
       <header className="plugins-home__head">
         <div className="plugins-home__heading">
-          <h2 className="plugins-home__title">{title ?? t('pluginsHome.title')}</h2>
+          <h2 className="plugins-home__title">{heading}</h2>
           {subtitle ? (
             <p className="plugins-home__subtitle">{subtitle}</p>
           ) : null}
@@ -197,8 +205,8 @@ export function PluginsHomeSection({
               selectedSlug={selection.category}
               totalVisible={totalVisible}
               // The Saved collection lives on the rich management surface
-              // (PluginsView). The minimal Community gallery has no per-card
-              // save affordance, so the orthogonal Saved chip is hidden there.
+              // (PluginsView). The Home gallery has no per-card save
+              // affordance, so the orthogonal Saved chip is hidden there.
               showSaved={cardLayout === 'rich'}
               savedCount={savedList.length}
               savedActive={mode === 'saved'}
@@ -288,7 +296,7 @@ interface CategoryRowProps {
   totalVisible: number;
   onPick: (slug: string | null) => void;
   // The Saved override chip only renders on the rich management surface
-  // (PluginsView); the minimal Community gallery hides it.
+  // (PluginsView); the Home gallery hides it.
   showSaved: boolean;
   savedCount: number;
   savedActive: boolean;

@@ -7,8 +7,9 @@
 <!--
   Self-contained brand-kit page. The daemon's brand-kit renderer replaces the
   payload token in the script tag below with a JSON blob { status, brand,
-  assets }. Everything renders from that single embedded object — no external
-  requests, so it works under the FileViewer's sandboxed URL-load iframe.
+    assets }. Everything renders from that single embedded object — no nested
+    /raw/ iframe requests, so it works under the FileViewer's sandboxed
+    URL-load iframe (those nested navigations cannot send the session cookie).
   While status is "extracting" the page softly reloads itself so the user
   watches the kit fill in as the agent writes brand.json and re-renders.
 -->
@@ -517,8 +518,11 @@
           (sys.kitDarkHref ? '<button class="ds-tab" data-kit="' + esc(sys.kitDarkHref) + '">' + esc(txt('dark', 'Dark')) + '</button>' : '') +
         '</div>' +
         '<span class="ds-cap">system/kit.html · themes: ' + esc(themes) + '</span>' +
+        // Nested iframes of /raw/system/*.html 401 under FileViewer's opaque
+        // sandbox (SameSite=Lax session cookie is withheld). Keep the chrome;
+        // the Design System tab loads these previews via an authenticated srcDoc.
       '</div>' +
-      '<iframe id="ds-frame" class="ds-frame" src="' + esc(sys.kitHref) + '" loading="lazy" sandbox="" title="' + esc(txt('componentKitTitle', 'Component kit')) + '"></iframe></div>' +
+      '<iframe id="ds-frame" class="ds-frame" src="about:blank" loading="lazy" sandbox="" title="' + esc(txt('componentKitTitle', 'Component kit')) + '"></iframe></div>' +
       tokens + '</section>';
   }
 
@@ -532,7 +536,7 @@
         var pending = !a.available;
         var inner = pending
           ? '<div class="asset-frame"><div class="skel" style="position:absolute;inset:0"></div></div>'
-          : '<div class="asset-frame"><iframe src="' + esc(a.href) + '" loading="lazy" tabindex="-1" aria-hidden="true"></iframe></div>';
+          : '<div class="asset-frame"><div class="skel" style="position:absolute;inset:0;opacity:.28"></div></div>';
         // Clicking a tile opens its full page in an in-page modal iframe — the
         // kit is sandboxed with no top navigation, so a plain link cannot
         // navigate. Data attributes carry what the modal needs.
@@ -665,13 +669,13 @@
     });
   });
 
-  // Design-system Light/Dark kit toggle — swaps the iframe src in place.
+  // Design-system Light/Dark kit toggle — visual only. Nested /raw/ iframes
+  // 401 under the FileViewer sandbox, so this frame stays on about:blank.
   var dsTabs = document.getElementById('ds-tabs');
   var dsFrame = document.getElementById('ds-frame');
   if (dsTabs && dsFrame) {
     Array.prototype.forEach.call(dsTabs.querySelectorAll('.ds-tab'), function (b) {
       b.addEventListener('click', function () {
-        dsFrame.src = b.getAttribute('data-kit');
         Array.prototype.forEach.call(dsTabs.querySelectorAll('.ds-tab'), function (x) { x.classList.remove('active'); });
         b.classList.add('active');
       });
@@ -863,7 +867,7 @@
     buildAsset();
     assetTitle.textContent = label || txt('preview', 'Preview');
     assetSub.textContent = desc || '';
-    assetFrame.src = href;
+    assetFrame.src = 'about:blank';
     openOverlay(assetOv);
   }
 

@@ -104,7 +104,7 @@ export function PluginDetailView(props: Props) {
     // Navigate to Home so the PluginLoopHome surface picks up the
     // applied snapshot. Inside an existing project, the ChatComposer
     // mount of PluginsSection consumes the same ApplyResult.
-    navigate({ kind: 'home', view: 'home' });
+    navigate({ kind: 'home', view: 'workspace' });
   };
 
   return (

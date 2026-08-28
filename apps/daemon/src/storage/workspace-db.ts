@@ -748,6 +748,11 @@ const WORKSPACE_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
         ON od_app_denials(workspace_id, member_id);
     `);
   },
+
+  // v16 — opt-in public appends (intake forms) on a table.
+  (db) => {
+    db.exec(`ALTER TABLE od_tables ADD COLUMN public_write INTEGER NOT NULL DEFAULT 0;`);
+  },
 ];
 
 export class WorkspaceDbManager {

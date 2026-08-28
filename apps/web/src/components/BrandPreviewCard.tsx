@@ -86,7 +86,7 @@ export function BrandPreviewCard({
         });
       }
       requestHomeChip('prototype');
-      navigate({ kind: 'home', view: 'home' });
+      navigate({ kind: 'home', view: 'workspace' });
     } finally {
       setBusy(false);
     }

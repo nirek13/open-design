@@ -171,10 +171,12 @@ export interface HomeWidgetsResponse {
 export interface ImportPlanColumn {
   header: string;
   fieldName: string;
-  type: 'text' | 'number' | 'integer' | 'boolean' | 'date' | 'money' | 'json';
+  type: 'text' | 'number' | 'integer' | 'boolean' | 'date' | 'datetime' | 'money' | 'json';
   /** Why this type was chosen, so a wrong guess is easy to spot. */
   reason: string;
   sample: string[];
+  /** True when this column uniquely identifies a row (used to refresh without duplicates). */
+  unique?: boolean;
 }
 
 export interface ImportPlan {
@@ -187,6 +189,8 @@ export interface ImportPlan {
   /** Rows that could not be parsed, with the reason. Import proceeds without
    * them rather than failing wholesale on one bad line. */
   skipped: Array<{ row: number; reason: string }>;
+  /** Public URL this table was read from, when the import came from a link. */
+  sourceUrl?: string;
 }
 
 export interface ImportPlanResponse {
@@ -196,10 +200,14 @@ export interface ImportPlanResponse {
 export interface ImportCommitResponse {
   tableId: string;
   imported: number;
+  /** Rows matched by unique key and rewritten on a refresh. */
+  updated?: number;
+  /** Live rows removed because they disappeared from a snapshot feed. */
+  removed?: number;
   skipped: number;
 }
 
-export type ImportSourceKind = 'csv' | 'json' | 'html-table' | 'google-sheets';
+export type ImportSourceKind = 'csv' | 'json' | 'html-table' | 'google-sheets' | 'ai';
 
 export interface ImportFromUrlRequest {
   url: string;

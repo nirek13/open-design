@@ -29,6 +29,12 @@ const brokenDeckStageHtml = `<!doctype html>
 </html>`;
 
 describe('buildSrcdoc', () => {
+  it('injects the workspace data SDK before author scripts', () => {
+    const doc = buildSrcdoc('<!doctype html><html><head></head><body><script>od.query("tenders")</script></body></html>');
+    expect(doc).toContain('data-od-app-sdk');
+    expect(doc).toContain('window.od');
+    expect(doc.indexOf('data-od-app-sdk')).toBeLessThan(doc.indexOf('od.query("tenders")'));
+  });
   it('injects an initial slide index for deck previews', () => {
     const doc = buildSrcdoc(deckHtml, { deck: true, initialSlideIndex: 2 });
 

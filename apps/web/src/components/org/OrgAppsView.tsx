@@ -13,11 +13,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CreateAppFlow } from '../apps/CreateAppFlow';
 import { SendAppPicker } from '../apps/SendAppPicker';
+import { AppDataScopePicker, splitGmailScope, withGmailScope } from '../apps/AppDataScopePicker';
 import { useOptionalRunningApp, markAppEditWorkspaceFocus } from '../apps/RunningAppContext';
 import { Badge, Button, EmptyState, Select } from '@open-design/components';
 import type {
   AppAccessMode,
   AppAccessPolicy,
+  AppDataScope,
   AppGrantRole,
   OrgAppWithOrgName,
   OrgMember,
@@ -122,6 +124,15 @@ export function OrgAppsView({ active }: { active: boolean }) {
   async function handleAccessMode(orgApp: OrgAppWithOrgName, accessMode: AppAccessMode) {
     try {
       await updateOrgApp(orgApp.orgId, orgApp.id, { accessMode });
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleDataScopes(orgApp: OrgAppWithOrgName, next: AppDataScope[]) {
+    try {
+      await updateOrgApp(orgApp.orgId, orgApp.id, { dataScopes: next });
       await load();
     } catch (err) {
       setError(errorMessage(err));
@@ -354,6 +365,19 @@ export function OrgAppsView({ active }: { active: boolean }) {
 
               {managingId === orgApp.id ? (
                 <div className={styles.manageBox} data-testid="org-app-access">
+                  <AppDataScopePicker
+                    orgId={orgApp.orgId}
+                    value={splitGmailScope(orgApp.dataScopes ?? []).tables}
+                    onChange={(tables) => {
+                      const current = splitGmailScope(orgApp.dataScopes ?? []);
+                      void handleDataScopes(orgApp, withGmailScope(tables, current.allowGmail));
+                    }}
+                    allowGmail={splitGmailScope(orgApp.dataScopes ?? []).allowGmail}
+                    onAllowGmailChange={(allow) => {
+                      const current = splitGmailScope(orgApp.dataScopes ?? []);
+                      void handleDataScopes(orgApp, withGmailScope(current.tables, allow));
+                    }}
+                  />
                   <fieldset className={styles.fieldset}>
                     <legend>{t('apps.create.access')}</legend>
                     <label className={styles.radio}>

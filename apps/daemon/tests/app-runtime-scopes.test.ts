@@ -7,8 +7,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   APP_BRIDGE_PROTOCOL,
+  appRequestsTableWrites,
   describeAppScopes,
   normalizeAppScopes,
+  publicFacingScopes,
+  publicScopeAllows,
   scopeAllows,
   type AppDataScope,
 } from '@open-design/contracts';
@@ -148,5 +151,63 @@ describe('app data scopes', () => {
 
   it('pins the protocol version so a shape change is a deliberate break', () => {
     expect(APP_BRIDGE_PROTOCOL).toBe(1);
+  });
+});
+
+describe('public form scopes', () => {
+  it('lets a public visitor append only when the app has write and the table is public-write', () => {
+    const publicWrite = new Set(['leads']);
+    expect(
+      publicScopeAllows(WRITE_DEALS, publicWrite, { kind: 'create', table: 'deals' }).allowed,
+    ).toBe(false);
+    expect(
+      publicScopeAllows([{ table: 'leads', mode: 'write' }], publicWrite, {
+        kind: 'create',
+        table: 'leads',
+      }).allowed,
+    ).toBe(true);
+  });
+
+  it('refuses query, update, and mail even on a public-write table', () => {
+    const scopes: AppDataScope[] = [
+      { table: 'leads', mode: 'write' },
+      { table: 'gmail', mode: 'write' },
+    ];
+    const publicWrite = new Set(['leads']);
+    expect(publicScopeAllows(scopes, publicWrite, { kind: 'query', table: 'leads' }).allowed).toBe(
+      false,
+    );
+    expect(
+      publicScopeAllows(scopes, publicWrite, { kind: 'update', table: 'leads' }).allowed,
+    ).toBe(false);
+    expect(publicScopeAllows(scopes, publicWrite, { kind: 'mail.send' }).allowed).toBe(false);
+  });
+
+  it('lets describe through so a form can learn the columns', () => {
+    expect(
+      publicScopeAllows([{ table: 'leads', mode: 'write' }], new Set(['leads']), {
+        kind: 'describe',
+        table: 'leads',
+      }).allowed,
+    ).toBe(true);
+  });
+
+  it('names only the public write tables when describing facing scopes', () => {
+    expect(
+      publicFacingScopes(
+        [
+          { table: 'leads', mode: 'write' },
+          { table: 'invoices', mode: 'write' },
+          { table: 'gmail', mode: 'write' },
+        ],
+        new Set(['leads']),
+      ),
+    ).toEqual([{ table: 'leads', mode: 'write' }]);
+  });
+
+  it('marks an app as needing a public host when it asked to write tables', () => {
+    expect(appRequestsTableWrites([])).toBe(false);
+    expect(appRequestsTableWrites([{ table: 'gmail', mode: 'write' }])).toBe(false);
+    expect(appRequestsTableWrites([{ table: 'leads', mode: 'write' }])).toBe(true);
   });
 });

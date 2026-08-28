@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EntryNavRail } from '../../src/components/EntryNavRail';
 import { ENTRY_NAV_ORDER_KEY } from '../../src/components/entry-nav-order';
 import { I18nProvider } from '../../src/i18n';
-import { fetchAllOrgApps } from '../../src/providers/registry';
+import { OrgProvider } from '../../src/org/OrgContext';
+import { fetchAllOrgApps, fetchAuthContext, updateOrgApp } from '../../src/providers/registry';
 import type { OrgAppWithOrgName } from '@open-design/contracts';
 
 vi.mock('../../src/analytics/provider', async (importOriginal) => {
@@ -25,7 +26,13 @@ vi.mock('../../src/analytics/provider', async (importOriginal) => {
 
 vi.mock('../../src/providers/registry', () => ({
   fetchAllOrgApps: vi.fn(async () => []),
+  fetchAuthContext: vi.fn(async () => ({
+    mode: 'local-owner',
+    viewer: { userId: 'u', displayName: 'Ada', email: null, username: null },
+    organizations: [],
+  })),
   recordOrgAppOpen: vi.fn(async () => {}),
+  updateOrgApp: vi.fn(async () => ({})),
 }));
 
 if (!HTMLElement.prototype.setPointerCapture) {
@@ -64,6 +71,7 @@ function renderRail(onViewChange = vi.fn()) {
 beforeEach(() => {
   window.localStorage.clear();
   vi.mocked(fetchAllOrgApps).mockResolvedValue([]);
+  vi.mocked(updateOrgApp).mockResolvedValue({} as never);
 });
 
 afterEach(() => {
@@ -71,40 +79,37 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe('EntryNavRail dock reorder', () => {
-  it('renders destinations in a reorderable dock, with logo and new project pinned', () => {
+describe('EntryNavRail sidebar', () => {
+  it('renders a slim sidebar with the company spine and new project', () => {
     renderRail();
     expect(screen.getByTestId('entry-nav-dock')).toBeTruthy();
     expect(screen.getByTestId('entry-nav-logo')).toBeTruthy();
     expect(screen.getByTestId('entry-nav-new-project')).toBeTruthy();
     expect(screen.getByTestId('entry-nav-logo').closest('[data-nav-id]')).toBeNull();
     expect(screen.getByTestId('entry-nav-new-project').closest('[data-nav-id]')).toBeNull();
-    expect(slotIds()[0]).toBe('search');
-    expect(slotIds()).toContain('home');
+    expect(slotIds()[0]).toBe('home');
     expect(slotIds()).toContain('pages');
+    expect(slotIds()).not.toContain('search');
+    expect(slotIds()).not.toContain('mail');
   });
 
-  it('restores a saved dock order', () => {
+  it('restores a saved sidebar order', () => {
     window.localStorage.setItem(
       ENTRY_NAV_ORDER_KEY,
-      JSON.stringify(['home', 'pages', 'erp']),
+      JSON.stringify(['apps', 'home', 'pages']),
     );
     renderRail();
     const ids = slotIds();
-    expect(ids.slice(0, 3)).toEqual(['home', 'pages', 'erp']);
+    expect(ids.slice(0, 3)).toEqual(['apps', 'home', 'pages']);
   });
 
-  it('nudges an icon with Option-Arrow and persists the order', () => {
+  it('nudges a shortcut with Option-Arrow and persists the order', () => {
     renderRail();
     const home = screen.getByTestId('entry-nav-home');
-    const before = slotIds();
-    const homeIndex = before.indexOf('home');
     fireEvent.keyDown(home, { key: 'ArrowDown', altKey: true });
-    const after = slotIds();
-    expect(after[homeIndex + 1]).toBe('home');
-    expect(after[homeIndex]).toBe(before[homeIndex + 1]);
+    expect(slotIds().slice(0, 2)).toEqual(['pages', 'home']);
     const stored = JSON.parse(window.localStorage.getItem(ENTRY_NAV_ORDER_KEY) ?? '[]') as string[];
-    expect(stored).toEqual(after);
+    expect(stored.slice(0, 2)).toEqual(['pages', 'home']);
   });
 
   it('navigates on a plain click', () => {
@@ -129,53 +134,89 @@ describe('EntryNavRail dock reorder', () => {
     expect(onViewChange).toHaveBeenCalledWith('pages');
   });
 
-  it('reorders by dragging one icon onto another', () => {
+  it('reorders a shortcut by dragging onto another row', () => {
     renderRail();
-    const erpSlot = screen.getByTestId('entry-nav-slot-erp');
+    const appsSlot = screen.getByTestId('entry-nav-slot-apps');
     const homeSlot = screen.getByTestId('entry-nav-slot-home');
+    const homeRect = { top: 40, height: 36 };
     vi.spyOn(homeSlot, 'getBoundingClientRect').mockReturnValue({
-      x: 0,
-      y: 200,
-      top: 200,
-      bottom: 240,
+      top: homeRect.top,
+      bottom: homeRect.top + homeRect.height,
+      height: homeRect.height,
       left: 0,
-      right: 38,
-      width: 38,
-      height: 40,
+      right: 40,
+      width: 40,
+      x: 0,
+      y: homeRect.top,
       toJSON: () => ({}),
-    });
-    const originalFromPoint = document.elementFromPoint;
-    document.elementFromPoint = () => homeSlot;
-
-    fireEvent.pointerDown(erpSlot, { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
+    } as DOMRect);
+    fireEvent.pointerDown(appsSlot, { button: 0, clientX: 10, clientY: 200, pointerId: 1 });
     fireEvent.pointerMove(window, {
       clientX: 10,
-      clientY: 230,
+      clientY: 48,
       pointerId: 1,
     });
     fireEvent.pointerUp(window, {
       pointerId: 1,
       clientX: 10,
-      clientY: 230,
+      clientY: 48,
     });
-
-    document.elementFromPoint = originalFromPoint ?? (() => null);
-    const ids = slotIds();
-    expect(ids.indexOf('erp')).toBeGreaterThan(ids.indexOf('home'));
+    expect(slotIds()[0]).toBe('apps');
   });
 
-  it('removes an icon from the context menu and can add it back', () => {
+  it('removes a shortcut from the context menu and can add it back', () => {
     renderRail();
-    fireEvent.contextMenu(screen.getByTestId('entry-nav-slot-mail'));
+    fireEvent.contextMenu(screen.getByTestId('entry-nav-slot-pages'));
     fireEvent.click(screen.getByTestId('entry-nav-dock-remove'));
-    expect(slotIds()).not.toContain('mail');
+    expect(slotIds()).not.toContain('pages');
 
     fireEvent.click(screen.getByTestId('entry-nav-dock-add'));
-    fireEvent.click(screen.getByTestId('entry-nav-dock-add-mail'));
-    expect(slotIds().at(-1)).toBe('mail');
+    fireEvent.click(screen.getByTestId('entry-nav-dock-add-pages'));
+    expect(slotIds().at(-1)).toBe('pages');
   });
 
-  it('keeps every pinned app in the scrollable dock wheel', async () => {
+  it('lets the user add Mail to the sidebar without connecting first', async () => {
+    renderRail();
+    expect(slotIds()).not.toContain('mail');
+    fireEvent.click(screen.getByTestId('entry-nav-dock-add'));
+    fireEvent.click(await screen.findByTestId('entry-nav-dock-add-mail'));
+    expect(slotIds()).toContain('mail');
+  });
+
+  it('offers unpinned apps in the customize menu', async () => {
+    vi.mocked(fetchAllOrgApps).mockResolvedValueOnce([{
+      id: 'app-1',
+      orgId: 'org-1',
+      orgName: 'Acme',
+      name: 'Expense form',
+      description: null,
+      projectId: 'proj-1',
+      filePath: 'app.html',
+      visibility: 'org',
+      status: 'active',
+      accessMode: 'org',
+      pinned: false,
+      pinnedAt: null,
+      createdBy: 'user-1',
+      createdByName: null,
+      createdAt: 1,
+      updatedAt: 1,
+      archivedAt: null,
+      lastOpenedAt: null,
+      openCount: 0,
+      dataScopes: [],
+      webUrl: null,
+    }]);
+    renderRail();
+    fireEvent.click(await screen.findByTestId('entry-nav-dock-add'));
+    fireEvent.click(await screen.findByTestId('entry-nav-dock-add-pinned:app-1'));
+    expect(slotIds()).toContain('pinned:app-1');
+    await waitFor(() => {
+      expect(updateOrgApp).toHaveBeenCalledWith('org-1', 'app-1', { pinned: true });
+    });
+  });
+
+  it('keeps every pinned app on the sidebar', async () => {
     const apps: OrgAppWithOrgName[] = Array.from({ length: 10 }, (_, index) => ({
       id: `app-${index + 1}`,
       orgId: 'org-1',
@@ -205,10 +246,77 @@ describe('EntryNavRail dock reorder', () => {
       expect(screen.getByTestId('entry-nav-slot-pinned:app-10')).toBeTruthy();
     });
     expect(screen.getByTestId('entry-nav-slot-pinned:app-1')).toBeTruthy();
-    const dock = screen.getByTestId('entry-nav-dock');
     expect(slotIds().filter((id) => id.startsWith('pinned:'))).toHaveLength(10);
     fireEvent.pointerEnter(screen.getByTestId('entry-nav-slot-pinned:app-4'));
     expect(screen.getByRole('tooltip').textContent).toBe('App 4');
-    expect(dock.className).toContain('entry-nav-rail__dock');
+  });
+
+  it('opens Places from the org mark', () => {
+    const onViewChange = vi.fn();
+    renderRail(onViewChange);
+    fireEvent.click(screen.getByTestId('entry-nav-logo'));
+    expect(screen.getByTestId('entry-nav-atlas')).toBeTruthy();
+    expect(screen.getByTestId('entry-nav-island-work')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('entry-nav-atlas-pages'));
+    expect(onViewChange).toHaveBeenCalledWith('pages');
+  });
+
+  it('pins a place onto the sidebar from Places', () => {
+    renderRail();
+    fireEvent.click(screen.getByTestId('entry-nav-logo'));
+    fireEvent.click(screen.getByTestId('entry-nav-pin-mail'));
+    expect(slotIds()).toContain('mail');
+  });
+});
+
+describe('EntryNavRail company mark', () => {
+  it('replaces the Substrate glyph with the harvested org mark', async () => {
+    vi.mocked(fetchAuthContext).mockResolvedValue({
+      mode: 'clerk',
+      viewer: {
+        userId: 'user-1',
+        displayName: 'Ada',
+        email: 'ada@acme.com',
+        username: 'ada',
+        bio: null,
+        avatarUrl: null,
+      },
+      organizations: [
+        {
+          id: 'ws-1',
+          name: 'Acme',
+          createdBy: 'user-1',
+          createdAt: 1,
+          updatedAt: 1,
+          websiteUrl: 'https://stripe.com',
+          defaultDesignSystemId: null,
+          setupCompletedAt: 1,
+          role: 'owner',
+          memberCount: 1,
+        },
+      ],
+    });
+
+    render(
+      <I18nProvider initial="en">
+        <OrgProvider>
+          <EntryNavRail
+            view="workspace"
+            onViewChange={vi.fn()}
+            onNewProject={vi.fn()}
+            open
+            onClose={vi.fn()}
+          />
+        </OrgProvider>
+      </I18nProvider>,
+    );
+
+    const logo = await waitFor(() => {
+      const node = screen.getByTestId('entry-nav-logo').querySelector('img');
+      expect(node).toBeTruthy();
+      return node!;
+    });
+    expect(logo.getAttribute('src')).toBe('/api/orgs/ws-1/mark?v=1');
+    expect(screen.getByTestId('entry-nav-logo').getAttribute('aria-label')).toContain('Acme');
   });
 });
