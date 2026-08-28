@@ -23,6 +23,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 import { SqliteExecutor, type SqlExecutor } from './sql.js';
+import { applySqliteRuntimePragmas } from './sqlite-pragmas.js';
 
 type SqliteDb = Database.Database;
 
@@ -35,8 +36,7 @@ export function isSafeWorkspaceId(id: string): boolean {
 function openSqlite(file: string): SqliteDb {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new Database(file);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  applySqliteRuntimePragmas(db);
   return db;
 }
 

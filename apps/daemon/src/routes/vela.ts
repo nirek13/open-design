@@ -390,7 +390,15 @@ export function registerVelaRoutes(app: Express, deps: RegisterVelaRoutesDeps): 
       });
       res.json(response);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      // Hosted images strip Vela. Returning 500 made the web console look
+      // like the whole app was down next to /api/projects. An empty catalog
+      // is the hosted shape: BYOK/OpenAI models still load separately.
+      res.json({
+        source: 'preset',
+        models: [],
+        refreshing: false,
+        remoteError: err instanceof Error ? err.message : String(err),
+      });
     }
   });
 

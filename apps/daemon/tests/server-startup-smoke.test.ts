@@ -125,8 +125,9 @@ describe('daemon startup route smoke', () => {
       },
       {
         path: '/api/amr/models',
-        statuses: [200, 500],
-        assert: (body) => expect(body).toEqual(expect.any(Object)),
+        assert: (body) => {
+          expect(body).toEqual(expect.objectContaining({ models: expect.any(Array) }));
+        },
       },
     ];
 

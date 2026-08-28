@@ -199,6 +199,7 @@ for c in td["containerDefinitions"]:
             "value": "sb_publishable_6SpjBr4C4X42Ivy3dY6F5w_ua5G-UgP",
         }
         env["OD_SITES_DOMAIN"] = {"name": "OD_SITES_DOMAIN", "value": "sites.nirekshetty.com"}
+        env["OD_SQLITE_JOURNAL_MODE"] = {"name": "OD_SQLITE_JOURNAL_MODE", "value": "delete"}
         c["environment"] = list(env.values())
         secrets = {s["name"]: s for s in c.get("secrets") or []}
         openai_from = openai_arn or (secrets.get("OPENAI_API_KEY") or {}).get("valueFrom") or (secrets.get("OD_OPENAI_API_KEY") or {}).get("valueFrom")
@@ -223,12 +224,21 @@ print(json.dumps(td))
     --cli-input-json "$new_td" \
     --query 'taskDefinition.taskDefinitionArn' --output text)"
 
-  echo "==> Updating service -> ${new_arn}"
+  echo "==> Updating service -> ${new_arn} (stop then start; SQLite on EFS is single-writer)"
+  aws ecs update-service \
+    --cluster "$CLUSTER" \
+    --service "$SERVICE" \
+    --desired-count 0 \
+    --region "$REGION" >/dev/null
+  aws ecs wait services-stable \
+    --cluster "$CLUSTER" \
+    --services "$SERVICE" \
+    --region "$REGION"
   aws ecs update-service \
     --cluster "$CLUSTER" \
     --service "$SERVICE" \
     --task-definition "$new_arn" \
-    --force-new-deployment \
+    --desired-count 1 \
     --region "$REGION" >/dev/null
 
   echo "==> Waiting for service stability"

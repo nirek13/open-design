@@ -14,6 +14,7 @@ import { migrateCritique } from './critique/persistence.js';
 import { migrateMediaTasks } from './media/tasks.js';
 import { migrateLibrary } from './library-store.js';
 import { migratePlugins } from './plugins/persistence.js';
+import { applySqliteRuntimePragmas } from './storage/sqlite-pragmas.js';
 
 type SqliteDb = Database.Database;
 type DbRow = Record<string, any>;
@@ -38,8 +39,7 @@ export function openDatabase(projectRoot: string, { dataDir }: { dataDir?: strin
   if (dbInstance) closeDatabase();
   fs.mkdirSync(dir, { recursive: true });
   const db = new Database(file);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  applySqliteRuntimePragmas(db);
   migrate(db);
   dbInstance = db;
   dbFile = file;
