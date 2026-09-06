@@ -753,6 +753,92 @@ const WORKSPACE_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
   (db) => {
     db.exec(`ALTER TABLE od_tables ADD COLUMN public_write INTEGER NOT NULL DEFAULT 0;`);
   },
+
+  // v17 — Slack-shaped messaging: channel purpose/prefs, pins, later, reminders,
+  // bookmarks, scheduled posts, and per-member status.
+  (db) => {
+    db.exec(`
+      ALTER TABLE od_chat_channels ADD COLUMN purpose TEXT;
+      ALTER TABLE od_chat_channel_members ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE od_chat_channel_members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE od_chat_channel_members ADD COLUMN notify TEXT NOT NULL DEFAULT 'all';
+
+      CREATE TABLE od_chat_pins (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL REFERENCES od_chat_messages(id) ON DELETE CASCADE,
+        pinned_by TEXT NOT NULL,
+        pinned_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX odx_chat_pin_unique ON od_chat_pins(channel_id, message_id);
+      CREATE INDEX odx_chat_pins_channel ON od_chat_pins(channel_id, pinned_at DESC);
+
+      CREATE TABLE od_chat_saves (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        message_id TEXT NOT NULL REFERENCES od_chat_messages(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX odx_chat_save_unique ON od_chat_saves(member_id, message_id);
+      CREATE INDEX odx_chat_saves_member ON od_chat_saves(workspace_id, member_id, created_at DESC);
+
+      CREATE TABLE od_chat_reminders (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        message_id TEXT NOT NULL REFERENCES od_chat_messages(id) ON DELETE CASCADE,
+        fire_at INTEGER NOT NULL,
+        note TEXT,
+        delivered_at INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX odx_chat_reminders_due
+        ON od_chat_reminders(workspace_id, member_id, fire_at)
+        WHERE delivered_at IS NULL;
+
+      CREATE TABLE od_chat_bookmarks (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        url TEXT NOT NULL,
+        emoji TEXT,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX odx_chat_bookmarks_channel ON od_chat_bookmarks(channel_id, position);
+
+      CREATE TABLE od_chat_scheduled (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        author_member_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        mentions_json TEXT NOT NULL DEFAULT '[]',
+        parent_message_id TEXT,
+        send_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX odx_chat_scheduled_due ON od_chat_scheduled(workspace_id, send_at);
+
+      CREATE TABLE od_chat_profiles (
+        member_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        status_text TEXT,
+        status_emoji TEXT,
+        status_expires_at INTEGER,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX odx_chat_profiles_ws ON od_chat_profiles(workspace_id);
+    `);
+  },
+
+  // v18 — Notion page appearance (font, width, lock).
+  (db) => {
+    db.exec(`ALTER TABLE od_pages ADD COLUMN style_json TEXT NOT NULL DEFAULT '{}';`);
+  },
 ];
 
 export class WorkspaceDbManager {

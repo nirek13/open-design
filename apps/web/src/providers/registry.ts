@@ -2930,7 +2930,10 @@ async function workspaceDataJson<T>(url: string, init: RequestInit = {}): Promis
     }
     throw new Error(message);
   }
-  return (await resp.json()) as T;
+  if (resp.status === 204) return undefined as T;
+  const text = await resp.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 const jsonBody = (body: unknown): RequestInit => ({
@@ -3769,9 +3772,9 @@ export async function fetchChatMessages(
 export async function postChatMessage(
   orgId: string,
   channelRef: string,
-  input: { body: string; attachments?: TeamChatAttachment[]; parentMessageId?: string },
-): Promise<TeamChatMessage> {
-  const json = await workspaceDataJson<{ message: TeamChatMessage }>(
+  input: { body: string; attachments?: TeamChatAttachment[]; parentMessageId?: string; sendAt?: number },
+): Promise<{ message?: TeamChatMessage; scheduled?: import('@open-design/contracts').ChatScheduledMessage }> {
+  return workspaceDataJson(
     orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/messages`),
     {
       method: 'POST',
@@ -3779,7 +3782,6 @@ export async function postChatMessage(
       body: JSON.stringify(input),
     },
   );
-  return json.message;
 }
 
 export async function uploadChatFile(orgId: string, file: File): Promise<TeamChatAttachment> {
@@ -3904,6 +3906,198 @@ export async function toggleChatReaction(
     },
   );
   return json.message;
+}
+
+export async function updateChatChannel(
+  orgId: string,
+  channelRef: string,
+  input: { displayName?: string; topic?: string; purpose?: string },
+): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}`),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.channel;
+}
+
+export async function updateChatChannelPrefs(
+  orgId: string,
+  channelRef: string,
+  input: { starred?: boolean; muted?: boolean; notify?: 'all' | 'mentions' | 'nothing' },
+): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/prefs`),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.channel;
+}
+
+export async function markChatChannelUnread(
+  orgId: string,
+  channelRef: string,
+  messageId?: string,
+): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/unread`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(messageId ? { messageId } : {}),
+    },
+  );
+  return json.channel;
+}
+
+export async function archiveChatChannel(orgId: string, channelRef: string): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/archive`),
+    { method: 'POST' },
+  );
+  return json.channel;
+}
+
+export async function unarchiveChatChannel(orgId: string, channelRef: string): Promise<ChatChannel> {
+  const json = await workspaceDataJson<{ channel: ChatChannel }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/unarchive`),
+    { method: 'POST' },
+  );
+  return json.channel;
+}
+
+export async function toggleChatPin(orgId: string, messageId: string): Promise<TeamChatMessage> {
+  const json = await workspaceDataJson<{ message: TeamChatMessage }>(
+    orgPath(orgId, `/chat/messages/${encodeURIComponent(messageId)}/pin`),
+    { method: 'POST' },
+  );
+  return json.message;
+}
+
+export async function toggleChatSave(orgId: string, messageId: string): Promise<TeamChatMessage> {
+  const json = await workspaceDataJson<{ message: TeamChatMessage }>(
+    orgPath(orgId, `/chat/messages/${encodeURIComponent(messageId)}/save`),
+    { method: 'POST' },
+  );
+  return json.message;
+}
+
+export async function remindChatMessage(
+  orgId: string,
+  messageId: string,
+  fireAt: number,
+  note?: string,
+): Promise<import('@open-design/contracts').ChatReminder> {
+  const json = await workspaceDataJson<{ reminder: import('@open-design/contracts').ChatReminder }>(
+    orgPath(orgId, `/chat/messages/${encodeURIComponent(messageId)}/remind`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fireAt, note }),
+    },
+  );
+  return json.reminder;
+}
+
+export async function fetchChatPins(orgId: string, channelRef: string) {
+  return workspaceDataJson<{ pins: import('@open-design/contracts').ChatPin[] }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/pins`),
+  );
+}
+
+export async function fetchChatBookmarks(orgId: string, channelRef: string) {
+  return workspaceDataJson<{ bookmarks: import('@open-design/contracts').ChatBookmark[] }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/bookmarks`),
+  );
+}
+
+export async function createChatBookmark(
+  orgId: string,
+  channelRef: string,
+  input: { label: string; url: string; emoji?: string },
+) {
+  const json = await workspaceDataJson<{ bookmark: import('@open-design/contracts').ChatBookmark }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/bookmarks`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.bookmark;
+}
+
+export async function deleteChatBookmark(orgId: string, bookmarkId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/chat/bookmarks/${encodeURIComponent(bookmarkId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchChatChannelFiles(orgId: string, channelRef: string) {
+  return workspaceDataJson<{ files: TeamChatAttachment[] }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/files`),
+  );
+}
+
+export async function fetchChatLater(orgId: string) {
+  return workspaceDataJson<{ items: ChatSearchHit[] }>(orgPath(orgId, '/chat/later'));
+}
+
+export async function fetchChatActivity(orgId: string) {
+  return workspaceDataJson<{ items: import('@open-design/contracts').ChatActivityItem[] }>(
+    orgPath(orgId, '/chat/activity'),
+  );
+}
+
+export async function fetchChatReminders(orgId: string) {
+  return workspaceDataJson<{ reminders: import('@open-design/contracts').ChatReminder[] }>(
+    orgPath(orgId, '/chat/reminders'),
+  );
+}
+
+export async function cancelChatReminder(orgId: string, reminderId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/chat/reminders/${encodeURIComponent(reminderId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchChatScheduled(orgId: string) {
+  return workspaceDataJson<{ messages: import('@open-design/contracts').ChatScheduledMessage[] }>(
+    orgPath(orgId, '/chat/scheduled'),
+  );
+}
+
+export async function cancelChatScheduled(orgId: string, scheduledId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/chat/scheduled/${encodeURIComponent(scheduledId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchChatStatuses(orgId: string) {
+  return workspaceDataJson<{ statuses: import('@open-design/contracts').ChatStatus[] }>(
+    orgPath(orgId, '/chat/status?all=1'),
+  );
+}
+
+export async function setMyChatStatus(
+  orgId: string,
+  input: { text?: string | null; emoji?: string | null; expiresAt?: number | null },
+) {
+  const json = await workspaceDataJson<{ status: import('@open-design/contracts').ChatStatus }>(
+    orgPath(orgId, '/chat/status'),
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.status;
 }
 
 // --- Organization pages ---------------------------------------------------
@@ -4051,7 +4245,7 @@ export async function scaffoldWorkspacePages(
   );
 }
 
-/** Open or create the notes page linked to an ERP record. */
+/** Open or create the notes page linked to a table record. */
 export async function ensurePageForRecord(
   orgId: string,
   input: { recordId: string; tableId: string; title: string; tableName?: string },

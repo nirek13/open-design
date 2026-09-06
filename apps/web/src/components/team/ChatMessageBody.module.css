@@ -8,6 +8,48 @@
   overflow-wrap: anywhere;
 }
 
+.paragraph {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.quote {
+  margin: 6px 0 0;
+  padding: 0 0 0 10px;
+  border-left: 3px solid var(--chat-accent, #1164a3);
+  color: var(--text-2, rgba(127, 127, 127, 0.92));
+}
+
+.list {
+  margin: 4px 0 0;
+  padding-left: 1.2rem;
+}
+
+.codeBlock {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  font-size: 0.82rem;
+}
+
+.code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  font-size: 0.86em;
+}
+
+.mention {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--chat-accent, #1164a3) 18%, transparent);
+  color: var(--chat-accent, #1164a3);
+  font-weight: 600;
+}
+
 .link {
   color: var(--chat-accent, #1164a3);
   text-decoration: underline;

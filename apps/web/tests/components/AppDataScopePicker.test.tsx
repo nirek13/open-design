@@ -7,6 +7,7 @@ import { APP_GMAIL_SCOPE_TABLE } from '@open-design/contracts';
 import {
   AppDataScopePicker,
   applyOrgDataWriteConsent,
+  grantReadOnExistingTables,
   setTableAccessMode,
   splitGmailScope,
   tableAccessMode,
@@ -57,6 +58,15 @@ describe('app data scope helpers', () => {
       { table: 'leads', mode: 'read' },
     ]);
   });
+
+  it('adds read on existing tables without demoting a write already granted', () => {
+    expect(
+      grantReadOnExistingTables([{ table: 'leads', mode: 'write' }], [{ name: 'leads' }, { name: 'invoices' }]),
+    ).toEqual([
+      { table: 'leads', mode: 'write' },
+      { table: 'invoices', mode: 'read' },
+    ]);
+  });
 });
 
 describe('AppDataScopePicker', () => {
@@ -78,6 +88,32 @@ describe('AppDataScopePicker', () => {
     fireEvent.click(await screen.findByTestId('app-scope-leads-write'));
     await waitFor(() => {
       expect(onChange).toHaveBeenCalledWith([{ table: 'leads', mode: 'write' }]);
+    });
+  });
+
+  it('lists inferred tables that are not in the workspace yet, and grants read on every existing table', async () => {
+    const invoices = { ...LEADS, id: 'tbl-invoices', name: 'invoices', displayName: 'Invoices' };
+    vi.spyOn(registry, 'fetchWorkspaceTables').mockResolvedValue([LEADS, invoices]);
+    const onChange = vi.fn();
+
+    render(
+      <I18nProvider initial="en">
+        <AppDataScopePicker
+          orgId="ws-1"
+          value={[]}
+          onChange={onChange}
+          suggested={[{ table: 'prospects', mode: 'read' }]}
+        />
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByTestId('app-scope-prospects-read')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('app-scope-read-all'));
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith([
+        { table: 'leads', mode: 'read' },
+        { table: 'invoices', mode: 'read' },
+      ]);
     });
   });
 });

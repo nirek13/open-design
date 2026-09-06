@@ -93,14 +93,25 @@ describe('WorkspaceHome', () => {
     vi.restoreAllMocks();
   });
 
-  it('opens on the organization with search ready and recent work shown', async () => {
+  it('opens on the organization with search ready', async () => {
     renderHome();
     expect(await screen.findByText('Northwind')).toBeTruthy();
-    // Recent work is what you see before typing anything.
-    expect(await screen.findByText('INV-1001')).toBeTruthy();
     expect(screen.getByTestId('workspace-search')).toBeTruthy();
+    expect(screen.getByTestId('workspace-ask-input')).toBeTruthy();
+    expect(screen.getByTestId('workspace-magic-import')).toBeTruthy();
     expect(screen.getByTestId('workspace-create')).toBeTruthy();
     expect(screen.queryByTestId('workspace-new-invoices')).toBeNull();
+    expect(screen.queryByText('INV-1001')).toBeNull();
+  });
+
+  it('greets by name when they click into the box', async () => {
+    renderHome();
+    await screen.findByText('Northwind');
+    const greeting = screen.getByTestId('workspace-greeting');
+    expect(greeting.getAttribute('aria-hidden')).toBe('true');
+    fireEvent.focus(screen.getByTestId('workspace-ask-input'));
+    expect(greeting.getAttribute('aria-hidden')).toBe('false');
+    expect(greeting.textContent).toContain('Local');
   });
 
   it('searches across everything as you type', async () => {
@@ -114,8 +125,8 @@ describe('WorkspaceHome', () => {
       },
     ]);
     renderHome();
-    await screen.findByTestId('workspace-search');
-    fireEvent.change(screen.getByTestId('workspace-search'), { target: { value: 'INV-2042' } });
+    await screen.findByTestId('workspace-ask-input');
+    fireEvent.change(screen.getByTestId('workspace-ask-input'), { target: { value: 'INV-2042' } });
     expect(await screen.findByText('INV-2042')).toBeTruthy();
     await waitFor(() => {
       expect(registry.searchWorkspace).toHaveBeenCalledWith('ws-1', 'INV-2042');
@@ -124,9 +135,25 @@ describe('WorkspaceHome', () => {
 
   it('says so plainly when nothing matches', async () => {
     renderHome();
-    await screen.findByTestId('workspace-search');
-    fireEvent.change(screen.getByTestId('workspace-search'), { target: { value: 'nothing here' } });
+    await screen.findByTestId('workspace-ask-input');
+    fireEvent.change(screen.getByTestId('workspace-ask-input'), { target: { value: 'nothing here' } });
     expect(await screen.findByText(/Nothing matches/)).toBeTruthy();
+  });
+
+  it('keeps a longer ask on the hub instead of calling it a failed search', async () => {
+    renderHome();
+    await screen.findByTestId('workspace-ask-input');
+    fireEvent.change(screen.getByTestId('workspace-ask-input'), {
+      target: { value: 'Make a 8-slide pitch deck for investors' },
+    });
+    await waitFor(() => {
+      expect(registry.searchWorkspace).toHaveBeenCalledWith(
+        'ws-1',
+        'Make a 8-slide pitch deck for investors',
+      );
+    });
+    expect(screen.queryByText(/Nothing matches/)).toBeNull();
+    expect(screen.queryByText('INV-1001')).toBeNull();
   });
 
   it('offers to set up the business when it has not been set up', async () => {
@@ -188,6 +215,100 @@ describe('WorkspaceHome', () => {
     expect(screen.getByTestId('builder-import')).toBeTruthy();
     expect(screen.getByTestId('builder-define')).toBeTruthy();
     expect(screen.getByTestId('builder-wiki')).toBeTruthy();
+    expect(screen.getByTestId('builder-existing')).toBeTruthy();
+  });
+
+  it('builds an app against existing workspace tables instead of creating new ones', async () => {
+    const onAskProject = vi.fn().mockResolvedValue(true);
+    render(
+      <I18nProvider initial="en">
+        <OrgProvider>
+          <WorkspaceHome active onAskProject={onAskProject} />
+        </OrgProvider>
+      </I18nProvider>,
+    );
+    fireEvent.click(await screen.findByTestId('workspace-create'));
+    fireEvent.click(screen.getByTestId('workspace-build-tool'));
+    fireEvent.click(await screen.findByTestId('builder-existing'));
+    fireEvent.click(await screen.findByTestId('builder-existing-invoices'));
+    fireEvent.click(screen.getByTestId('builder-existing-continue'));
+    fireEvent.click(await screen.findByTestId('builder-existing-submit'));
+    await waitFor(() => {
+      expect(onAskProject).toHaveBeenCalled();
+    });
+    const payload = onAskProject.mock.calls[0]?.[0] as { prompt?: string } | undefined;
+    expect(payload?.prompt).toContain("api.query('invoices'");
+    expect(payload?.prompt).toContain('do not create a parallel one');
+  });
+
+  function dropFile(file: File, target: Window | Element = window) {
+    const dataTransfer = {
+      types: ['Files'],
+      files: [file],
+      items: [{ kind: 'file', type: file.type, getAsFile: () => file }],
+      dropEffect: 'none',
+      effectAllowed: 'all',
+    };
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+  }
+
+  it('shows a drop overlay and plans magic import from a dropped spreadsheet', async () => {
+    const planImport = vi.spyOn(registry, 'planImport').mockResolvedValue({
+      tableName: 'customers',
+      displayName: 'Customers',
+      appendingToExisting: false,
+      columns: [
+        {
+          header: 'Name',
+          fieldName: 'name',
+          type: 'text',
+          reason: 'looks like names',
+          sample: ['Ada'],
+        },
+      ],
+      rowCount: 1,
+      skipped: [],
+    });
+    renderHome();
+    await screen.findByTestId('workspace-ask-input');
+    const file = new File(['Name\nAda\n'], 'customers.csv', { type: 'text/csv' });
+    fireEvent.dragOver(window, {
+      dataTransfer: { types: ['Files'], files: [], items: [], dropEffect: 'copy' },
+    });
+    expect(await screen.findByTestId('workspace-import-drop')).toBeTruthy();
+    dropFile(file);
+    expect(await screen.findByTestId('tool-builder')).toBeTruthy();
+    expect(await screen.findByTestId('builder-plan')).toBeTruthy();
+    expect(screen.getByText(/1 row\(s\) into customers/)).toBeTruthy();
+    expect(planImport).toHaveBeenCalledWith('ws-1', 'Name\nAda\n', 'customers.csv');
+    expect(screen.queryByTestId('workspace-import-drop')).toBeNull();
+  });
+
+  it('plans a dropped file from the magic import dropzone', async () => {
+    const planImport = vi.spyOn(registry, 'planImport').mockResolvedValue({
+      tableName: 'suppliers',
+      displayName: 'Suppliers',
+      appendingToExisting: false,
+      columns: [
+        {
+          header: 'Name',
+          fieldName: 'name',
+          type: 'text',
+          reason: 'looks like names',
+          sample: ['Acme'],
+        },
+      ],
+      rowCount: 1,
+      skipped: [],
+    });
+    renderHome();
+    fireEvent.click(await screen.findByTestId('workspace-magic-import'));
+    expect(await screen.findByTestId('builder-file-drop')).toBeTruthy();
+    const file = new File(['Name\nAcme\n'], 'suppliers.csv', { type: 'text/csv' });
+    dropFile(file, screen.getByTestId('builder-file-drop'));
+    expect(await screen.findByTestId('builder-plan')).toBeTruthy();
+    expect(planImport).toHaveBeenCalledWith('ws-1', 'Name\nAcme\n', 'suppliers.csv');
   });
 
   it('plans a magic import from a public link before writing', async () => {
@@ -217,8 +338,7 @@ describe('WorkspaceHome', () => {
       content: 'Name\nAda\n',
     });
     renderHome();
-    fireEvent.click(await screen.findByTestId('workspace-create'));
-    fireEvent.click(screen.getByTestId('workspace-magic-import'));
+    fireEvent.click(await screen.findByTestId('workspace-magic-import'));
     fireEvent.change(screen.getByTestId('builder-import-url'), {
       target: { value: 'https://example.com/customers.csv' },
     });
@@ -275,8 +395,7 @@ describe('WorkspaceHome', () => {
       skipped: 0,
     });
     renderHome();
-    fireEvent.click(await screen.findByTestId('workspace-create'));
-    fireEvent.click(screen.getByTestId('workspace-magic-import'));
+    fireEvent.click(await screen.findByTestId('workspace-magic-import'));
     fireEvent.change(screen.getByTestId('builder-import-url'), {
       target: {
         value: 'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
@@ -330,8 +449,7 @@ describe('WorkspaceHome', () => {
         </OrgProvider>
       </I18nProvider>,
     );
-    fireEvent.click(await screen.findByTestId('workspace-create'));
-    fireEvent.click(screen.getByTestId('workspace-magic-import'));
+    fireEvent.click(await screen.findByTestId('workspace-magic-import'));
     fireEvent.change(screen.getByTestId('builder-import-url'), {
       target: { value: 'https://example.com/tenders.csv' },
     });
@@ -356,7 +474,7 @@ describe('WorkspaceHome', () => {
     });
   });
 
-  it('shows imported tables as visual data sources on the hub', async () => {
+  it('keeps imported tables off the hub until they search', async () => {
     const suppliers = {
       ...INVOICES_TABLE,
       id: 'tbl-sup',
@@ -380,27 +498,14 @@ describe('WorkspaceHome', () => {
       ],
     };
     vi.spyOn(registry, 'fetchWorkspaceTables').mockResolvedValue([INVOICES_TABLE, suppliers]);
-    vi.spyOn(registry, 'queryWorkspaceRecords').mockResolvedValue({
-      records: [
-        {
-          id: 'rec-sup-1',
-          tableId: 'tbl-sup',
-          data: { name: 'Acme Steel' },
-          revision: 1,
-          createdByKind: 'user',
-          createdById: 'wsm-1',
-          createdAt: 1,
-          updatedAt: 1,
-          deletedAt: null,
-        },
-      ],
-      nextCursor: null,
-    });
     renderHome();
-    expect(await screen.findByTestId('workspace-data-sources')).toBeTruthy();
-    expect(screen.getByTestId('workspace-source-suppliers')).toBeTruthy();
-    expect(screen.getByTestId('source-gallery-suppliers')).toBeTruthy();
-    expect(screen.getByText('Acme Steel')).toBeTruthy();
+    await screen.findByTestId('workspace-ask-input');
+    await waitFor(() => {
+      expect(registry.fetchWorkspaceTables).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId('workspace-data-sources')).toBeNull();
+    expect(screen.queryByText('Acme Steel')).toBeNull();
+    expect(screen.getByTestId('workspace-create')).toBeTruthy();
   });
 
   it('reports a load failure instead of showing an empty workspace', async () => {

@@ -1,14 +1,15 @@
 // Turn a public URL into the same delimited text the spreadsheet importer
 // already understands. The point of "magic import" is that a Google Sheet,
-// a JSON API, an HTML table, or any public page the AI can read should land
-// in the workspace the same way a CSV drop does — preview the reading, then
-// commit.
+// a JSON API, an HTML table, a JS-rendered directory, or any public page
+// the AI can read should land in the workspace the same way a CSV drop does
+// — preview the reading, then commit.
 //
 // Network stays behind `fetchExternalBrandAsset` so a pasted link cannot
 // point the daemon at loopback or cloud metadata (same SSRF bar as brand
 // harvest). Nothing here writes; callers pass the result to `buildImportPlan`.
 
 import { fetchExternalBrandAsset } from '../brands/safe-fetch.js';
+import { fetchAlgoliaTable, parseAlgoliaSearchConfig } from './discover-page-data.js';
 import {
   defaultExtractTabularWithAi,
   pageHtmlToText,
@@ -126,6 +127,7 @@ export function jsonToCsv(raw: string): string | null {
       obj.data ??
       obj.records ??
       obj.items ??
+      obj.hits ??
       obj.rows ??
       obj.values ??
       (Object.keys(obj).length > 0 ? [obj] : null);
@@ -182,6 +184,35 @@ export function htmlTableToCsv(html: string): string | null {
     if (rows.length >= 2 && (!best || rows.length > best.length)) best = rows;
   }
   return best ? rowsToCsv(best) : null;
+}
+
+function filledLines(text: string): number {
+  return text.split('\n').filter((line) => line.trim()).length;
+}
+
+function pickRicherCsv(left: string | null, right: string | null): string | null {
+  if (!left) return right;
+  if (!right) return left;
+  return filledLines(right) > filledLines(left) ? right : left;
+}
+
+/** HTML tables first; if the page is a JS directory, follow its public search index. */
+async function tableFromHtmlPage(
+  body: string,
+  fetchFn: typeof fetchExternalBrandAsset,
+): Promise<{ content: string; kind: ImportSourceKind } | null> {
+  const heuristic = extractTabularFromHtml(body) ?? htmlTableToCsv(body);
+  let discovered: string | null = null;
+  if (parseAlgoliaSearchConfig(body)) {
+    const rows = await fetchAlgoliaTable(body, fetchFn);
+    discovered = rows ? rowsToCsv(rows) : null;
+  }
+  const richer = pickRicherCsv(heuristic, discovered);
+  if (!richer) return null;
+  if (discovered && richer === discovered && discovered !== heuristic) {
+    return { content: discovered, kind: 'json' };
+  }
+  return { content: richer, kind: 'html-table' };
 }
 
 function detectKind(
@@ -252,33 +283,29 @@ export async function fetchImportSource(
       );
     }
     content = csv;
-  } else if (kind === 'html-table') {
-    const csv = extractTabularFromHtml(body) ?? htmlTableToCsv(body);
-    if (csv) {
-      content = csv;
+  } else if (kind === 'html-table' || !looksDelimited(body)) {
+    const page =
+      kind === 'html-table' || /<html\b|<div\b|<script\b/i.test(body)
+        ? await tableFromHtmlPage(body, fetchFn)
+        : jsonToCsv(body)
+          ? { content: jsonToCsv(body)!, kind: 'json' as const }
+          : null;
+    if (page) {
+      content = page.content;
+      kind = page.kind;
     } else {
       const ai = await runAiExtract(url.trim(), body, extractWithAi);
-      if (!ai) {
+      if (ai) {
+        kind = 'ai';
+        content = rowsToCsv(ai.rows);
+        aiTable = ai.tableName;
+      } else if (kind === 'html-table') {
         throw new WorkspaceDataError(
           'IMPORT_UNREADABLE',
           422,
           'no rows could be read from that page. Add an AI key in Settings to extract data from any public site',
         );
       }
-      kind = 'ai';
-      content = rowsToCsv(ai.rows);
-      aiTable = ai.tableName;
-    }
-  } else if (!looksDelimited(body) && (extractTabularFromHtml(body) || htmlTableToCsv(body))) {
-    content = (extractTabularFromHtml(body) ?? htmlTableToCsv(body))!;
-  } else if (!looksDelimited(body) && jsonToCsv(body)) {
-    content = jsonToCsv(body)!;
-  } else if (!looksDelimited(body)) {
-    const ai = await runAiExtract(url.trim(), body, extractWithAi);
-    if (ai) {
-      kind = 'ai';
-      content = rowsToCsv(ai.rows);
-      aiTable = ai.tableName;
     }
   }
 

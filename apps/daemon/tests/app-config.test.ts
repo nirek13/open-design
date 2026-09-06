@@ -619,6 +619,12 @@ describe('app-config disabled lists', () => {
     const cfg = await readAppConfig(dataDir);
     expect(cfg.disabledSkills).toEqual([]);
   });
+
+  it('persists disabledTools as string array', async () => {
+    await writeAppConfig(dataDir, { disabledTools: ['internal:generate_image', 'connector:github'] });
+    const cfg = await readAppConfig(dataDir);
+    expect(cfg.disabledTools).toEqual(['internal:generate_image', 'connector:github']);
+  });
 });
 
 describe('app-config telemetry prefs', () => {

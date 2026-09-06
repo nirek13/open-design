@@ -5,7 +5,7 @@
 // Interaction model follows Notion's public editor:
 // `/` opens a type picker; Enter splits / creates a sibling; empty Backspace
 // deletes or turns the block back into a paragraph; Tab / Shift+Tab nest;
-// markdown prefixes (`# `, `- `, `[] `, `> `, ```) convert the block.
+// markdown prefixes (`# `, `- `, `[] `, `> `, ```, `$$ `) convert the block.
 // Nested children are first-class. Persist through the pages API.
 
 import {
@@ -20,9 +20,11 @@ import {
 } from 'react';
 import {
   PAGE_BLOCK_CATALOG,
-  type PageBlock,
-  type PageBlockInput,
+  PAGE_CALLOUT_ICONS,
+  PAGE_CODE_LANGUAGES,
+  PAGE_COLOR_IDS,
   type PageBlockType,
+  type PageColorId,
 } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import styles from './BlockEditor.module.css';
@@ -35,23 +37,81 @@ import {
   pageMakeAction,
   type PageMakeKind,
 } from '../../runtime/page-make';
+import {
+  insertPageMention,
+  latexToDisplay,
+  MEDIA_BLOCK_TYPES,
+} from '../../runtime/page-rich-text';
+import { pageColorStyle, PAGE_COLOR_SWATCHES } from '../../runtime/page-style';
+import {
+  applyMarkdownShortcut,
+  BASIC_TYPES,
+  blocksFromServer,
+  blocksToServer,
+  cloneBlock,
+  collectHeadings,
+  columnListWithCount,
+  defaultProps,
+  emptyBlock,
+  findBlock,
+  flattenKeys,
+  indentAt,
+  insertAfter,
+  insertBefore,
+  isDescendant,
+  LIST_TYPES,
+  locate,
+  MEDIA_TYPES,
+  numberedIndex,
+  outdentAt,
+  removeAt,
+  stampServerIds,
+  tableRows,
+  updateAt,
+  type DraftBlock,
+  type PageIndexEntry,
+} from './page-draft';
 
-export interface DraftBlock {
-  /** Stable client key (server id when known). */
-  key: string;
-  id?: string;
-  type: PageBlockType;
-  text: string;
-  props: Record<string, unknown>;
-  children: DraftBlock[];
-  open?: boolean;
-}
+export type { DraftBlock, PageIndexEntry };
+export {
+  applyMarkdownShortcut,
+  blocksFromServer,
+  blocksToServer,
+  emptyBlock,
+  stampServerIds,
+};
 
-export interface PageIndexEntry {
-  id: string;
-  title: string;
-  icon: string | null;
-}
+const ICONS: Partial<Record<PageBlockType, string>> = {
+  paragraph: '¶',
+  heading_1: 'H1',
+  heading_2: 'H2',
+  heading_3: 'H3',
+  bulleted_list_item: '•',
+  numbered_list_item: '1.',
+  to_do: '☑',
+  toggle: '▸',
+  callout: '💡',
+  quote: '❝',
+  code: '</>',
+  divider: '—',
+  bookmark: '🔗',
+  embed: '▣',
+  image: '🖼',
+  video: '▶',
+  audio: '♫',
+  file: '📎',
+  pdf: 'PDF',
+  equation: '∑',
+  table_of_contents: '☰',
+  breadcrumb: '›',
+  column_list: '▥',
+  column: '▯',
+  table: '▦',
+  database: '▤',
+  artifact: '◇',
+  page: '📄',
+  record: '🧾',
+};
 
 interface SlashState {
   blockKey: string;
@@ -79,346 +139,10 @@ interface Props {
   onCreateSubpage?: () => Promise<{ id: string; title: string; icon: string | null } | null>;
   /** Slash Make app/picture/video/slides generates a unique file and embeds it. */
   onMake?: (kind: PageMakeKind, prompt: string) => void;
+  crumbs?: PageIndexEntry[];
 }
 
-const ICONS: Partial<Record<PageBlockType, string>> = {
-  paragraph: '¶',
-  heading_1: 'H1',
-  heading_2: 'H2',
-  heading_3: 'H3',
-  bulleted_list_item: '•',
-  numbered_list_item: '1.',
-  to_do: '☑',
-  toggle: '▸',
-  callout: '💡',
-  quote: '❝',
-  code: '</>',
-  divider: '—',
-  bookmark: '🔗',
-  embed: '▣',
-  table: '▦',
-  database: '▤',
-  artifact: '◇',
-  page: '📄',
-  record: '🧾',
-};
-
-const LIST_TYPES = new Set<PageBlockType>([
-  'bulleted_list_item',
-  'numbered_list_item',
-  'to_do',
-]);
-
-const BASIC_TYPES = new Set<PageBlockType>([
-  'paragraph',
-  'heading_1',
-  'heading_2',
-  'heading_3',
-  'bulleted_list_item',
-  'numbered_list_item',
-  'to_do',
-  'toggle',
-  'callout',
-  'quote',
-  'code',
-  'divider',
-]);
-
-function newKey(): string {
-  return `local-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-export function blocksFromServer(blocks: PageBlock[]): DraftBlock[] {
-  const walk = (list: PageBlock[]): DraftBlock[] =>
-    list.map((block) => {
-      const props = { ...block.props };
-      let text = typeof block.content === 'string' ? block.content : '';
-      if (block.type === 'table') {
-        props.rows = typeof block.content === 'object' && block.content ? block.content : { rows: [['', ''], ['', '']] };
-      }
-      if (block.type === 'bookmark' && !props.url && text.trim()) {
-        props.url = text.trim();
-      }
-      if (block.type === 'embed' && !props.url && text.trim()) {
-        props.url = text.trim();
-      }
-      if ((block.type === 'database' || block.type === 'page' || block.type === 'record' || block.type === 'artifact') && text.trim()) {
-        if (block.type === 'database' && !props.tableId) props.tableId = text.trim();
-        if (block.type === 'page' && !props.pageId) props.pageId = text.trim();
-        if (block.type === 'record' && !props.recordId) props.recordId = text.trim();
-        if (block.type === 'artifact' && !props.path) props.path = text.trim();
-      }
-      return {
-        key: block.id,
-        id: block.id,
-        type: block.type,
-        text,
-        props,
-        children: walk(block.children),
-        open: block.type === 'toggle' ? Boolean(props.open ?? true) : true,
-      };
-    });
-  const next = walk(blocks);
-  return next.length > 0 ? next : [emptyBlock('paragraph')];
-}
-
-export function blocksToServer(blocks: DraftBlock[]): PageBlockInput[] {
-  return blocks.map((block, index) => {
-    const props: Record<string, unknown> = { ...block.props };
-    if (block.type === 'to_do' && props.checked === undefined) props.checked = false;
-    if (block.type === 'toggle') props.open = Boolean(block.open);
-
-    let content: unknown = block.text;
-    if (block.type === 'divider') content = null;
-    if (block.type === 'table') {
-      content = tablePayload(block);
-      delete props.rows;
-    }
-    if (block.type === 'bookmark' && !props.url && block.text.trim()) {
-      props.url = block.text.trim();
-    }
-    if (block.type === 'embed' && !props.url && block.text.trim()) {
-      props.url = block.text.trim();
-    }
-    if (block.type === 'artifact' && block.text.trim()) {
-      props.path = String(props.path ?? block.text.trim());
-      content = props.path;
-    }
-    if (block.type === 'database' && block.text.trim() && !props.tableId) {
-      props.tableId = block.text.trim();
-    }
-    if (block.type === 'record' && block.text.trim() && !props.recordId) {
-      props.recordId = block.text.trim();
-    }
-    if (block.type === 'page' && block.text.trim() && !props.pageId) {
-      props.pageId = block.text.trim();
-    }
-
-    return {
-      ...(block.id ? { id: block.id } : {}),
-      type: block.type,
-      content: content as PageBlockInput['content'],
-      props: props as PageBlockInput['props'],
-      position: index,
-      children: blocksToServer(block.children),
-    };
-  });
-}
-
-/** Keep client keys stable after a round-trip so the caret does not jump. */
-export function stampServerIds(local: DraftBlock[], saved: PageBlock[]): DraftBlock[] {
-  return local.map((block, index) => {
-    const match = saved[index];
-    if (!match) return block;
-    return {
-      ...block,
-      id: match.id,
-      children: stampServerIds(block.children, match.children),
-    };
-  });
-}
-
-export function emptyBlock(type: PageBlockType = 'paragraph'): DraftBlock {
-  return {
-    key: newKey(),
-    type,
-    text: '',
-    props:
-      type === 'to_do'
-        ? { checked: false }
-        : type === 'table'
-          ? { rows: { rows: [['', ''], ['', '']] } }
-          : {},
-    children: [],
-    open: true,
-  };
-}
-
-function cloneBlock(block: DraftBlock): DraftBlock {
-  return {
-    ...block,
-    key: newKey(),
-    id: undefined,
-    children: block.children.map(cloneBlock),
-  };
-}
-
-function defaultProps(type: PageBlockType): Record<string, unknown> {
-  if (type === 'to_do') return { checked: false };
-  if (type === 'table') return { rows: { rows: [['', ''], ['', '']] } };
-  return {};
-}
-
-function tablePayload(block: DraftBlock): { rows: string[][] } {
-  const raw = block.props.rows;
-  const nested = asRecord(raw).rows;
-  if (Array.isArray(nested)) {
-    return { rows: nested.map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : [''])) };
-  }
-  if (Array.isArray(raw)) {
-    return { rows: (raw as unknown[]).map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : [''])) };
-  }
-  return { rows: [['', ''], ['', '']] };
-}
-
-function tableRows(block: DraftBlock): string[][] {
-  return tablePayload(block).rows;
-}
-
-function updateAt(list: DraftBlock[], key: string, patch: Partial<DraftBlock>): DraftBlock[] {
-  return list.map((block) => {
-    if (block.key === key) return { ...block, ...patch };
-    if (block.children.length) {
-      return { ...block, children: updateAt(block.children, key, patch) };
-    }
-    return block;
-  });
-}
-
-function removeAt(list: DraftBlock[], key: string, keepEmpty = false): DraftBlock[] {
-  const out: DraftBlock[] = [];
-  for (const block of list) {
-    if (block.key === key) continue;
-    out.push({
-      ...block,
-      children: block.children.length ? removeAt(block.children, key, true) : block.children,
-    });
-  }
-  if (keepEmpty) return out;
-  return out.length > 0 ? out : [emptyBlock()];
-}
-
-function insertAfter(list: DraftBlock[], key: string, inserted: DraftBlock): DraftBlock[] {
-  const out: DraftBlock[] = [];
-  for (const block of list) {
-    if (block.key === key) {
-      out.push(block, inserted);
-      continue;
-    }
-    out.push({
-      ...block,
-      children: block.children.length ? insertAfter(block.children, key, inserted) : block.children,
-    });
-  }
-  return out;
-}
-
-function insertBefore(list: DraftBlock[], key: string, inserted: DraftBlock): DraftBlock[] {
-  const out: DraftBlock[] = [];
-  for (const block of list) {
-    if (block.key === key) {
-      out.push(inserted, block);
-      continue;
-    }
-    out.push({
-      ...block,
-      children: insertBefore(block.children, key, inserted),
-    });
-  }
-  return out;
-}
-
-function findBlock(list: DraftBlock[], key: string): DraftBlock | null {
-  for (const block of list) {
-    if (block.key === key) return block;
-    const nested = findBlock(block.children, key);
-    if (nested) return nested;
-  }
-  return null;
-}
-
-function isDescendant(list: DraftBlock[], ancestorKey: string, targetKey: string): boolean {
-  const ancestor = findBlock(list, ancestorKey);
-  if (!ancestor) return false;
-  return Boolean(findBlock(ancestor.children, targetKey));
-}
-
-interface Location {
-  parentKey: string | null;
-  siblings: DraftBlock[];
-  index: number;
-}
-
-function locate(list: DraftBlock[], key: string, parentKey: string | null = null): Location | null {
-  const index = list.findIndex((block) => block.key === key);
-  if (index >= 0) return { parentKey, siblings: list, index };
-  for (const block of list) {
-    const found = locate(block.children, key, block.key);
-    if (found) return found;
-  }
-  return null;
-}
-
-function replaceSiblings(
-  list: DraftBlock[],
-  parentKey: string | null,
-  fn: (siblings: DraftBlock[]) => DraftBlock[],
-): DraftBlock[] {
-  if (parentKey === null) return fn(list);
-  return list.map((block) => {
-    if (block.key === parentKey) return { ...block, children: fn(block.children) };
-    return { ...block, children: replaceSiblings(block.children, parentKey, fn) };
-  });
-}
-
-function indentAt(list: DraftBlock[], key: string): DraftBlock[] {
-  const loc = locate(list, key);
-  if (!loc || loc.index <= 0) return list;
-  const prev = loc.siblings[loc.index - 1];
-  const item = loc.siblings[loc.index];
-  if (!prev || !item) return list;
-  const nextSiblings = loc.siblings.filter((_, i) => i !== loc.index);
-  nextSiblings[loc.index - 1] = {
-    ...prev,
-    open: true,
-    children: [...prev.children, item],
-  };
-  return replaceSiblings(list, loc.parentKey, () => nextSiblings);
-}
-
-function outdentAt(list: DraftBlock[], key: string): DraftBlock[] {
-  const loc = locate(list, key);
-  if (!loc?.parentKey) return list;
-  const parentLoc = locate(list, loc.parentKey);
-  if (!parentLoc) return list;
-  const item = loc.siblings[loc.index];
-  if (!item) return list;
-  const remaining = loc.siblings.filter((_, i) => i !== loc.index);
-  const parent = parentLoc.siblings[parentLoc.index];
-  if (!parent) return list;
-  const nextGrand = [...parentLoc.siblings];
-  nextGrand[parentLoc.index] = { ...parent, children: remaining };
-  nextGrand.splice(parentLoc.index + 1, 0, item);
-  return replaceSiblings(list, parentLoc.parentKey, () => nextGrand);
-}
-
-function flattenKeys(list: DraftBlock[]): string[] {
-  const keys: string[] = [];
-  const walk = (nodes: DraftBlock[]) => {
-    for (const node of nodes) {
-      keys.push(node.key);
-      if (node.type !== 'toggle' || node.open !== false) walk(node.children);
-    }
-  };
-  walk(list);
-  return keys;
-}
-
-function numberedIndex(siblings: DraftBlock[], key: string): number {
-  let n = 0;
-  for (const sibling of siblings) {
-    if (sibling.type === 'numbered_list_item') n += 1;
-    else n = 0;
-    if (sibling.key === key) return Math.max(n, 1);
-  }
-  return 1;
-}
+type ExtraSlashId = 'columns-2' | 'columns-3' | 'toggle-h1' | 'toggle-h2' | 'toggle-h3';
 
 type SlashItem =
   | {
@@ -434,7 +158,28 @@ type SlashItem =
       label: string;
       hint: string;
       glyph: string;
+    }
+  | {
+      source: 'extra';
+      id: ExtraSlashId;
+      label: string;
+      hint: string;
+      glyph: string;
     };
+
+const EXTRA_SLASH: Array<{
+  id: ExtraSlashId;
+  label: string;
+  hint: string;
+  glyph: string;
+  keywords: readonly string[];
+}> = [
+  { id: 'columns-2', label: '2 columns', hint: 'Split into two columns', glyph: '▥', keywords: ['columns', '2', 'layout'] },
+  { id: 'columns-3', label: '3 columns', hint: 'Split into three columns', glyph: '▥', keywords: ['columns', '3', 'layout'] },
+  { id: 'toggle-h1', label: 'Toggle heading 1', hint: 'Collapsible large heading', glyph: 'H1', keywords: ['toggle', 'heading', 'h1'] },
+  { id: 'toggle-h2', label: 'Toggle heading 2', hint: 'Collapsible medium heading', glyph: 'H2', keywords: ['toggle', 'heading', 'h2'] },
+  { id: 'toggle-h3', label: 'Toggle heading 3', hint: 'Collapsible small heading', glyph: 'H3', keywords: ['toggle', 'heading', 'h3'] },
+];
 
 function matchesSlashQuery(
   label: string,
@@ -459,6 +204,15 @@ function filterSlashItems(query: string): SlashItem[] {
     hint: action.hint,
     glyph: action.glyph,
   }));
+  const extras: SlashItem[] = EXTRA_SLASH.filter((item) =>
+    matchesSlashQuery(item.label, item.hint, item.keywords, item.id, query),
+  ).map((item) => ({
+    source: 'extra',
+    id: item.id,
+    label: item.label,
+    hint: item.hint,
+    glyph: item.glyph,
+  }));
   const blocks: SlashItem[] = PAGE_BLOCK_CATALOG.filter((item) =>
     matchesSlashQuery(item.label, item.hint, item.keywords, item.type, query),
   ).map((item) => ({
@@ -468,22 +222,7 @@ function filterSlashItems(query: string): SlashItem[] {
     hint: item.hint,
     glyph: ICONS[item.type] ?? '¶',
   }));
-  return [...makeItems, ...blocks];
-}
-
-export function applyMarkdownShortcut(text: string): { type: PageBlockType; text: string } | null {
-  if (text === '# ') return { type: 'heading_1', text: '' };
-  if (text === '## ') return { type: 'heading_2', text: '' };
-  if (text === '### ') return { type: 'heading_3', text: '' };
-  if (text === '- ' || text === '* ') return { type: 'bulleted_list_item', text: '' };
-  if (text === '1. ' || text === '1) ') return { type: 'numbered_list_item', text: '' };
-  if (text === '[] ' || text === '[ ] ' || text === '[x] ') {
-    return { type: 'to_do', text: '' };
-  }
-  if (text === '> ') return { type: 'quote', text: '' };
-  if (text === '```') return { type: 'code', text: '' };
-  if (text === '---' || text === '***') return { type: 'divider', text: '' };
-  return null;
+  return [...makeItems, ...extras, ...blocks];
 }
 
 function placeholderFor(type: PageBlockType): string {
@@ -511,6 +250,18 @@ function placeholderFor(type: PageBlockType): string {
       return 'Paste a URL…';
     case 'embed':
       return 'Paste a URL, pick created work, or make a unique app, picture, video, or slides';
+    case 'image':
+      return 'Paste an image URL or drop a picture';
+    case 'video':
+      return 'Paste a video URL';
+    case 'audio':
+      return 'Paste an audio URL';
+    case 'file':
+      return 'Paste a file URL';
+    case 'pdf':
+      return 'Paste a PDF URL';
+    case 'equation':
+      return 'E = mc^2';
     case 'database':
       return 'Workspace table id…';
     case 'artifact':
@@ -560,9 +311,12 @@ export function BlockEditor({
   onOpenPage,
   onCreateSubpage,
   onMake,
+  crumbs = [],
 }: Props) {
   const [slash, setSlash] = useState<SlashState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [mention, setMention] = useState<{ blockKey: string; query: string; index: number } | null>(null);
+  const [format, setFormat] = useState<{ key: string; top: number; left: number } | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(blocks[0]?.key ?? null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropState | null>(null);
@@ -571,14 +325,24 @@ export function BlockEditor({
 
   const slashItems = useMemo(() => (slash ? filterSlashItems(slash.query) : []), [slash]);
   const makeSlash = slashItems.filter((item) => item.source === 'make');
+  const extraSlash = slashItems.filter((item) => item.source === 'extra');
   const basicSlash = slashItems.filter(
     (item): item is Extract<SlashItem, { source: 'block' }> =>
       item.source === 'block' && BASIC_TYPES.has(item.type),
   );
+  const mediaSlash = slashItems.filter(
+    (item): item is Extract<SlashItem, { source: 'block' }> =>
+      item.source === 'block' && MEDIA_TYPES.has(item.type),
+  );
   const otherSlash = slashItems.filter(
     (item): item is Extract<SlashItem, { source: 'block' }> =>
-      item.source === 'block' && !BASIC_TYPES.has(item.type),
+      item.source === 'block' && !BASIC_TYPES.has(item.type) && !MEDIA_TYPES.has(item.type),
   );
+  const mentionItems = useMemo(() => {
+    if (!mention) return [];
+    const q = mention.query.toLowerCase();
+    return pages.filter((page) => !q || page.title.toLowerCase().includes(q) || page.id.includes(q)).slice(0, 8);
+  }, [mention, pages]);
 
   useEffect(() => {
     if (!focusKey || focusKey === prevFocus.current) return;
@@ -611,12 +375,17 @@ export function BlockEditor({
     (key: string, type: PageBlockType, nextText?: string, extraProps?: Record<string, unknown>) => {
       const current = findBlock(blocks, key);
       if (!current) return;
+      const structural = type === 'divider' || type === 'table_of_contents' || type === 'breadcrumb' || type === 'column_list';
       let next = updateAt(blocks, key, {
         type,
-        text: type === 'divider' ? '' : nextText !== undefined ? nextText : current.text,
+        text: structural && type !== 'column_list' ? '' : nextText !== undefined ? nextText : current.text,
         props: { ...defaultProps(type), ...extraProps },
+        children:
+          type === 'column_list'
+            ? columnListWithCount((extraProps?.columns as 2 | 3 | undefined) === 3 ? 3 : 2).children
+            : current.children,
       });
-      if (type === 'divider') {
+      if (structural && type !== 'column_list') {
         const after = emptyBlock('paragraph');
         next = insertAfter(next, key, after);
         setFocusKey(after.key);
@@ -625,7 +394,7 @@ export function BlockEditor({
       }
       onChange(next);
       const node = refs.current.get(key);
-      if (node && type !== 'divider') node.textContent = nextText !== undefined ? nextText : current.text;
+      if (node && !structural) node.textContent = nextText !== undefined ? nextText : current.text;
     },
     [blocks, onChange],
   );
@@ -637,6 +406,14 @@ export function BlockEditor({
       setSlash(null);
       if (item.source === 'make') {
         applyType(key, 'embed', '', { makeKind: item.kind });
+        return;
+      }
+      if (item.source === 'extra') {
+        if (item.id === 'columns-2') applyType(key, 'column_list', '', { columns: 2 });
+        else if (item.id === 'columns-3') applyType(key, 'column_list', '', { columns: 3 });
+        else if (item.id === 'toggle-h1') applyType(key, 'heading_1', '', { toggle: true });
+        else if (item.id === 'toggle-h2') applyType(key, 'heading_2', '', { toggle: true });
+        else applyType(key, 'heading_3', '', { toggle: true });
         return;
       }
       const type = item.type;
@@ -665,6 +442,19 @@ export function BlockEditor({
     onMake?.(kind, prompt);
   };
 
+  const applyMention = (key: string, page: PageIndexEntry) => {
+    const current = findBlock(blocks, key);
+    if (!current) return;
+    const node = refs.current.get(key);
+    const at = /(?:^|\s)@([^\s]*)$/.exec(current.text);
+    const start = at ? current.text.length - (at[0].startsWith(' ') ? at[0].length - 1 : at[0].length) : current.text.length;
+    const next = insertPageMention(current.text, start, current.text.length, page.title || 'Untitled', page.id);
+    onChange(updateAt(blocks, key, { text: next }));
+    if (node) node.textContent = next;
+    setMention(null);
+    setFocusKey(key);
+  };
+
   const onText = (key: string, text: string, node?: HTMLElement) => {
     const md = applyMarkdownShortcut(text);
     if (md) {
@@ -681,11 +471,19 @@ export function BlockEditor({
     if (current?.type === 'bookmark' && text.trim()) props.url = text.trim();
     if (current?.type === 'embed' && text.trim()) props.url = text.trim();
     if (current?.type === 'page' && text.trim()) props.pageId = text.trim();
+    if (current && MEDIA_BLOCK_TYPES.has(current.type) && text.trim()) props.url = text.trim();
     onChange(updateAt(blocks, key, { text, props }));
     if (text.startsWith('/')) {
       setSlash({ blockKey: key, query: text.slice(1), index: 0 });
+      setMention(null);
     } else if (slash?.blockKey === key) {
       setSlash(null);
+    }
+    const at = /(?:^|\s)@([^\s]*)$/.exec(text);
+    if (at && pages.length > 0) {
+      setMention({ blockKey: key, query: at[1] ?? '', index: 0 });
+    } else if (mention?.blockKey === key) {
+      setMention(null);
     }
   };
 
@@ -716,6 +514,32 @@ export function BlockEditor({
       }
       return;
     }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'u') {
+      const next = wrapSelection(node, '__', '__');
+      if (next !== null) {
+        event.preventDefault();
+        onChange(updateAt(blocks, block.key, { text: next }));
+      }
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 's') {
+      const next = wrapSelection(node, '~~', '~~');
+      if (next !== null) {
+        event.preventDefault();
+        onChange(updateAt(blocks, block.key, { text: next }));
+      }
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      const href = window.prompt('Link URL');
+      if (!href) return;
+      const next = wrapSelection(node, '[', `](${href.trim()})`);
+      if (next !== null) {
+        event.preventDefault();
+        onChange(updateAt(blocks, block.key, { text: next }));
+      }
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && block.type === 'to_do') {
       event.preventDefault();
       onChange(
@@ -724,6 +548,33 @@ export function BlockEditor({
         }),
       );
       return;
+    }
+
+    if (mention && mentionItems.length > 0 && mention.blockKey === block.key) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setMention({ ...mention, index: (mention.index + 1) % mentionItems.length });
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setMention({
+          ...mention,
+          index: (mention.index - 1 + mentionItems.length) % mentionItems.length,
+        });
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        const pick = mentionItems[mention.index] ?? mentionItems[0];
+        if (pick) applyMention(block.key, pick);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMention(null);
+        return;
+      }
     }
 
     if (slash && slashItems.length > 0) {
@@ -875,8 +726,12 @@ export function BlockEditor({
           <>
             {makeSlash.length > 0 ? <div className={styles.slashTitle}>Make</div> : null}
             {makeSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
+            {extraSlash.length > 0 ? <div className={styles.slashTitle}>Turn into</div> : null}
+            {extraSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
             {basicSlash.length > 0 ? <div className={styles.slashTitle}>Basic blocks</div> : null}
             {basicSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
+            {mediaSlash.length > 0 ? <div className={styles.slashTitle}>Media</div> : null}
+            {mediaSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
             {otherSlash.length > 0 ? <div className={styles.slashTitle}>Advanced</div> : null}
             {otherSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
           </>
@@ -887,7 +742,7 @@ export function BlockEditor({
 
   const renderSlashItem = (item: SlashItem, index: number) => (
     <button
-      key={item.source === 'make' ? `make-${item.kind}` : item.type}
+      key={item.source === 'make' ? `make-${item.kind}` : item.source === 'extra' ? item.id : item.type}
       type="button"
       role="option"
       aria-selected={index === slash?.index}
@@ -907,6 +762,10 @@ export function BlockEditor({
 
   const renderMenu = (block: DraftBlock) => {
     if (menu?.blockKey !== block.key) return null;
+    const setColor = (field: 'color' | 'background', value: PageColorId) => {
+      onChange(updateAt(blocks, block.key, { props: { ...block.props, [field]: value } }));
+      setMenu(null);
+    };
     return (
       <div className={styles.blockMenu} data-block-menu data-testid="pages-block-menu">
         <button type="button" className={styles.menuItem} onClick={() => addBelow(block.key)}>
@@ -922,8 +781,47 @@ export function BlockEditor({
         >
           Duplicate
         </button>
+        <button
+          type="button"
+          className={styles.menuItem}
+          onClick={() => {
+            const id = block.id ?? block.key;
+            void navigator.clipboard?.writeText(`${window.location.href}#block-${id}`);
+            setMenu(null);
+          }}
+        >
+          Copy link to block
+        </button>
+        <div className={styles.menuLabel}>Color</div>
+        <div className={styles.colorRow}>
+          {PAGE_COLOR_IDS.map((id) => (
+            <button
+              key={`c-${id}`}
+              type="button"
+              className={styles.colorDot}
+              title={PAGE_COLOR_SWATCHES[id].label}
+              style={{ background: PAGE_COLOR_SWATCHES[id].text || 'var(--text, #1a1916)' }}
+              aria-label={`Text ${PAGE_COLOR_SWATCHES[id].label}`}
+              onClick={() => setColor('color', id)}
+            />
+          ))}
+        </div>
+        <div className={styles.menuLabel}>Background</div>
+        <div className={styles.colorRow}>
+          {PAGE_COLOR_IDS.map((id) => (
+            <button
+              key={`b-${id}`}
+              type="button"
+              className={styles.colorDot}
+              title={PAGE_COLOR_SWATCHES[id].label}
+              style={{ background: PAGE_COLOR_SWATCHES[id].bg || 'transparent', border: '1px solid var(--border, #e1e5eb)' }}
+              aria-label={`Background ${PAGE_COLOR_SWATCHES[id].label}`}
+              onClick={() => setColor('background', id)}
+            />
+          ))}
+        </div>
         <div className={styles.menuLabel}>Turn into</div>
-        {PAGE_BLOCK_CATALOG.slice(0, 14).map((item) => (
+        {PAGE_BLOCK_CATALOG.filter((item) => item.type !== 'column').slice(0, 16).map((item) => (
           <button
             key={item.type}
             type="button"
@@ -964,6 +862,101 @@ export function BlockEditor({
           <RecordEmbed orgId={orgId} recordId={String(block.props.recordId)} />
         </div>
       );
+    }
+    if (block.type === 'equation') {
+      const latex = block.text.trim();
+      return (
+        <div className={styles.equation} data-testid="pages-equation">
+          <div className={styles.equationDisplay}>{latex ? latexToDisplay(latex) : '∑'}</div>
+          {readOnly ? null : (
+            <input
+              className={styles.caption}
+              value={block.text}
+              placeholder="LaTeX, e.g. E = mc^2"
+              aria-label="Equation"
+              onChange={(event) => onChange(updateAt(blocks, block.key, { text: event.target.value }))}
+            />
+          )}
+        </div>
+      );
+    }
+    if (block.type === 'table_of_contents') {
+      const headings = collectHeadings(blocks);
+      return (
+        <nav className={styles.toc} data-testid="pages-toc" aria-label="Table of contents">
+          {headings.length === 0 ? (
+            <p className={styles.tocEmpty}>Headings on this page will appear here.</p>
+          ) : (
+            headings.map((heading) => (
+              <button
+                key={heading.key}
+                type="button"
+                className={styles.tocItem}
+                data-level={heading.type}
+                onClick={() => setFocusKey(heading.key)}
+              >
+                {heading.text}
+              </button>
+            ))
+          )}
+        </nav>
+      );
+    }
+    if (block.type === 'breadcrumb') {
+      const trail = crumbs.length > 0 ? crumbs : pages.slice(0, 1);
+      return (
+        <nav className={styles.inlineCrumbs} data-testid="pages-breadcrumb" aria-label="Page path">
+          {trail.map((item, index) => (
+            <span key={item.id}>
+              {index > 0 ? <span className={styles.crumbSep}>/</span> : null}
+              <button type="button" className={styles.crumbLink} onClick={() => onOpenPage?.(item.id)}>
+                {item.icon ?? '📄'} {item.title || 'Untitled'}
+              </button>
+            </span>
+          ))}
+        </nav>
+      );
+    }
+    if (MEDIA_BLOCK_TYPES.has(block.type) && block.type !== 'embed' && block.type !== 'bookmark') {
+      const url = String(block.props.url ?? block.text ?? '').trim();
+      if (url) {
+        return (
+          <div className={styles.embedSlot}>
+            <RichEmbed
+              url={url}
+              onClear={readOnly ? undefined : () => applyType(block.key, block.type, '', { url: undefined })}
+            />
+            {readOnly ? (
+              block.props.caption ? <p className={styles.captionText}>{String(block.props.caption)}</p> : null
+            ) : (
+              <input
+                className={styles.caption}
+                value={String(block.props.caption ?? '')}
+                placeholder="Caption"
+                aria-label="Caption"
+                onChange={(event) =>
+                  onChange(
+                    updateAt(blocks, block.key, {
+                      props: { ...block.props, caption: event.target.value },
+                    }),
+                  )
+                }
+              />
+            )}
+          </div>
+        );
+      }
+      if (!readOnly) {
+        return (
+          <div className={styles.embedSlot}>
+            <EmbedComposer
+              orgId={orgId}
+              onSubmit={(next) => applyType(block.key, block.type, next, { url: next })}
+              onMake={(kind, prompt) => submitMake(block.key, kind, prompt)}
+            />
+          </div>
+        );
+      }
     }
     if (block.type === 'embed') {
       const url = String(block.props.url ?? block.text ?? '').trim();
@@ -1148,32 +1141,53 @@ export function BlockEditor({
   };
 
   const showText = (block: DraftBlock) => {
-    if (block.type === 'divider') return false;
-    if (block.type === 'table') return false;
+    if (
+      block.type === 'divider' ||
+      block.type === 'table' ||
+      block.type === 'column_list' ||
+      block.type === 'column' ||
+      block.type === 'table_of_contents' ||
+      block.type === 'breadcrumb' ||
+      block.type === 'equation'
+    ) {
+      return false;
+    }
     if (block.type === 'database' && block.props.tableId) return false;
     if (block.type === 'record' && block.props.recordId) return false;
     if (block.type === 'page' && (block.props.pageId || pages.length > 0)) return false;
+    if (MEDIA_BLOCK_TYPES.has(block.type)) return false;
     if (block.type === 'embed') return false;
     if (block.type === 'artifact') {
       const path = String(block.props.path ?? block.text ?? '').trim();
       if (!path) return false;
       if (looksLikeUrl(path) || path.startsWith('/') || path.startsWith('api/')) return false;
     }
-    if (block.type === 'bookmark' && (block.props.url || looksLikeUrl(block.text))) return false;
     return true;
   };
 
   const renderBlock = (block: DraftBlock, siblings: DraftBlock[], depth: number): ReactNode => {
     const checked = Boolean(block.props.checked);
     const dropping = drop?.key === block.key;
+    const toggleable = block.type === 'toggle' || Boolean(block.props.toggle);
+    const colorStyle = pageColorStyle(
+      typeof block.props.color === 'string' ? block.props.color : null,
+      typeof block.props.background === 'string' ? block.props.background : null,
+    );
+    const isColumnList = block.type === 'column_list';
+    const isColumn = block.type === 'column';
 
     return (
       <div
         key={block.key}
+        id={block.id ? `block-${block.id}` : undefined}
         className={styles.block}
         data-type={block.type}
         data-drop={dropping ? drop.edge : undefined}
-        style={{ paddingInlineStart: depth * 24 }}
+        style={{
+          paddingInlineStart: isColumn || isColumnList ? 0 : depth * 24,
+          ...colorStyle,
+          borderRadius: colorStyle.background ? 6 : undefined,
+        }}
         onDragOver={(event) => {
           if (!dragging || dragging === block.key) return;
           event.preventDefault();
@@ -1233,7 +1247,7 @@ export function BlockEditor({
               }
             />
           ) : null}
-          {block.type === 'toggle' ? (
+          {toggleable ? (
             <button
               type="button"
               className={styles.toggleCaret}
@@ -1249,7 +1263,39 @@ export function BlockEditor({
           {block.type === 'numbered_list_item' ? (
             <span className={styles.bullet}>{numberedIndex(siblings, block.key)}.</span>
           ) : null}
-          {block.type === 'callout' ? <span className={styles.calloutIcon}>💡</span> : null}
+          {block.type === 'callout' ? (
+            <button
+              type="button"
+              className={styles.calloutIcon}
+              title="Change icon"
+              disabled={readOnly}
+              onClick={() => {
+                const current = String(block.props.icon ?? '💡');
+                const idx = PAGE_CALLOUT_ICONS.indexOf(current as (typeof PAGE_CALLOUT_ICONS)[number]);
+                const next = PAGE_CALLOUT_ICONS[(idx + 1) % PAGE_CALLOUT_ICONS.length] ?? '💡';
+                onChange(updateAt(blocks, block.key, { props: { ...block.props, icon: next } }));
+              }}
+            >
+              {String(block.props.icon ?? '💡')}
+            </button>
+          ) : null}
+
+          {block.type === 'code' && !readOnly ? (
+            <select
+              className={styles.lang}
+              value={String(block.props.language ?? 'text')}
+              aria-label="Code language"
+              onChange={(event) =>
+                onChange(updateAt(blocks, block.key, { props: { ...block.props, language: event.target.value } }))
+              }
+            >
+              {PAGE_CODE_LANGUAGES.map((lang) => (
+                <option key={lang} value={lang}>
+                  {lang}
+                </option>
+              ))}
+            </select>
+          ) : null}
 
           {block.type === 'divider' ? <hr className={styles.divider} /> : null}
           {renderEmbed(block)}
@@ -1275,6 +1321,16 @@ export function BlockEditor({
               onInput={(event) => onText(block.key, event.currentTarget.textContent ?? '', event.currentTarget)}
               onKeyDown={(event) => onKeyDown(block, event)}
               onPaste={(event) => {
+                const file = event.clipboardData?.files?.[0];
+                if (file && file.type.startsWith('image/')) {
+                  event.preventDefault();
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    applyType(block.key, 'image', String(reader.result), { url: String(reader.result) });
+                  };
+                  reader.readAsDataURL(file);
+                  return;
+                }
                 const pasted = event.clipboardData?.getData('text/plain')?.trim() ?? '';
                 if (!looksLikeUrl(pasted)) return;
                 if (block.type === 'paragraph' && !block.text.trim()) {
@@ -1282,20 +1338,58 @@ export function BlockEditor({
                   applyType(block.key, 'embed', pasted, { url: pasted });
                   return;
                 }
-                if (block.type === 'embed' || block.type === 'bookmark') {
+                if (MEDIA_BLOCK_TYPES.has(block.type)) {
                   event.preventDefault();
                   applyType(block.key, block.type, pasted, { url: pasted });
                 }
               }}
               onFocus={() => setFocusKey(block.key)}
+              onMouseUp={(event) => {
+                const sel = window.getSelection();
+                if (!sel || sel.isCollapsed) {
+                  setFormat(null);
+                  return;
+                }
+                const rect = event.currentTarget.getBoundingClientRect();
+                setFormat({ key: block.key, top: rect.top - 8, left: rect.left + 24 });
+              }}
             />
+          ) : null}
+
+          {mention?.blockKey === block.key && mentionItems.length > 0 ? (
+            <div className={styles.slashMenu} role="listbox" data-testid="pages-mention">
+              {mentionItems.map((page, index) => (
+                <button
+                  key={page.id}
+                  type="button"
+                  role="option"
+                  aria-selected={index === mention.index}
+                  className={`${styles.slashItem}${index === mention.index ? ` ${styles.slashActive}` : ''}`}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    applyMention(block.key, page);
+                  }}
+                >
+                  <span className={styles.slashGlyph}>{page.icon ?? '📄'}</span>
+                  <span className={styles.slashCopy}>
+                    <strong>{page.title || 'Untitled'}</strong>
+                    <span>Mention page</span>
+                  </span>
+                </button>
+              ))}
+            </div>
           ) : null}
 
           {renderSlash(block.key)}
           {renderMenu(block)}
 
-          {(block.type !== 'toggle' || block.open !== false) &&
-            block.children.map((child) => renderBlock(child, block.children, depth + 1))}
+          {isColumnList ? (
+            <div className={styles.columns} data-count={Math.max(block.children.length, 2)}>
+              {block.children.map((child) => renderBlock(child, block.children, 0))}
+            </div>
+          ) : (toggleable ? block.open !== false : true)
+            ? block.children.map((child) => renderBlock(child, block.children, isColumn ? 0 : depth + 1))
+            : null}
         </div>
       </div>
     );
@@ -1314,6 +1408,33 @@ export function BlockEditor({
 
   return (
     <div className={styles.editor} data-testid="pages-editor">
+      {format && !readOnly ? (
+        <div className={styles.formatBar} data-testid="pages-format" style={{ top: format.top, left: format.left }}>
+          {([
+            ['B', '**', '**', 'Bold'],
+            ['I', '*', '*', 'Italic'],
+            ['U', '__', '__', 'Underline'],
+            ['S', '~~', '~~', 'Strikethrough'],
+            ['<>', '`', '`', 'Code'],
+          ] as const).map(([label, before, after, title]) => (
+            <button
+              key={title}
+              type="button"
+              title={title}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                const node = refs.current.get(format.key);
+                if (!node) return;
+                const next = wrapSelection(node, before, after);
+                if (next !== null) onChange(updateAt(blocks, format.key, { text: next }));
+                setFormat(null);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {blocks.map((block) => renderBlock(block, blocks, 0))}
       {readOnly ? null : (
         <button type="button" className={styles.trailing} onClick={appendTrailing} aria-label="Add a block">

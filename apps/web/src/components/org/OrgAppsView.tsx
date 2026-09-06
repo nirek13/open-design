@@ -10,12 +10,14 @@
 // active org here would silently archive or reshare the wrong thing the
 // moment the list spans more than one.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CreateAppFlow } from '../apps/CreateAppFlow';
 import { SendAppPicker } from '../apps/SendAppPicker';
 import { AppDataScopePicker, splitGmailScope, withGmailScope } from '../apps/AppDataScopePicker';
+import { AppPreviewThumb } from '../apps/AppPreviewThumb';
 import { useOptionalRunningApp, markAppEditWorkspaceFocus } from '../apps/RunningAppContext';
-import { Badge, Button, EmptyState, Select } from '@open-design/components';
+import { Badge, Button, Dialog, DialogTitle, EmptyState, Select } from '@open-design/components';
+import { Icon } from '../Icon';
 import type {
   AppAccessMode,
   AppAccessPolicy,
@@ -65,6 +67,8 @@ export function OrgAppsView({ active }: { active: boolean }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [managingId, setManagingId] = useState<string | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [membersByOrg, setMembersByOrg] = useState<Record<string, OrgMember[]>>({});
   const [teamsByOrg, setTeamsByOrg] = useState<Record<string, OrgTeam[]>>({});
   const [accessByApp, setAccessByApp] = useState<Record<string, AppAccessPolicy>>({});
@@ -82,6 +86,24 @@ export function OrgAppsView({ active }: { active: boolean }) {
     if (!active) return;
     void load();
   }, [active, load]);
+
+  useEffect(() => {
+    if (!menuOpenId) return;
+    function onPointerDown(event: PointerEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpenId(null);
+      }
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMenuOpenId(null);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuOpenId]);
 
   const shown = useMemo(
     () => (filter === ALL_ORGS ? apps : apps.filter((orgApp) => orgApp.orgId === filter)),
@@ -141,6 +163,7 @@ export function OrgAppsView({ active }: { active: boolean }) {
 
   async function openManage(orgApp: OrgAppWithOrgName) {
     setSendingId(null);
+    setMenuOpenId(null);
     setManagingId(orgApp.id);
     try {
       if (!membersByOrg[orgApp.orgId]) {
@@ -229,15 +252,24 @@ export function OrgAppsView({ active }: { active: boolean }) {
     }
   }
 
+  async function copyUrl(url: string, appId: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // Clipboard optional — the dialog still shows the URL.
+    }
+    setShareLink({ appId, url });
+  }
+
   async function handlePublishToWeb(orgApp: OrgAppWithOrgName) {
+    setMenuOpenId(null);
+    if (orgApp.webUrl) {
+      await copyUrl(orgApp.webUrl, orgApp.id);
+      return;
+    }
     try {
       const published = await publishAppToWeb(orgApp.orgId, orgApp.id);
-      setShareLink({ appId: orgApp.id, url: published.url });
-      try {
-        await navigator.clipboard.writeText(published.url);
-      } catch {
-        // Clipboard optional.
-      }
+      await copyUrl(published.url, orgApp.id);
       await load();
     } catch (err) {
       setError(errorMessage(err));
@@ -254,6 +286,8 @@ export function OrgAppsView({ active }: { active: boolean }) {
   }
 
   const createOrgId = filter !== ALL_ORGS ? filter : activeOrgId;
+  const managingApp = shown.find((orgApp) => orgApp.id === managingId) ?? null;
+  const sendingApp = shown.find((orgApp) => orgApp.id === sendingId) ?? null;
 
   return (
     <div className="entry-section" data-testid="org-apps-view">
@@ -304,206 +338,304 @@ export function OrgAppsView({ active }: { active: boolean }) {
         <EmptyState title={t('apps.empty')} description={t('apps.emptyBody')} />
       ) : (
         <div className={styles.grid}>
-          {shown.map((orgApp) => (
-            <article key={orgApp.id} className={styles.card} data-testid="org-app-card">
-              <button type="button" className={styles.cardMain} onClick={() => handleOpen(orgApp)}>
-                <span className={styles.cardTop}>
-                  <span className={styles.cardName}>{orgApp.name}</span>
-                  {orgApp.pinned ? <Badge tone="positive">{t('apps.pinned')}</Badge> : null}
-                  {spansOrgs ? (
-                    <Badge tone="neutral" data-testid="org-app-org-name">
-                      {orgApp.orgName}
-                    </Badge>
-                  ) : null}
-                </span>
-                {orgApp.description ? (
-                  <span className={styles.cardDescription}>{orgApp.description}</span>
-                ) : null}
-                <span className={styles.cardMeta}>
-                  {orgApp.createdByName
-                    ? t('apps.byline', { name: orgApp.createdByName })
-                    : t('apps.bylineUnknown')}
-                  {orgApp.lastOpenedAt ? ` · ${relativeTime(orgApp.lastOpenedAt, t)}` : ''}
-                  {` · ${t(`apps.access.${orgApp.accessMode}` as never)}`}
-                </span>
-              </button>
-
-              <div className={styles.cardActions}>
-                <Button variant="ghost" onClick={() => void handleOpen(orgApp)}>
-                  {t('apps.open')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setManagingId(null);
-                    setSendingId((current) => (current === orgApp.id ? null : orgApp.id));
-                  }}
-                  data-testid="org-app-send"
-                >
-                  {t('apps.send')}
-                </Button>
-                <Button variant="ghost" onClick={() => handleEdit(orgApp)}>
-                  {t('apps.edit')}
-                </Button>
-                <Button variant="ghost" onClick={() => void handlePin(orgApp, !orgApp.pinned)}>
-                  {orgApp.pinned ? t('apps.unpin') : t('apps.pin')}
-                </Button>
-                <Button variant="ghost" onClick={() => void openManage(orgApp)}>
-                  {t('apps.manageAccess')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => void handlePublishToWeb(orgApp)}
-                  data-testid="org-app-publish-web"
-                >
-                  {orgApp.webUrl ? t('apps.copyWebLink') : t('apps.publishToWeb')}
-                </Button>
-                <Button variant="ghost" onClick={() => void handleArchive(orgApp)}>
-                  {t('apps.archive')}
-                </Button>
-              </div>
-
-              {managingId === orgApp.id ? (
-                <div className={styles.manageBox} data-testid="org-app-access">
-                  <AppDataScopePicker
-                    orgId={orgApp.orgId}
-                    value={splitGmailScope(orgApp.dataScopes ?? []).tables}
-                    onChange={(tables) => {
-                      const current = splitGmailScope(orgApp.dataScopes ?? []);
-                      void handleDataScopes(orgApp, withGmailScope(tables, current.allowGmail));
-                    }}
-                    allowGmail={splitGmailScope(orgApp.dataScopes ?? []).allowGmail}
-                    onAllowGmailChange={(allow) => {
-                      const current = splitGmailScope(orgApp.dataScopes ?? []);
-                      void handleDataScopes(orgApp, withGmailScope(current.tables, allow));
-                    }}
+          {shown.map((orgApp) => {
+            const menuOpen = menuOpenId === orgApp.id;
+            return (
+              <article
+                key={orgApp.id}
+                className={`${styles.card}${menuOpen ? ` ${styles.cardMenuOpen}` : ''}`}
+                data-testid="org-app-card"
+              >
+                <div className={styles.previewWrap}>
+                  <AppPreviewThumb
+                    projectId={orgApp.projectId}
+                    filePath={orgApp.filePath}
+                    name={orgApp.name}
                   />
-                  <fieldset className={styles.fieldset}>
-                    <legend>{t('apps.create.access')}</legend>
-                    <label className={styles.radio}>
-                      <input
-                        type="radio"
-                        checked={orgApp.accessMode === 'org'}
-                        onChange={() => void handleAccessMode(orgApp, 'org')}
-                      />
-                      {t('apps.access.org')}
-                    </label>
-                    <label className={styles.radio}>
-                      <input
-                        type="radio"
-                        checked={orgApp.accessMode === 'restricted'}
-                        onChange={() => void handleAccessMode(orgApp, 'restricted')}
-                      />
-                      {t('apps.access.restricted')}
-                    </label>
-                  </fieldset>
-                  {orgApp.accessMode === 'restricted' ? (
-                    <div className={styles.grants}>
-                      {(membersByOrg[orgApp.orgId] ?? []).map((member) => {
-                        const grant = currentAccess(orgApp.id).grants.find((g) => g.memberId === member.id);
-                        return (
-                          <div key={member.id} className={styles.grantRow}>
-                            <span>{member.displayName}</span>
-                            <div className={styles.grantRoles}>
-                              <button
-                                type="button"
-                                className={grant?.role === 'view' ? styles.roleActive : styles.role}
-                                onClick={() => void toggleGrant(orgApp, member.id, 'view')}
-                              >
-                                {t('apps.grant.view')}
-                              </button>
-                              <button
-                                type="button"
-                                className={grant?.role === 'edit' ? styles.roleActive : styles.role}
-                                onClick={() => void toggleGrant(orgApp, member.id, 'edit')}
-                              >
-                                {t('apps.grant.edit')}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {(teamsByOrg[orgApp.orgId] ?? []).map((team) => {
-                        const grant = currentAccess(orgApp.id).teamGrants.find((g) => g.teamId === team.id);
-                        return (
-                          <div key={team.id} className={styles.grantRow}>
-                            <span>{team.name}</span>
-                            <div className={styles.grantRoles}>
-                              <button
-                                type="button"
-                                className={grant?.role === 'view' ? styles.roleActive : styles.role}
-                                onClick={() => void toggleTeamGrant(orgApp, team.id, 'view')}
-                              >
-                                {t('apps.grant.view')}
-                              </button>
-                              <button
-                                type="button"
-                                className={grant?.role === 'edit' ? styles.roleActive : styles.role}
-                                onClick={() => void toggleTeamGrant(orgApp, team.id, 'edit')}
-                              >
-                                {t('apps.grant.edit')}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                  <fieldset className={styles.fieldset}>
-                    <legend>{t('apps.except')}</legend>
-                    <p className={styles.shareWarning}>{t('apps.exceptHint')}</p>
-                    <div className={styles.grants}>
-                      {(membersByOrg[orgApp.orgId] ?? [])
-                        .filter((member) => member.status === 'active')
-                        .map((member) => {
-                          const on = currentAccess(orgApp.id).denials.some((row) => row.memberId === member.id);
-                          return (
-                            <button
-                              key={member.id}
-                              type="button"
-                              className={on ? styles.exceptOn : styles.role}
-                              aria-pressed={on}
-                              data-testid={`org-app-except-${member.id}`}
-                              onClick={() => void toggleDenial(orgApp, member.id)}
-                            >
-                              {member.displayName}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </fieldset>
-                  <Button variant="ghost" onClick={() => setManagingId(null)}>
-                    {t('apps.dismiss')}
-                  </Button>
-                </div>
-              ) : null}
-
-              {sendingId === orgApp.id ? (
-                <div className={styles.manageBox} data-testid="org-app-send-picker">
-                  <SendAppPicker
-                    orgId={orgApp.orgId}
-                    app={orgApp}
-                    onSkip={() => setSendingId(null)}
-                    onSent={() => setSendingId(null)}
+                  <button
+                    type="button"
+                    className={styles.previewHit}
+                    onClick={() => void handleOpen(orgApp)}
+                    aria-label={`${t('apps.open')} ${orgApp.name}`}
                   />
                 </div>
-              ) : null}
 
-              {shareLink?.appId === orgApp.id || orgApp.webUrl ? (
-                <div className={styles.shareBox} data-testid="org-app-share-link">
-                  <code className={styles.shareUrl}>
-                    {shareLink?.appId === orgApp.id ? shareLink.url : orgApp.webUrl}
-                  </code>
-                  <p className={styles.shareWarning}>{t('apps.publishToWebHint')}</p>
-                  <Button variant="ghost" onClick={() => setShareLink(null)}>
-                    {t('apps.dismiss')}
-                  </Button>
+                <div className={styles.cardBody}>
+                  <div className={styles.cardCopy}>
+                    <div className={styles.cardTop}>
+                      <button
+                        type="button"
+                        className={styles.cardName}
+                        onClick={() => void handleOpen(orgApp)}
+                      >
+                        {orgApp.name}
+                      </button>
+                      {orgApp.pinned ? <Badge tone="positive">{t('apps.pinned')}</Badge> : null}
+                      {spansOrgs ? (
+                        <Badge tone="neutral" data-testid="org-app-org-name">
+                          {orgApp.orgName}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    {orgApp.description ? (
+                      <p className={styles.cardDescription}>{orgApp.description}</p>
+                    ) : null}
+                    <p className={styles.cardMeta}>
+                      {orgApp.createdByName
+                        ? t('apps.byline', { name: orgApp.createdByName })
+                        : t('apps.bylineUnknown')}
+                      {orgApp.lastOpenedAt ? ` · ${relativeTime(orgApp.lastOpenedAt, t)}` : ''}
+                      {` · ${t(`apps.access.${orgApp.accessMode}` as never)}`}
+                    </p>
+                  </div>
+
+                  <div
+                    className={styles.moreWrap}
+                    ref={menuOpen ? menuRef : undefined}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={styles.moreTrigger}
+                      aria-label={t('apps.more')}
+                      aria-haspopup="menu"
+                      aria-expanded={menuOpen}
+                      data-testid="org-app-more"
+                      onClick={() =>
+                        setMenuOpenId((current) => (current === orgApp.id ? null : orgApp.id))
+                      }
+                    >
+                      <Icon name="more-horizontal" size={16} />
+                    </Button>
+                    {menuOpen ? (
+                      <div
+                        className={styles.moreMenu}
+                        role="menu"
+                        aria-label={t('apps.more')}
+                        data-testid="org-app-more-menu"
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          data-testid="org-app-send"
+                          onClick={() => {
+                            setManagingId(null);
+                            setMenuOpenId(null);
+                            setSendingId(orgApp.id);
+                          }}
+                        >
+                          {t('apps.send')}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            handleEdit(orgApp);
+                          }}
+                        >
+                          {t('apps.edit')}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            void handlePin(orgApp, !orgApp.pinned);
+                          }}
+                        >
+                          {orgApp.pinned ? t('apps.unpin') : t('apps.pin')}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void openManage(orgApp)}
+                        >
+                          {t('apps.manageAccess')}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          data-testid="org-app-publish-web"
+                          onClick={() => void handlePublishToWeb(orgApp)}
+                        >
+                          {orgApp.webUrl ? t('apps.copyWebLink') : t('apps.publishToWeb')}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={styles.moreDanger}
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            void handleArchive(orgApp);
+                          }}
+                        >
+                          {t('apps.archive')}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              ) : null}
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
       )}
+
+      {managingApp ? (
+        <Dialog
+          onClose={() => setManagingId(null)}
+          ariaLabel={t('apps.manageAccess')}
+          closeOnEscape
+        >
+          <DialogTitle>{managingApp.name}</DialogTitle>
+          <div className={styles.manageBox} data-testid="org-app-access">
+            <AppDataScopePicker
+              orgId={managingApp.orgId}
+              value={splitGmailScope(managingApp.dataScopes ?? []).tables}
+              onChange={(tables) => {
+                const current = splitGmailScope(managingApp.dataScopes ?? []);
+                void handleDataScopes(managingApp, withGmailScope(tables, current.allowGmail));
+              }}
+              allowGmail={splitGmailScope(managingApp.dataScopes ?? []).allowGmail}
+              onAllowGmailChange={(allow) => {
+                const current = splitGmailScope(managingApp.dataScopes ?? []);
+                void handleDataScopes(managingApp, withGmailScope(current.tables, allow));
+              }}
+            />
+            <fieldset className={styles.fieldset}>
+              <legend>{t('apps.create.access')}</legend>
+              <label className={styles.radio}>
+                <input
+                  type="radio"
+                  checked={managingApp.accessMode === 'org'}
+                  onChange={() => void handleAccessMode(managingApp, 'org')}
+                />
+                {t('apps.access.org')}
+              </label>
+              <label className={styles.radio}>
+                <input
+                  type="radio"
+                  checked={managingApp.accessMode === 'restricted'}
+                  onChange={() => void handleAccessMode(managingApp, 'restricted')}
+                />
+                {t('apps.access.restricted')}
+              </label>
+            </fieldset>
+            {managingApp.accessMode === 'restricted' ? (
+              <div className={styles.grants}>
+                {(membersByOrg[managingApp.orgId] ?? []).map((member) => {
+                  const grant = currentAccess(managingApp.id).grants.find((g) => g.memberId === member.id);
+                  return (
+                    <div key={member.id} className={styles.grantRow}>
+                      <span>{member.displayName}</span>
+                      <div className={styles.grantRoles}>
+                        <button
+                          type="button"
+                          className={grant?.role === 'view' ? styles.roleActive : styles.role}
+                          onClick={() => void toggleGrant(managingApp, member.id, 'view')}
+                        >
+                          {t('apps.grant.view')}
+                        </button>
+                        <button
+                          type="button"
+                          className={grant?.role === 'edit' ? styles.roleActive : styles.role}
+                          onClick={() => void toggleGrant(managingApp, member.id, 'edit')}
+                        >
+                          {t('apps.grant.edit')}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {(teamsByOrg[managingApp.orgId] ?? []).map((team) => {
+                  const grant = currentAccess(managingApp.id).teamGrants.find((g) => g.teamId === team.id);
+                  return (
+                    <div key={team.id} className={styles.grantRow}>
+                      <span>{team.name}</span>
+                      <div className={styles.grantRoles}>
+                        <button
+                          type="button"
+                          className={grant?.role === 'view' ? styles.roleActive : styles.role}
+                          onClick={() => void toggleTeamGrant(managingApp, team.id, 'view')}
+                        >
+                          {t('apps.grant.view')}
+                        </button>
+                        <button
+                          type="button"
+                          className={grant?.role === 'edit' ? styles.roleActive : styles.role}
+                          onClick={() => void toggleTeamGrant(managingApp, team.id, 'edit')}
+                        >
+                          {t('apps.grant.edit')}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            <fieldset className={styles.fieldset}>
+              <legend>{t('apps.except')}</legend>
+              <p className={styles.shareWarning}>{t('apps.exceptHint')}</p>
+              <div className={styles.grants}>
+                {(membersByOrg[managingApp.orgId] ?? [])
+                  .filter((member) => member.status === 'active')
+                  .map((member) => {
+                    const on = currentAccess(managingApp.id).denials.some((row) => row.memberId === member.id);
+                    return (
+                      <button
+                        key={member.id}
+                        type="button"
+                        className={on ? styles.exceptOn : styles.role}
+                        aria-pressed={on}
+                        data-testid={`org-app-except-${member.id}`}
+                        onClick={() => void toggleDenial(managingApp, member.id)}
+                      >
+                        {member.displayName}
+                      </button>
+                    );
+                  })}
+              </div>
+            </fieldset>
+            <Button variant="ghost" onClick={() => setManagingId(null)}>
+              {t('apps.dismiss')}
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
+
+      {sendingApp ? (
+        <Dialog
+          onClose={() => setSendingId(null)}
+          ariaLabel={t('apps.send')}
+          closeOnEscape
+        >
+          <div data-testid="org-app-send-picker">
+            <SendAppPicker
+              orgId={sendingApp.orgId}
+              app={sendingApp}
+              onSkip={() => setSendingId(null)}
+              onSent={() => setSendingId(null)}
+            />
+          </div>
+        </Dialog>
+      ) : null}
+
+      {shareLink ? (
+        <Dialog
+          onClose={() => setShareLink(null)}
+          ariaLabel={t('apps.liveOnWeb')}
+          closeOnEscape
+        >
+          <div className={styles.shareBox} data-testid="org-app-share-link">
+            <code className={styles.shareUrl}>{shareLink.url}</code>
+            <p className={styles.shareWarning}>{t('apps.publishToWebHint')}</p>
+            <Button variant="ghost" onClick={() => setShareLink(null)}>
+              {t('apps.dismiss')}
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
 
       {createOpen && createOrgId ? (
         <div

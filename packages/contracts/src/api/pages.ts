@@ -28,6 +28,26 @@ export const PAGE_BLOCK_TYPES = [
   'bookmark',
   /** Live iframe/media embed of any URL, slide, app, or design preview. */
   'embed',
+  /** Dedicated image with optional caption (Notion `image`). */
+  'image',
+  /** Dedicated video with optional caption. */
+  'video',
+  /** Dedicated audio player. */
+  'audio',
+  /** File attachment card. */
+  'file',
+  /** Inline PDF viewer. */
+  'pdf',
+  /** Block equation (LaTeX). */
+  'equation',
+  /** Auto table of contents from headings on this page. */
+  'table_of_contents',
+  /** Ancestor trail for the current page. */
+  'breadcrumb',
+  /** Horizontal column layout. Children are `column` blocks. */
+  'column_list',
+  /** One column inside a `column_list`. */
+  'column',
   /** Small inline grid owned by the page (not a workspace table). */
   'table',
   /** Live embed of an organization workspace table (+ optional saved view). */
@@ -41,6 +61,73 @@ export const PAGE_BLOCK_TYPES = [
 ] as const;
 
 export type PageBlockType = (typeof PAGE_BLOCK_TYPES)[number];
+
+/** Notion-style page appearance. Stored as JSON on the page row. */
+export const PAGE_FONTS = ['default', 'serif', 'mono'] as const;
+export type PageFont = (typeof PAGE_FONTS)[number];
+
+export const PAGE_COLOR_IDS = [
+  'default',
+  'gray',
+  'brown',
+  'orange',
+  'yellow',
+  'green',
+  'blue',
+  'purple',
+  'pink',
+  'red',
+] as const;
+export type PageColorId = (typeof PAGE_COLOR_IDS)[number];
+
+export interface PageStyle {
+  font?: PageFont;
+  smallText?: boolean;
+  fullWidth?: boolean;
+  locked?: boolean;
+}
+
+export const DEFAULT_PAGE_STYLE: Required<PageStyle> = {
+  font: 'default',
+  smallText: false,
+  fullWidth: false,
+  locked: false,
+};
+
+export function parsePageStyle(value: unknown): PageStyle {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  const font = PAGE_FONTS.includes(raw.font as PageFont) ? (raw.font as PageFont) : undefined;
+  return {
+    ...(font ? { font } : {}),
+    ...(typeof raw.smallText === 'boolean' ? { smallText: raw.smallText } : {}),
+    ...(typeof raw.fullWidth === 'boolean' ? { fullWidth: raw.fullWidth } : {}),
+    ...(typeof raw.locked === 'boolean' ? { locked: raw.locked } : {}),
+  };
+}
+
+export const PAGE_CODE_LANGUAGES = [
+  'text',
+  'javascript',
+  'typescript',
+  'python',
+  'json',
+  'html',
+  'css',
+  'sql',
+  'bash',
+  'markdown',
+  'rust',
+  'go',
+  'java',
+  'c',
+  'cpp',
+] as const;
+
+export type PageCodeLanguage = (typeof PAGE_CODE_LANGUAGES)[number];
+
+export const PAGE_CALLOUT_ICONS = ['💡', '⚠️', '✅', '❌', '🔥', '💬', '📌', '⭐', '🧠', '📎', '📝', '🚀'] as const;
 
 /** Slash-menu catalogue: label + hint for the Notion-style `/` picker. */
 export const PAGE_BLOCK_CATALOG: ReadonlyArray<{
@@ -84,6 +171,25 @@ export const PAGE_BLOCK_CATALOG: ReadonlyArray<{
       'deck',
     ],
   },
+  { type: 'image', label: 'Image', hint: 'Upload or paste a picture', keywords: ['image', 'photo', 'picture', 'img', 'png', 'jpg'] },
+  { type: 'video', label: 'Video', hint: 'YouTube, mp4, or a clip you created', keywords: ['video', 'youtube', 'mp4', 'movie'] },
+  { type: 'audio', label: 'Audio', hint: 'Sound, voice note, or music', keywords: ['audio', 'sound', 'mp3', 'voice'] },
+  { type: 'file', label: 'File', hint: 'Attach a downloadable file', keywords: ['file', 'attachment', 'download'] },
+  { type: 'pdf', label: 'PDF', hint: 'Inline PDF preview', keywords: ['pdf', 'document'] },
+  { type: 'equation', label: 'Block equation', hint: 'Display a math formula', keywords: ['equation', 'math', 'latex', 'tex', 'formula'] },
+  {
+    type: 'table_of_contents',
+    label: 'Table of contents',
+    hint: 'List of headings on this page',
+    keywords: ['toc', 'contents', 'outline', 'headings'],
+  },
+  { type: 'breadcrumb', label: 'Breadcrumb', hint: 'Show the page path', keywords: ['breadcrumb', 'path', 'ancestors'] },
+  {
+    type: 'column_list',
+    label: 'Columns',
+    hint: 'Split the page into 2 or 3 columns',
+    keywords: ['columns', 'column', 'layout', 'split', '2col', '3col'],
+  },
   { type: 'table', label: 'Simple table', hint: 'Inline grid on this page', keywords: ['table', 'grid'] },
   { type: 'database', label: 'Database', hint: 'Embed an org workspace table', keywords: ['database', 'data', 'workspace'] },
   {
@@ -93,7 +199,7 @@ export const PAGE_BLOCK_CATALOG: ReadonlyArray<{
     keywords: ['artifact', 'design', 'html', 'app', 'image', 'video', 'slides', 'deck', 'picture'],
   },
   { type: 'page', label: 'Sub-page', hint: 'Create or embed a nested page', keywords: ['page', 'subpage', 'wiki', 'child'] },
-  { type: 'record', label: 'ERP record', hint: 'Embed one business record', keywords: ['record', 'erp', 'invoice', 'deal'] },
+  { type: 'record', label: 'Record', hint: 'Embed one table row', keywords: ['record', 'row', 'invoice', 'deal'] },
 ];
 
 export interface WorkspacePage {
@@ -106,6 +212,8 @@ export interface WorkspacePage {
   /** Optional ERP/workspace record this page documents. */
   linkedRecordId: string | null;
   linkedTableId: string | null;
+  /** Font, width, lock — Notion's "Customize page". */
+  style: PageStyle;
   position: number;
   createdBy: string;
   createdAt: number;
@@ -151,6 +259,7 @@ export interface CreatePageRequest {
   cover?: string | null;
   linkedRecordId?: string | null;
   linkedTableId?: string | null;
+  style?: PageStyle;
   /** Optional initial block tree. Empty page gets one empty paragraph. */
   blocks?: PageBlockInput[];
   /**
@@ -167,6 +276,7 @@ export interface UpdatePageRequest {
   cover?: string | null;
   linkedRecordId?: string | null;
   linkedTableId?: string | null;
+  style?: PageStyle;
   position?: number;
 }
 
@@ -204,7 +314,18 @@ export interface AppendPageBlocksRequest {
   blocks: PageBlockInput[];
 }
 
-export type PageEmbedKind = 'page' | 'database' | 'record' | 'artifact' | 'bookmark' | 'embed';
+export type PageEmbedKind =
+  | 'page'
+  | 'database'
+  | 'record'
+  | 'artifact'
+  | 'bookmark'
+  | 'embed'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'file'
+  | 'pdf';
 
 export interface EmbedPageBlockRequest {
   type: PageEmbedKind;

@@ -50,6 +50,7 @@ function pageDetail(overrides: Partial<WorkspacePageDetail> = {}): WorkspacePage
     cover: null,
     linkedRecordId: null,
     linkedTableId: null,
+    style: {},
     position: 0,
     createdBy: 'wsm-1',
     createdAt: 1,
@@ -93,6 +94,7 @@ describe('applyMarkdownShortcut', () => {
     expect(applyMarkdownShortcut('> ')).toEqual({ type: 'quote', text: '' });
     expect(applyMarkdownShortcut('```')).toEqual({ type: 'code', text: '' });
     expect(applyMarkdownShortcut('---')).toEqual({ type: 'divider', text: '' });
+    expect(applyMarkdownShortcut('$$ ')).toEqual({ type: 'equation', text: '' });
     expect(applyMarkdownShortcut('hello')).toBeNull();
   });
 });
@@ -142,7 +144,7 @@ describe('PagesView', () => {
   beforeEach(() => {
     vi.spyOn(registry, 'fetchAuthContext').mockResolvedValue({
       mode: 'local-owner',
-      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
+      viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null, bio: null, avatarUrl: null },
       organizations: [ORG],
     });
     const detail = pageDetail();
@@ -181,6 +183,10 @@ describe('PagesView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add to favorites' }));
     expect(screen.getByRole('button', { name: 'Remove from favorites' })).toBeTruthy();
     expect(screen.getByText('Favorites')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Customize page' }));
+    expect(screen.getByTestId('pages-customize')).toBeTruthy();
+    expect(screen.getByText('Full width')).toBeTruthy();
   });
 
   it('launches the agent from the sidebar with the open page as context', async () => {
@@ -245,6 +251,11 @@ describe('BlockEditor', () => {
     expect(screen.getByText('Make picture')).toBeTruthy();
     expect(screen.getByText('Make video')).toBeTruthy();
     expect(screen.getByText('Make slides')).toBeTruthy();
+    expect(screen.getByText('Image')).toBeTruthy();
+    expect(screen.getByText('Block equation')).toBeTruthy();
+    expect(screen.getByText('Table of contents')).toBeTruthy();
+    expect(screen.getByText('2 columns')).toBeTruthy();
+    expect(screen.getByText('Toggle heading 1')).toBeTruthy();
   });
 
   it('turns a pasted URL on an empty paragraph into a live embed', () => {
@@ -330,5 +341,35 @@ describe('BlockEditor', () => {
     });
     fireEvent.submit(screen.getByTestId('pages-make-composer'));
     expect(onMake).toHaveBeenCalledWith('app', 'A hiring tracker for this team');
+  });
+
+  it('inserts a table of contents that lists headings', () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([
+        { ...emptyBlock('heading_1'), text: 'Welcome' },
+        emptyBlock(),
+      ]);
+      return <BlockEditor blocks={blocks} onChange={setBlocks} />;
+    }
+    render(<Harness />);
+    const boxes = screen.getAllByRole('textbox');
+    fireEvent.focus(boxes[1]!);
+    fireEvent.input(boxes[1]!, { target: { textContent: '/toc' } });
+    fireEvent.mouseDown(screen.getByRole('option', { name: /Table of contents/ }));
+    expect(screen.getByTestId('pages-toc').textContent).toContain('Welcome');
+  });
+
+  it('turns /2 columns into a two-column layout', () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([emptyBlock()]);
+      return <BlockEditor blocks={blocks} onChange={setBlocks} />;
+    }
+    render(<Harness />);
+    const textbox = screen.getByRole('textbox');
+    fireEvent.focus(textbox);
+    fireEvent.input(textbox, { target: { textContent: '/2 col' } });
+    fireEvent.mouseDown(screen.getByRole('option', { name: /2 columns/ }));
+    expect(document.querySelector('[data-type="column_list"]')).toBeTruthy();
+    expect(document.querySelectorAll('[data-type="column"]').length).toBe(2);
   });
 });

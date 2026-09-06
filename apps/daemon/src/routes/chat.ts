@@ -23,6 +23,7 @@ import {
   type BYOKToolContext,
   type ImageToolResult,
 } from '../byok-tools.js';
+import { filterByokTools } from '../tool-access.js';
 import {
   AIHUBMIX_DEFAULT_BASE_URL,
   aihubmixHeaders,
@@ -1596,6 +1597,9 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
         ? byokSpeechVoice.trim()
         : undefined;
 
+    const appConfigForTools = await readAppConfig(ctx.paths.RUNTIME_DATA_DIR).catch(() => ({}));
+    const allowedTools = filterByokTools(opts.tools, appConfigForTools.disabledTools);
+
     let proxyDispatcher: ReturnType<typeof proxyDispatcherRequestInit> | null = null;
 
     const toolCtx: BYOKToolContext = {
@@ -1638,7 +1642,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
         max_tokens:
           typeof maxTokens === 'number' && maxTokens > 0 ? maxTokens : 8192,
         stream: true,
-        tools: opts.tools,
+        tools: allowedTools,
         tool_choice: 'auto',
       };
       const response = await fetch(url, {
@@ -1817,7 +1821,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     > => {
       const payload: any = {
         ...buildAnthropicChatPayload(model, systemPrompt, anthMessages, maxTokens),
-        tools: openaiToolsToAnthropic(opts.tools),
+        tools: openaiToolsToAnthropic(allowedTools),
         tool_choice: { type: 'auto' },
       };
       const response = await fetch(anthropicUrl, {
@@ -1979,7 +1983,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
         generationConfig: {
           maxOutputTokens: typeof maxTokens === 'number' && maxTokens > 0 ? maxTokens : 8192,
         },
-        tools: openaiToolsToGemini(opts.tools),
+        tools: openaiToolsToGemini(allowedTools),
       };
       if (typeof systemPrompt === 'string' && systemPrompt) {
         payload.systemInstruction = { parts: [{ text: systemPrompt }] };
@@ -2129,7 +2133,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     if (opts.routeByModel) {
       const family = classifyAIHubMixModel(model);
       const origin = aihubmixOriginFromBase(effectiveBaseUrl);
-      const hasTools = Array.isArray(opts.tools) && opts.tools.length > 0;
+      const hasTools = Array.isArray(allowedTools) && allowedTools.length > 0;
       if (family === 'anthropic') {
         const anthropicUrl = appendVersionedApiPath(origin, '/messages');
         const anthropicHeaders = {

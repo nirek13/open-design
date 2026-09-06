@@ -24,7 +24,6 @@ import { fetchAllOrgApps, recordOrgAppOpen, updateOrgApp } from '../providers/re
 import { useOptionalOrg } from '../org/OrgContext';
 import { OrgMark } from './org/OrgMark';
 import { useOptionalRunningApp } from './apps/RunningAppContext';
-import { isErpEntryView } from './erp/ErpShell';
 import {
   ENTRY_NAV_DRAG_THRESHOLD_PX,
   ENTRY_NAV_ISLANDS,
@@ -87,7 +86,7 @@ interface Props {
 type LabelKey =
   | 'entry.navSearch'
   | 'entry.navWorkspace'
-  | 'entry.navErp'
+  | 'entry.navTables'
   | 'entry.navTeam'
   | 'entry.navPages'
   | 'entry.navCalendar'
@@ -115,7 +114,7 @@ interface StaticDest {
 
 const STATIC_DESTINATIONS: readonly StaticDest[] = [
   { id: 'search', view: 'search', icon: 'search', labelKey: 'entry.navSearch', testId: 'entry-nav-search', isActive: (v) => v === 'search' },
-  { id: 'erp', view: 'books', icon: 'grid', labelKey: 'entry.navErp', testId: 'entry-nav-erp', isActive: isErpEntryView },
+  { id: 'tables', view: 'tables', icon: 'layout', labelKey: 'entry.navTables', testId: 'entry-nav-tables', isActive: (v) => v === 'tables' },
   { id: 'team', view: 'team', icon: 'message-circle', labelKey: 'entry.navTeam', testId: 'entry-nav-team', isActive: (v) => v === 'team' },
   { id: 'pages', view: 'pages', icon: 'file-text', labelKey: 'entry.navPages', testId: 'entry-nav-pages', isActive: (v) => v === 'pages' },
   { id: 'calendar', view: 'calendar', icon: 'history', labelKey: 'entry.navCalendar', testId: 'entry-nav-calendar', isActive: (v) => v === 'calendar' },
@@ -196,7 +195,13 @@ export function EntryNavRail({
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const atlasSearchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const dragStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const dragStartRef = useRef<{
+    id: string;
+    x: number;
+    y: number;
+    pointerId: number;
+    target: HTMLElement;
+  } | null>(null);
   const draggingRef = useRef(false);
   const suppressClickRef = useRef(false);
   const dockOrderRef = useRef<string[]>([]);
@@ -245,7 +250,7 @@ export function EntryNavRail({
       'projects',
       'apps',
       'search',
-      'erp',
+      'tables',
       'dev',
       'design-systems',
       'library',
@@ -317,9 +322,16 @@ export function EntryNavRail({
 
   const onItemPointerDown = (id: string, event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
-    dragStartRef.current = { id, x: event.clientX, y: event.clientY };
+    // Do not capture yet — capturing on press retargets click away from the
+    // button, so the row looks dead. Capture only after a real drag starts.
+    dragStartRef.current = {
+      id,
+      x: event.clientX,
+      y: event.clientY,
+      pointerId: event.pointerId,
+      target: event.currentTarget,
+    };
     draggingRef.current = false;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
   useEffect(() => {
@@ -331,6 +343,11 @@ export function EntryNavRail({
       if (!draggingRef.current) {
         if (Math.hypot(dx, dy) < ENTRY_NAV_DRAG_THRESHOLD_PX) return;
         draggingRef.current = true;
+        try {
+          start.target.setPointerCapture?.(start.pointerId);
+        } catch {
+          // Capture is best-effort; drag still tracks window move/up.
+        }
         setDragId(start.id);
         setTip(null);
         setContextId(null);
@@ -348,6 +365,11 @@ export function EntryNavRail({
       if (!start) return;
       if (draggingRef.current) {
         suppressClickRef.current = true;
+        try {
+          start.target.releasePointerCapture?.(start.pointerId);
+        } catch {
+          // Already released, or never captured.
+        }
         const hint = dropHintRef.current;
         if (hint) {
           commitDock(
@@ -454,7 +476,9 @@ export function EntryNavRail({
       <button
         type="button"
         className={className}
+        draggable={false}
         onClick={activate(() => activateDestination(id))}
+        onPointerDown={variant === 'rail' ? (event) => onItemPointerDown(id, event) : undefined}
         onKeyDown={(event) => handleNudgeKey(id, event)}
         aria-label={label}
         aria-current={isActiveId(id) ? 'page' : undefined}
@@ -539,9 +563,14 @@ export function EntryNavRail({
               ].filter(Boolean).join(' ')}
               data-nav-id={id}
               data-testid={`entry-nav-slot-${id}`}
-              onPointerDown={(event) => onItemPointerDown(id, event)}
               onPointerEnter={(event) => {
                 if (dragStartRef.current || contextId || atlasOpen || addOpen) return;
+                const rail = event.currentTarget.closest('nav');
+                // Labels are already visible when the rail is expanded.
+                if (rail && rail.getBoundingClientRect().width > 80) {
+                  setTip(null);
+                  return;
+                }
                 const rect = event.currentTarget.getBoundingClientRect();
                 setTip({
                   label: dockItemLabel(id, t, apps),

@@ -27,6 +27,7 @@ export interface RunContextSelection {
   pluginIds?: string[];
   mcpServerIds?: string[];
   connectorIds?: string[];
+  toolIds?: string[];
   workspaceItems?: WorkspaceContextItem[];
 }
 
@@ -106,6 +107,7 @@ export function normalizeRunContextSelection(value: unknown): RunContextSelectio
     pluginIds: stringList(value.pluginIds),
     mcpServerIds: stringList(value.mcpServerIds),
     connectorIds: stringList(value.connectorIds),
+    toolIds: stringList(value.toolIds),
     workspaceItems: normalizeWorkspaceContextItems(value.workspaceItems),
   };
 }
@@ -116,9 +118,10 @@ export function mergeRunContextSelections(...contexts: unknown[]): RunContextSel
     pluginIds: [],
     mcpServerIds: [],
     connectorIds: [],
+    toolIds: [],
     workspaceItems: [],
   };
-  const listKeys = ['skillIds', 'pluginIds', 'mcpServerIds', 'connectorIds'] as const;
+  const listKeys = ['skillIds', 'pluginIds', 'mcpServerIds', 'connectorIds', 'toolIds'] as const;
   const workspaceSeen = new Set<string>();
   for (const context of contexts) {
     const normalized = normalizeRunContextSelection(context);
@@ -275,6 +278,13 @@ export function renderRunContextPrompt(selection: unknown, metadata: unknown) {
       'The user selected these connectors for this run. Discover available read-only connector tools first with `"$OD_NODE_BIN" "$OD_BIN" tools connectors list --format compact`, then execute relevant tools through `tools connectors execute`; do not ask for a data source that is already selected.',
     );
     lines.push(formatContextRefList(context.connectorIds, metadataRecord.contextConnectors, 'name'));
+  }
+  if (Array.isArray(context.toolIds) && context.toolIds.length > 0) {
+    lines.push('### Granted tools');
+    lines.push(
+      'The user granted these catalog tools to this run. Prefer them when relevant, and do not call tools that are not in this list or that the user has turned off in Settings.',
+    );
+    lines.push(context.toolIds.map((id, index) => `${index + 1}. \`${id}\``).join('\n'));
   }
   if (lines.length === 0) return '';
   return ['## Selected run context', ...lines].join('\n');

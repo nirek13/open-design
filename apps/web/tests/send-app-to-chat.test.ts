@@ -44,6 +44,10 @@ const DM: ChatChannel = {
   unreadCount: 0,
   joined: true,
   lastMessageAt: null,
+  purpose: null,
+  starred: false,
+  muted: false,
+  notify: 'all' as const,
 };
 
 const POSTED: TeamChatMessage = {
@@ -62,6 +66,8 @@ const POSTED: TeamChatMessage = {
   editedAt: null,
   deletedAt: null,
   createdAt: 1,
+  pinned: false,
+  saved: false,
 };
 
 const ATTACHMENT = { kind: 'app' as const, id: 'app-1', label: 'Expense form' };

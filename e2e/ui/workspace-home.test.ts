@@ -51,18 +51,17 @@ test('the main view finds, creates, and builds', async ({ page, toolsDev }) => {
   await page.goto(toolsDev.url.web('/workspace'));
   const home = page.getByTestId('workspace-home');
   await expect(home).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('workspace-ask-input')).toBeVisible();
 
-  // Recent work is visible before anything is typed.
-  await expect(page.getByText('INV-1001')).toBeVisible({ timeout: 15_000 });
-
-  // Search reaches across tables.
-  await page.getByTestId('workspace-search').fill('northwind');
+  // Search reaches across tables from the same box used to ask.
+  await page.getByTestId('workspace-ask-input').fill('northwind');
   await expect(page.getByTestId('workspace-search-results')).toBeVisible();
   await expect(page.getByText('Northwind Builders')).toBeVisible();
 
-  // Clearing search returns to recent work; new records live under Create.
-  await page.getByTestId('workspace-search').fill('');
-  await expect(page.getByText('INV-1001')).toBeVisible();
+  // Clearing search returns to the empty stage; new records live under Create.
+  await page.getByTestId('workspace-ask-input').fill('');
+  await expect(page.getByTestId('workspace-search-results')).toHaveCount(0);
+  await expect(page.getByText('INV-1001')).toHaveCount(0);
   await page.getByTestId('workspace-create').click();
   await expect(page.getByTestId('workspace-new-invoices')).toBeVisible();
 

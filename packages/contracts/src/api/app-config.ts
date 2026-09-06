@@ -37,6 +37,12 @@ export interface AppConfigPrefs {
   designSystemId?: string | null;
   disabledSkills?: string[];
   disabledDesignSystems?: string[];
+  /**
+   * Catalog tool ids the user has turned off (internal capabilities,
+   * connectors, and MCP servers). Missing or empty means every catalog
+   * tool is on. See `packages/contracts/src/api/tools.ts`.
+   */
+  disabledTools?: string[];
   installationId?: string | null;
   telemetry?: TelemetryPrefs;
   /**

@@ -119,24 +119,40 @@ describe('EntryNavRail sidebar', () => {
     expect(onViewChange).toHaveBeenCalledWith('pages');
   });
 
+  it('does not capture the pointer until the row is actually dragged', () => {
+    const capture = vi.fn();
+    const original = HTMLElement.prototype.setPointerCapture;
+    HTMLElement.prototype.setPointerCapture = capture;
+    try {
+      renderRail();
+      const pages = screen.getByTestId('entry-nav-pages');
+      fireEvent.pointerDown(pages, { button: 0, clientX: 8, clientY: 8, pointerId: 7 });
+      expect(capture).not.toHaveBeenCalled();
+      fireEvent.pointerMove(window, { clientX: 8, clientY: 40, pointerId: 7 });
+      expect(capture).toHaveBeenCalled();
+    } finally {
+      HTMLElement.prototype.setPointerCapture = original;
+    }
+  });
+
   it('still clicks through when the pointer barely moves', () => {
     const onViewChange = vi.fn();
     renderRail(onViewChange);
-    const slot = screen.getByTestId('entry-nav-slot-pages');
-    fireEvent.pointerDown(slot, { button: 0, clientX: 8, clientY: 8, pointerId: 1 });
+    const pages = screen.getByTestId('entry-nav-pages');
+    fireEvent.pointerDown(pages, { button: 0, clientX: 8, clientY: 8, pointerId: 1 });
     fireEvent.pointerMove(window, {
       clientX: 16,
       clientY: 12,
       pointerId: 1,
     });
     fireEvent.pointerUp(window, { pointerId: 1 });
-    fireEvent.click(screen.getByTestId('entry-nav-pages'));
+    fireEvent.click(pages);
     expect(onViewChange).toHaveBeenCalledWith('pages');
   });
 
   it('reorders a shortcut by dragging onto another row', () => {
     renderRail();
-    const appsSlot = screen.getByTestId('entry-nav-slot-apps');
+    const apps = screen.getByTestId('entry-nav-apps');
     const homeSlot = screen.getByTestId('entry-nav-slot-home');
     const homeRect = { top: 40, height: 36 };
     vi.spyOn(homeSlot, 'getBoundingClientRect').mockReturnValue({
@@ -150,7 +166,7 @@ describe('EntryNavRail sidebar', () => {
       y: homeRect.top,
       toJSON: () => ({}),
     } as DOMRect);
-    fireEvent.pointerDown(appsSlot, { button: 0, clientX: 10, clientY: 200, pointerId: 1 });
+    fireEvent.pointerDown(apps, { button: 0, clientX: 10, clientY: 200, pointerId: 1 });
     fireEvent.pointerMove(window, {
       clientX: 10,
       clientY: 48,

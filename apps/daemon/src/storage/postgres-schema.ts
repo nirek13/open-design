@@ -652,6 +652,93 @@ const MIGRATIONS: readonly PostgresMigration[] = [
         WHERE reports_to IS NOT NULL;
     `,
   },
+  {
+    id: '0021-chat-messaging',
+    sql: `
+      -- Slack-shaped messaging extras. Mirrors WORKSPACE_MIGRATIONS v17.
+      ALTER TABLE od_chat_channels ADD COLUMN IF NOT EXISTS purpose TEXT;
+      ALTER TABLE od_chat_channel_members ADD COLUMN IF NOT EXISTS starred INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE od_chat_channel_members ADD COLUMN IF NOT EXISTS muted INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE od_chat_channel_members ADD COLUMN IF NOT EXISTS notify TEXT NOT NULL DEFAULT 'all';
+
+      CREATE TABLE IF NOT EXISTS od_chat_pins (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL REFERENCES od_chat_messages(id) ON DELETE CASCADE,
+        pinned_by TEXT NOT NULL,
+        pinned_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_chat_pin_unique ON od_chat_pins(channel_id, message_id);
+      CREATE INDEX IF NOT EXISTS odx_chat_pins_channel ON od_chat_pins(channel_id, pinned_at DESC);
+
+      CREATE TABLE IF NOT EXISTS od_chat_saves (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        message_id TEXT NOT NULL REFERENCES od_chat_messages(id) ON DELETE CASCADE,
+        created_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_chat_save_unique ON od_chat_saves(member_id, message_id);
+      CREATE INDEX IF NOT EXISTS odx_chat_saves_member ON od_chat_saves(workspace_id, member_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS od_chat_reminders (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        message_id TEXT NOT NULL REFERENCES od_chat_messages(id) ON DELETE CASCADE,
+        fire_at BIGINT NOT NULL,
+        note TEXT,
+        delivered_at BIGINT,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_chat_reminders_due
+        ON od_chat_reminders(workspace_id, member_id, fire_at)
+        WHERE delivered_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS od_chat_bookmarks (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        url TEXT NOT NULL,
+        emoji TEXT,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_chat_bookmarks_channel ON od_chat_bookmarks(channel_id, position);
+
+      CREATE TABLE IF NOT EXISTS od_chat_scheduled (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        author_member_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        mentions_json TEXT NOT NULL DEFAULT '[]',
+        parent_message_id TEXT,
+        send_at BIGINT NOT NULL,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_chat_scheduled_due ON od_chat_scheduled(workspace_id, send_at);
+
+      CREATE TABLE IF NOT EXISTS od_chat_profiles (
+        member_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        status_text TEXT,
+        status_emoji TEXT,
+        status_expires_at BIGINT,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_chat_profiles_ws ON od_chat_profiles(workspace_id);
+    `,
+  },
+  {
+    id: '0018-page-style',
+    sql: `
+      -- Notion page appearance. Mirrors WORKSPACE_MIGRATIONS v18.
+      ALTER TABLE od_pages ADD COLUMN IF NOT EXISTS style_json TEXT NOT NULL DEFAULT '{}';
+    `,
+  },
 ];
 
 /** Bring a Postgres database up to the current schema. Safe to call on every

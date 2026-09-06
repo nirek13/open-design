@@ -18,11 +18,13 @@ import {
   CHANNEL_SLUG_PATTERN,
   CHAT_MESSAGE_MAX_LENGTH,
   DEFAULT_CHANNELS,
+  parseChatSearchQuery,
   sanitizeTeamChatAttachments,
   slugifyChannelName,
   type ChannelMemberRole,
   type ChannelVisibility,
   type ChatChannelKind,
+  type ChatNotifyLevel,
   type ChatReaction,
   type ChatSearchHit,
   type TeamChatAttachment,
@@ -38,7 +40,7 @@ import { WorkspaceDataError, workspaceValidationError } from './errors.js';
 import type { SqlExecutor } from '../storage/sql.js';
 
 const CHANNEL_COLS = `
-  id, workspace_id AS "orgId", slug, display_name AS "displayName", topic,
+  id, workspace_id AS "orgId", slug, display_name AS "displayName", topic, purpose,
   kind, visibility, archived_at AS "archivedAt", created_by AS "createdBy",
   created_at AS "createdAt", updated_at AS "updatedAt"
 `;
@@ -100,6 +102,7 @@ interface ChannelRow {
   slug: string;
   displayName: string;
   topic: string | null;
+  purpose: string | null;
   kind: string | null;
   visibility: ChannelVisibility;
   archivedAt: number | string | null;
@@ -140,47 +143,88 @@ async function decorateChannels(
     stats.set(row.channelId, { count: num(row.n), last: nullableNum(row.last) });
   }
 
-  const membership = new Map<string, number>();
-  for (const row of await db.all<{ channelId: string; lastReadAt: number | string }>(
-    `SELECT channel_id AS "channelId", last_read_at AS "lastReadAt"
+  const membership = new Map<string, {
+    lastReadAt: number;
+    starred: boolean;
+    muted: boolean;
+    notify: ChatNotifyLevel;
+  }>();
+  for (const row of await db.all<{
+    channelId: string;
+    lastReadAt: number | string;
+    starred: number | boolean | null;
+    muted: number | boolean | null;
+    notify: string | null;
+  }>(
+    `SELECT channel_id AS "channelId", last_read_at AS "lastReadAt",
+            starred, muted, notify
        FROM od_chat_channel_members
       WHERE member_id = ? AND channel_id IN (${placeholders})`,
     [memberId, ...ids],
   )) {
-    membership.set(row.channelId, num(row.lastReadAt));
+    membership.set(row.channelId, {
+      lastReadAt: num(row.lastReadAt),
+      starred: row.starred === 1 || row.starred === true,
+      muted: row.muted === 1 || row.muted === true,
+      notify: row.notify === 'mentions' || row.notify === 'nothing' ? row.notify : 'all',
+    });
   }
 
   // Unread counts only for channels the caller is in — there is no such thing
-  // as unread in a channel you have not joined.
+  // as unread in a channel you have not joined. Mute / mentions-only follow
+  // Slack: a muted room never badges, and mentions-only only counts @you
+  // (or @channel / @here / @everyone).
   const unread = new Map<string, number>();
-  for (const [channelId, lastReadAt] of membership) {
+  for (const [channelId, prefs] of membership) {
+    if (prefs.muted || prefs.notify === 'nothing') {
+      unread.set(channelId, 0);
+      continue;
+    }
+    const mentionOnly = prefs.notify === 'mentions';
     const row = await db.get<{ n: number | string }>(
       `SELECT COUNT(*) AS n FROM od_chat_messages
         WHERE channel_id = ? AND deleted_at IS NULL AND created_at > ?
-          AND (author_member_id IS NULL OR author_member_id <> ?)`,
-      [channelId, lastReadAt, memberId],
+          AND (author_member_id IS NULL OR author_member_id <> ?)
+          ${mentionOnly
+            ? `AND (
+                 mentions_json LIKE ?
+                 OR mentions_json LIKE '%"@channel"%'
+                 OR mentions_json LIKE '%"@here"%'
+                 OR mentions_json LIKE '%"@everyone"%'
+               )`
+            : ''}`,
+      mentionOnly
+        ? [channelId, prefs.lastReadAt, memberId, `%"${memberId}"%`]
+        : [channelId, prefs.lastReadAt, memberId],
     );
     unread.set(channelId, num(row?.n ?? 0));
   }
 
-  return rows.map((row) => ({
-    id: row.id,
-    orgId: row.orgId,
-    slug: row.slug,
-    displayName: row.displayName,
-    topic: row.topic,
-    kind: row.kind === 'dm' || row.kind === 'group_dm' ? row.kind : 'channel',
-    visibility: row.visibility,
-    archivedAt: nullableNum(row.archivedAt),
-    createdBy: row.createdBy,
-    createdAt: num(row.createdAt),
-    updatedAt: num(row.updatedAt),
-    memberCount: memberCounts.get(row.id) ?? 0,
-    messageCount: stats.get(row.id)?.count ?? 0,
-    lastMessageAt: stats.get(row.id)?.last ?? null,
-    joined: membership.has(row.id),
-    unreadCount: unread.get(row.id) ?? 0,
-  }));
+  return rows.map((row) => {
+    const prefs = membership.get(row.id);
+    return {
+      id: row.id,
+      orgId: row.orgId,
+      slug: row.slug,
+      displayName: row.displayName,
+      topic: row.topic,
+      purpose: row.purpose ?? null,
+      kind: row.kind === 'dm' || row.kind === 'group_dm' ? row.kind : 'channel',
+      visibility: row.visibility,
+      archivedAt: nullableNum(row.archivedAt),
+      createdBy: row.createdBy,
+      createdAt: num(row.createdAt),
+      updatedAt: num(row.updatedAt),
+      memberCount: memberCounts.get(row.id) ?? 0,
+      messageCount: stats.get(row.id)?.count ?? 0,
+      lastMessageAt: stats.get(row.id)?.last ?? null,
+      joined: Boolean(prefs),
+      unreadCount: unread.get(row.id) ?? 0,
+      starred: prefs?.starred ?? false,
+      muted: prefs?.muted ?? false,
+      notify: prefs?.notify ?? 'all',
+    };
+  });
 }
 
 /** Channels this member can see: every public one, plus the private ones they
@@ -274,9 +318,20 @@ export async function createChannel(
   const visibility: ChannelVisibility = input.visibility === 'private' ? 'private' : 'public';
   await db.run(
     `INSERT INTO od_chat_channels
-       (id, workspace_id, slug, display_name, topic, kind, visibility, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'channel', ?, ?, ?, ?)`,
-    [id, orgId, slug, displayName, input.topic?.trim() || null, visibility, createdBy, now, now],
+       (id, workspace_id, slug, display_name, topic, purpose, kind, visibility, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'channel', ?, ?, ?, ?)`,
+    [
+      id,
+      orgId,
+      slug,
+      displayName,
+      input.topic?.trim() || null,
+      input.purpose?.trim() || null,
+      visibility,
+      createdBy,
+      now,
+      now,
+    ],
   );
 
   // The creator owns it; anyone they named joins as an ordinary member.
@@ -304,6 +359,10 @@ export async function updateChannel(
   if (input.topic !== undefined) {
     sets.push('topic = ?');
     params.push(input.topic?.trim() || null);
+  }
+  if (input.purpose !== undefined) {
+    sets.push('purpose = ?');
+    params.push(input.purpose?.trim() || null);
   }
   if (input.visibility === 'public' || input.visibility === 'private') {
     sets.push('visibility = ?');
@@ -333,6 +392,24 @@ export async function archiveChannel(
   ]);
   if (!row) throw channelNotFound(ref);
   return (await decorateChannels(db, [row], memberId))[0]!;
+}
+
+export async function unarchiveChannel(
+  db: SqlExecutor,
+  orgId: string,
+  ref: string,
+  memberId: string,
+): Promise<ChatChannel> {
+  const row = await db.get<ChannelRow>(
+    `SELECT ${CHANNEL_COLS} FROM od_chat_channels WHERE workspace_id = ? AND (id = ? OR slug = ?)`,
+    [orgId, ref, ref.replace(/^#/, '')],
+  );
+  if (!row) throw channelNotFound(ref);
+  await db.run('UPDATE od_chat_channels SET archived_at = NULL, updated_at = ? WHERE id = ?', [
+    Date.now(),
+    row.id,
+  ]);
+  return getChannel(db, orgId, row.id, memberId);
 }
 
 // --- Membership -----------------------------------------------------------
@@ -513,9 +590,30 @@ async function withReactions(
     messages.map((message) => message.id),
     viewerMemberId,
   );
+  const ids = messages.map((message) => message.id);
+  const pinned = new Set<string>();
+  const saved = new Set<string>();
+  if (ids.length > 0) {
+    const placeholders = ids.map(() => '?').join(', ');
+    for (const row of await db.all<{ messageId: string }>(
+      `SELECT message_id AS "messageId" FROM od_chat_pins WHERE message_id IN (${placeholders})`,
+      ids,
+    )) {
+      pinned.add(row.messageId);
+    }
+    for (const row of await db.all<{ messageId: string }>(
+      `SELECT message_id AS "messageId" FROM od_chat_saves
+        WHERE member_id = ? AND message_id IN (${placeholders})`,
+      [viewerMemberId, ...ids],
+    )) {
+      saved.add(row.messageId);
+    }
+  }
   return messages.map((message) => ({
     ...message,
     reactions: reactions.get(message.id) ?? [],
+    pinned: pinned.has(message.id),
+    saved: saved.has(message.id),
   }));
 }
 
@@ -537,6 +635,8 @@ function toMessage(row: Record<string, any>, resolveMemberName?: ResolveMemberNa
     editedAt: nullableNum(row.editedAt),
     deletedAt: nullableNum(row.deletedAt),
     createdAt: num(row.createdAt),
+    pinned: false,
+    saved: false,
   };
 }
 
@@ -806,8 +906,8 @@ export async function openDirectMessage(
   const id = `chn-${randomUUID()}`;
   await db.run(
     `INSERT INTO od_chat_channels
-       (id, workspace_id, slug, display_name, topic, kind, visibility, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?, 'private', ?, ?, ?)`,
+       (id, workspace_id, slug, display_name, topic, purpose, kind, visibility, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, NULL, NULL, ?, 'private', ?, ?, ?)`,
     [id, orgId, slug, displayName, kind, callerId, now, now],
   );
   for (const memberId of partners) {
@@ -894,10 +994,53 @@ export async function searchMessages(
   memberId: string,
   query: string,
   resolveMemberName?: ResolveMemberName,
+  fromMemberId?: string | null,
 ): Promise<ChatSearchHit[]> {
-  const needle = query.trim();
-  if (!needle) return [];
-  const escaped = needle.replace(/[%_]/g, (ch) => `\\${ch}`);
+  const filters = parseChatSearchQuery(query);
+  if (!filters.text && !filters.in && !filters.from && !filters.has && !filters.before && !filters.after) {
+    return [];
+  }
+  const where: string[] = [
+    'm.workspace_id = ?',
+    'm.deleted_at IS NULL',
+    'c.archived_at IS NULL',
+    `(
+      c.visibility = 'public'
+      OR EXISTS (
+        SELECT 1 FROM od_chat_channel_members cm
+         WHERE cm.channel_id = c.id AND cm.member_id = ?
+      )
+    )`,
+  ];
+  const params: unknown[] = [orgId, memberId];
+  if (filters.text) {
+    where.push(`m.body LIKE ? ESCAPE '\\'`);
+    params.push(`%${filters.text.replace(/[%_]/g, (ch) => `\\${ch}`)}%`);
+  }
+  if (filters.in) {
+    where.push('(c.slug = ? OR c.id = ?)');
+    params.push(filters.in, filters.in);
+  }
+  const authorId = fromMemberId || null;
+  if (authorId) {
+    where.push('m.author_member_id = ?');
+    params.push(authorId);
+  }
+  if (filters.before) {
+    where.push('m.created_at < ?');
+    params.push(filters.before);
+  }
+  if (filters.after) {
+    where.push('m.created_at > ?');
+    params.push(filters.after);
+  }
+  if (filters.has === 'file') {
+    where.push(`m.attachments_json LIKE '%"kind":"file"%'`);
+  } else if (filters.has === 'link') {
+    where.push(`(m.attachments_json LIKE '%"kind":"link"%' OR m.body LIKE '%http%')`);
+  } else if (filters.has === 'reaction') {
+    where.push('EXISTS (SELECT 1 FROM od_chat_reactions rx WHERE rx.message_id = m.id)');
+  }
   const rows = await db.all<Record<string, unknown>>(
     `SELECT ${MESSAGE_COLS_M},
             c.id AS "hitChannelId", c.slug AS "hitSlug", c.display_name AS "hitName", c.kind AS "hitKind",
@@ -905,20 +1048,10 @@ export async function searchMessages(
               WHERE r.parent_message_id = m.id AND r.deleted_at IS NULL) AS "replyCount"
        FROM od_chat_messages m
        JOIN od_chat_channels c ON c.id = m.channel_id
-      WHERE m.workspace_id = ?
-        AND m.deleted_at IS NULL
-        AND c.archived_at IS NULL
-        AND m.body LIKE ? ESCAPE '\\'
-        AND (
-          c.visibility = 'public'
-          OR EXISTS (
-            SELECT 1 FROM od_chat_channel_members cm
-             WHERE cm.channel_id = c.id AND cm.member_id = ?
-          )
-        )
+      WHERE ${where.join(' AND ')}
       ORDER BY m.created_at DESC
       LIMIT 40`,
-    [orgId, `%${escaped}%`, memberId],
+    params,
   );
   const messages = await withReactions(
     db,
@@ -977,8 +1110,17 @@ export async function totalUnread(db: SqlExecutor, orgId: string, memberId: stri
          ON cm.channel_id = m.channel_id AND cm.member_id = ?
       WHERE m.workspace_id = ? AND m.deleted_at IS NULL
         AND m.created_at > cm.last_read_at
-        AND (m.author_member_id IS NULL OR m.author_member_id <> ?)`,
-    [memberId, orgId, memberId],
+        AND (m.author_member_id IS NULL OR m.author_member_id <> ?)
+        AND COALESCE(cm.muted, 0) = 0
+        AND COALESCE(cm.notify, 'all') <> 'nothing'
+        AND (
+          COALESCE(cm.notify, 'all') = 'all'
+          OR m.mentions_json LIKE ?
+          OR m.mentions_json LIKE '%"@channel"%'
+          OR m.mentions_json LIKE '%"@here"%'
+          OR m.mentions_json LIKE '%"@everyone"%'
+        )`,
+    [memberId, orgId, memberId, `%"${memberId}"%`],
   );
   return num(row?.n ?? 0);
 }

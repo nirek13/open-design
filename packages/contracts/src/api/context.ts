@@ -3,6 +3,8 @@ export interface RunContextSelection {
   pluginIds?: string[];
   mcpServerIds?: string[];
   connectorIds?: string[];
+  /** Catalog tool ids granted to this run or automation. Intersected with globally enabled tools at spawn time. */
+  toolIds?: string[];
   workspaceItems?: WorkspaceContextItem[];
 }
 

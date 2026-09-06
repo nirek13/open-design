@@ -1,0 +1,40 @@
+.stage {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: var(--od-surface-2, rgba(127, 127, 127, 0.08));
+}
+
+.frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  transform-origin: top left;
+  pointer-events: none;
+  background: var(--od-surface-1, #fff);
+}
+
+.skeleton {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(160deg, rgba(91, 108, 255, 0.18), rgba(127, 127, 127, 0.08));
+}
+
+.letter {
+  font-size: 42px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  color: var(--text);
+  opacity: 0.72;
+}

@@ -279,6 +279,8 @@ export function settingsSectionToTracking(
       return 'connectors';
     case 'mcpClient':
       return 'external_mcp';
+    case 'tools':
+      return 'tools';
     case 'mcp_server':
       return 'mcp_server';
     case 'orbit':

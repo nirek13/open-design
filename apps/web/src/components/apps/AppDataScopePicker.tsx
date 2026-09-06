@@ -6,8 +6,12 @@
 // picker is how a person authorizes a generated site, not how the site
 // reaches the database on its own.
 
-import { useEffect, useState } from 'react';
-import { APP_GMAIL_SCOPE_TABLE, type AppDataScope, type WorkspaceTable } from '@open-design/contracts';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  APP_GMAIL_SCOPE_TABLE,
+  type AppDataScope,
+  type WorkspaceTable,
+} from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { fetchWorkspaceTables } from '../../providers/registry';
 import styles from './AppDataScopePicker.module.css';
@@ -43,6 +47,28 @@ export function splitGmailScope(scopes: readonly AppDataScope[]): {
 export function withGmailScope(scopes: readonly AppDataScope[], allowGmail: boolean): AppDataScope[] {
   const tables = scopes.filter((scope) => scope.table !== APP_GMAIL_SCOPE_TABLE);
   return allowGmail ? [...tables, { table: APP_GMAIL_SCOPE_TABLE, mode: 'write' }] : tables;
+}
+
+function tableKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function scopeMatchesTable(scope: AppDataScope, table: { name: string; displayName?: string | null }): boolean {
+  const wanted = tableKey(scope.table);
+  return wanted === tableKey(table.name) || wanted === tableKey(table.displayName ?? '');
+}
+
+export function grantReadOnExistingTables(
+  scopes: readonly AppDataScope[],
+  tables: readonly { name: string }[],
+): AppDataScope[] {
+  let next = scopes.filter((scope) => scope.table !== APP_GMAIL_SCOPE_TABLE);
+  for (const table of tables) {
+    if (tableAccessMode(next, table.name) === 'off') {
+      next = setTableAccessMode(next, table.name, 'read');
+    }
+  }
+  return [...next, ...scopes.filter((scope) => scope.table === APP_GMAIL_SCOPE_TABLE)];
 }
 
 /** Checking the org-write box grants inferred write tables. Unchecking
@@ -112,6 +138,33 @@ export function AppDataScopePicker({
   }, [orgId]);
 
   const tableScopes = value.filter((scope) => scope.table !== APP_GMAIL_SCOPE_TABLE);
+  const listed = useMemo(() => {
+    const seen = new Set(tables.map((table) => tableKey(table.name)));
+    const extra: WorkspaceTable[] = [];
+    for (const scope of suggested ?? []) {
+      if (scope.table === APP_GMAIL_SCOPE_TABLE) continue;
+      if (tables.some((table) => scopeMatchesTable(scope, table))) continue;
+      const name = scope.table.trim();
+      if (!name || seen.has(tableKey(name))) continue;
+      seen.add(tableKey(name));
+      extra.push({
+        id: `suggested:${name}`,
+        name,
+        displayName: name,
+        description: null,
+        status: 'active',
+        schemaVersion: 1,
+        protection: 'open',
+        publicWrite: false,
+        createdBy: '',
+        createdAt: 0,
+        updatedAt: 0,
+        archivedAt: null,
+        fields: [],
+      });
+    }
+    return [...tables, ...extra];
+  }, [suggested, tables]);
 
   return (
     <fieldset className={styles.fieldset} data-testid="app-data-scope-picker">
@@ -122,13 +175,25 @@ export function AppDataScopePicker({
           {error}
         </p>
       ) : null}
-      {tables.length === 0 && !error ? (
+      {listed.length === 0 && !error ? (
         <p className={styles.hint}>{t('apps.create.dataAccessEmpty')}</p>
       ) : (
         <div className={styles.rows}>
-          {tables.map((table) => {
+          {tables.length > 0 ? (
+            <div className={styles.toolbar}>
+              <button
+                type="button"
+                className={styles.textBtn}
+                data-testid="app-scope-read-all"
+                onClick={() => onChange(grantReadOnExistingTables(tableScopes, tables))}
+              >
+                {t('apps.create.dataAccessReadAll')}
+              </button>
+            </div>
+          ) : null}
+          {listed.map((table) => {
             const mode = tableAccessMode(tableScopes, table.name);
-            const needed = suggested?.some((scope) => scope.table === table.name);
+            const needed = suggested?.some((scope) => scopeMatchesTable(scope, table));
             return (
               <div key={table.id} className={styles.row}>
                 <span className={styles.name} title={table.name}>

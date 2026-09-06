@@ -4,12 +4,58 @@
   background: var(--bg-app);
 }
 
+.rootFill {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* One measure for every workspace surface. Wide enough for a five-column
    table, narrow enough that a line of prose stays readable. */
 .column {
   max-width: 1080px;
   margin: 0 auto;
   padding: 40px 32px 96px;
+}
+
+.columnFill {
+  max-width: none;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 28px 24px;
+}
+
+.columnFill .head {
+  position: relative;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 0;
+  flex: none;
+  min-height: 36px;
+}
+
+.columnFill .headText {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.columnFill .body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  gap: 16px;
 }
 
 .head {

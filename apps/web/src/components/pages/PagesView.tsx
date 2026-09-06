@@ -6,7 +6,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, EmptyState, Skeleton } from '@open-design/components';
-import type { PageTreeNode, WorkspacePage, WorkspacePageDetail } from '@open-design/contracts';
+import type { PageFont, PageStyle, PageTreeNode, WorkspacePage, WorkspacePageDetail } from '@open-design/contracts';
+import { DEFAULT_PAGE_STYLE } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
@@ -31,6 +32,9 @@ import {
   type DraftBlock,
   type PageIndexEntry,
 } from './BlockEditor';
+import { pageTemplateBlocks, type PageTemplateId } from './page-draft';
+import { countPageWords, pageToMarkdown } from '../../runtime/page-export';
+import { pageFontFamily } from '../../runtime/page-style';
 import { composePagesWikiPrompt, draftBlocksPlainText } from './wiki-prompt';
 import { pageMakeAction, type PageMakeKind } from '../../runtime/page-make';
 import { PageContextChip } from './PageContextChip';
@@ -271,6 +275,7 @@ export function PagesView({
   const [title, setTitle] = useState('');
   const [icon, setIcon] = useState<string | null>(null);
   const [cover, setCover] = useState<string | null>(null);
+  const [style, setStyle] = useState<PageStyle>({});
   const [draft, setDraft] = useState<DraftBlock[]>([emptyBlock()]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -281,6 +286,9 @@ export function PagesView({
   const [iconOpen, setIconOpen] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [aiPrompt, setAiPrompt] = useState('');
@@ -295,6 +303,7 @@ export function PagesView({
   const titleRef = useRef(title);
   const iconRef = useRef(icon);
   const coverRef = useRef(cover);
+  const styleRef = useRef(style);
   const openedInitial = useRef<string | null>(null);
   const persistInFlight = useRef(false);
 
@@ -302,6 +311,7 @@ export function PagesView({
   titleRef.current = title;
   iconRef.current = icon;
   coverRef.current = cover;
+  styleRef.current = style;
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -346,6 +356,7 @@ export function PagesView({
       setTitle(detail.title);
       setIcon(detail.icon);
       setCover(detail.cover);
+      setStyle(detail.style ?? {});
       setDraft(blocksFromServer(detail.blocks));
       setSaveState('saved');
       setError(null);
@@ -388,17 +399,20 @@ export function PagesView({
     const snapshotTitle = titleRef.current;
     const snapshotIcon = iconRef.current;
     const snapshotCover = coverRef.current;
+    const snapshotStyle = styleRef.current;
     const snapshotBlocks = draftRef.current;
     try {
       if (
         snapshotTitle !== page?.title ||
         snapshotIcon !== page?.icon ||
-        snapshotCover !== page?.cover
+        snapshotCover !== page?.cover ||
+        JSON.stringify(snapshotStyle ?? {}) !== JSON.stringify(page?.style ?? {})
       ) {
         await updateWorkspacePage(activeOrgId, currentId, {
           title: snapshotTitle || 'Untitled',
           icon: snapshotIcon,
           cover: snapshotCover,
+          style: snapshotStyle,
         });
       }
       const saved = await setWorkspacePageBlocks(activeOrgId, currentId, {
@@ -410,6 +424,7 @@ export function PagesView({
         titleRef.current !== snapshotTitle ||
         iconRef.current !== snapshotIcon ||
         coverRef.current !== snapshotCover ||
+        styleRef.current !== snapshotStyle ||
         draftRef.current !== snapshotBlocks;
       await loadTree();
       if (drifted) {
@@ -428,7 +443,7 @@ export function PagesView({
     } finally {
       persistInFlight.current = false;
     }
-  }, [activeOrgId, currentId, loadTree, page?.cover, page?.icon, page?.title]);
+  }, [activeOrgId, currentId, loadTree, page?.cover, page?.icon, page?.style, page?.title]);
 
   const scheduleSave = useCallback(() => {
     setSaveState('dirty');
@@ -446,17 +461,19 @@ export function PagesView({
   );
 
   useEffect(() => {
-    if (!iconOpen && !coverOpen && !moreOpen) return;
+    if (!iconOpen && !coverOpen && !moreOpen && !customizeOpen && !moveOpen) return;
     const onDoc = (event: MouseEvent) => {
       const el = event.target as HTMLElement | null;
       if (el?.closest('[data-pages-popover]')) return;
       setIconOpen(false);
       setCoverOpen(false);
       setMoreOpen(false);
+      setCustomizeOpen(false);
+      setMoveOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
-  }, [iconOpen, coverOpen, moreOpen]);
+  }, [iconOpen, coverOpen, moreOpen, customizeOpen, moveOpen]);
 
   const onCreate = async (
     parentPageId: string | null = null,
@@ -904,11 +921,138 @@ export function PagesView({
                     <button type="button" onClick={() => void onCreate(currentId)} disabled={busy}>
                       {t('pages.addSubpage')}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        setCustomizeOpen(true);
+                      }}
+                    >
+                      {t('pages.customize')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        setMoveOpen(true);
+                      }}
+                    >
+                      {t('pages.moveTo')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const markdown = pageToMarkdown(titleRef.current || t('pages.untitled'), draftRef.current);
+                        const blob = new Blob([markdown], { type: 'text/markdown' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${(titleRef.current || 'untitled').replace(/[^\w.-]+/g, '-')}.md`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        setMoreOpen(false);
+                      }}
+                    >
+                      {t('pages.exportMarkdown')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(window.location.href);
+                        setCopied(true);
+                        window.setTimeout(() => setCopied(false), 1600);
+                        setMoreOpen(false);
+                      }}
+                    >
+                      {copied ? t('pages.copied') : t('pages.copyLink')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStyle((prev) => ({ ...prev, locked: !prev.locked }));
+                        scheduleSave();
+                        setMoreOpen(false);
+                      }}
+                    >
+                      {style.locked ? t('pages.unlock') : t('pages.lock')}
+                    </button>
                     <button type="button" className={styles.danger} onClick={() => void onArchive()} disabled={busy}>
                       {t('pages.archive')}
                     </button>
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+            {customizeOpen ? (
+              <div className={styles.moreMenu} data-testid="pages-customize" data-pages-popover>
+                <label className={styles.menuCheck}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(style.fullWidth)}
+                    onChange={(event) => {
+                      setStyle((prev) => ({ ...prev, fullWidth: event.target.checked }));
+                      scheduleSave();
+                    }}
+                  />
+                  {t('pages.fullWidth')}
+                </label>
+                <label className={styles.menuCheck}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(style.smallText)}
+                    onChange={(event) => {
+                      setStyle((prev) => ({ ...prev, smallText: event.target.checked }));
+                      scheduleSave();
+                    }}
+                  />
+                  {t('pages.smallText')}
+                </label>
+                <div className={styles.menuLabel}>{t('pages.font')}</div>
+                {(['default', 'serif', 'mono'] as const).map((font) => (
+                  <button
+                    key={font}
+                    type="button"
+                    onClick={() => {
+                      setStyle((prev) => ({ ...prev, font }));
+                      scheduleSave();
+                    }}
+                  >
+                    {font === 'default' ? t('pages.fontDefault') : font === 'serif' ? t('pages.fontSerif') : t('pages.fontMono')}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {moveOpen ? (
+              <div className={styles.moreMenu} data-testid="pages-move" data-pages-popover>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!activeOrgId || !currentId) return;
+                    void updateWorkspacePage(activeOrgId, currentId, { parentPageId: null }).then(() => {
+                      setMoveOpen(false);
+                      return loadTree();
+                    });
+                  }}
+                >
+                  {t('pages.moveToRoot')}
+                </button>
+                {allPages
+                  .filter((item) => item.id !== currentId)
+                  .map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        if (!activeOrgId || !currentId) return;
+                        void updateWorkspacePage(activeOrgId, currentId, { parentPageId: item.id }).then(() => {
+                          setMoveOpen(false);
+                          return loadTree();
+                        });
+                      }}
+                    >
+                      {item.icon ?? '📄'} {item.title || t('pages.untitled')}
+                    </button>
+                  ))}
               </div>
             ) : null}
           </div>
@@ -958,7 +1102,13 @@ export function PagesView({
                   </div>
                 </div>
               ) : null}
-              <div className={`${styles.article}${cover ? ` ${styles.articleWithCover}` : ''}`}>
+              <div
+                className={`${styles.article}${cover ? ` ${styles.articleWithCover}` : ''}`}
+                data-font={style.font ?? DEFAULT_PAGE_STYLE.font}
+                data-small={style.smallText ? 'true' : undefined}
+                data-full={style.fullWidth ? 'true' : undefined}
+                style={{ fontFamily: pageFontFamily(style.font as PageFont | undefined) }}
+              >
                 <div className={styles.pageHead} data-pages-popover>
                   {icon ? (
                     <button
@@ -1016,6 +1166,7 @@ export function PagesView({
                   aria-label={t('pages.titleField')}
                   rows={1}
                   data-testid="pages-title"
+                  disabled={Boolean(style.locked)}
                   onChange={(event) => {
                     setTitle(event.target.value);
                     event.target.style.height = 'auto';
@@ -1028,6 +1179,8 @@ export function PagesView({
                   orgId={activeOrgId}
                   blocks={draft}
                   pages={pageIndex}
+                  crumbs={crumbs.map((item) => ({ id: item.id, title: item.title, icon: item.icon }))}
+                  readOnly={Boolean(style.locked)}
                   onOpenPage={(id) => void openPage(id).catch((err) => setError(errorMessage(err)))}
                   onCreateSubpage={async () => {
                     const created = await onCreate(page.id, { open: false, linkOnParent: false });
@@ -1043,6 +1196,39 @@ export function PagesView({
                     scheduleSave();
                   }}
                 />
+                {draft.length === 1 &&
+                draft[0]?.type === 'paragraph' &&
+                !draft[0].text &&
+                draft[0].children.length === 0 &&
+                !style.locked ? (
+                  <div className={styles.templates} data-testid="pages-templates">
+                    <p className={styles.templatesLabel}>{t('pages.templates')}</p>
+                    {(
+                      [
+                        ['blank', t('pages.templateBlank')],
+                        ['doc', t('pages.templateDoc')],
+                        ['meeting', t('pages.templateMeeting')],
+                        ['tasks', t('pages.templateTasks')],
+                      ] as Array<[PageTemplateId, string]>
+                    ).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => {
+                          setDraft(pageTemplateBlocks(id));
+                          scheduleSave();
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <p className={styles.pageMeta}>
+                  {t('pages.lastEdited')}{' '}
+                  {new Date(page.updatedAt).toLocaleString()} ·{' '}
+                  {t('pages.wordCount').replace('{count}', String(countPageWords(title, draft)))}
+                </p>
                 {childPages.length > 0 ? (
                   <div className={styles.children}>
                     <h2 className={styles.childrenTitle}>{t('pages.childPages')}</h2>

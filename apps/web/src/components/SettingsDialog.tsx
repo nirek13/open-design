@@ -172,6 +172,7 @@ import { RoutinesSection } from './RoutinesSection';
 import { ConnectorsBrowser } from './ConnectorsBrowser';
 import { MemoryModelInline } from './MemoryModelInline';
 import { MemorySection } from './MemorySection';
+import { ToolsCatalogPanel } from './ToolsCatalogPanel';
 import { ByokConnectionTestControl } from './byok/ByokConnectionTestControl';
 import { ByokKeyField } from './byok/ByokKeyField';
 import { ByokModelField } from './byok/ByokModelField';
@@ -226,6 +227,7 @@ export type SettingsSection =
   | 'designSystems'
   | 'projectLocations'
   | 'memory'
+  | 'tools'
   | 'privacy'
   // 'library' is consumed by the EntryShell library route — App opens it
   // via this same openSettings entry point, so SettingsSection must
@@ -3851,6 +3853,7 @@ export function SettingsDialog({
       subtitle: t('settings.projectLocationsHint'),
     },
     memory: { title: t('settings.memory'), subtitle: t('settings.memoryHint') },
+    tools: { title: t('settings.toolsTitle'), subtitle: t('settings.toolsHint') },
     // 'library' is opened via EntryShell route — SettingsDialog doesn't
     // render it but SettingsSection must accept the token (see type def).
     library: { title: '', subtitle: '' },
@@ -4331,6 +4334,18 @@ export function SettingsDialog({
               <span>
                 <strong>{t('settings.memory')}</strong>
                 <small>{t('settings.memoryHint')}</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${activeSection === 'tools' ? ' active' : ''}`}
+              onClick={() => setActiveSection('tools')}
+              data-testid="settings-nav-tools"
+            >
+              <Icon name="puzzle" size={18} />
+              <span>
+                <strong>{t('settings.toolsTitle')}</strong>
+                <small>{t('settings.toolsNavSub')}</small>
               </span>
             </button>
             <button
@@ -5950,6 +5965,18 @@ export function SettingsDialog({
               chatAgentId={cfg.mode === 'daemon' ? cfg.agentId ?? null : null}
               chatModel={selectedMemoryChatModel}
             />
+          ) : null}
+
+          {activeSection === 'tools' ? (
+            <section className="settings-section" data-testid="settings-tools">
+              <ToolsCatalogPanel
+                mode="preference"
+                disabledTools={cfg.disabledTools ?? []}
+                onDisabledToolsChange={(disabledTools) =>
+                  setCfg((current) => ({ ...current, disabledTools }))
+                }
+              />
+            </section>
           ) : null}
 
           {activeSection === 'privacy' ? (

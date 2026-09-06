@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   PAGE_BLOCK_TYPES,
+  parsePageStyle,
   type AppendPageBlocksRequest,
   type CreatePageRequest,
   type DuplicatePageRequest,
@@ -32,6 +33,7 @@ const BLOCK_TYPE_SET = new Set<string>(PAGE_BLOCK_TYPES);
 const PAGE_COLS = `
   id, workspace_id AS "orgId", parent_page_id AS "parentPageId", title, icon, cover,
   linked_record_id AS "linkedRecordId", linked_table_id AS "linkedTableId",
+  style_json AS "styleJson",
   position, created_by AS "createdBy", created_at AS "createdAt",
   updated_at AS "updatedAt", archived_at AS "archivedAt"
 `;
@@ -51,6 +53,7 @@ interface PageRow {
   cover: string | null;
   linkedRecordId: string | null;
   linkedTableId: string | null;
+  styleJson: string | null;
   position: number | string;
   createdBy: string;
   createdAt: number | string;
@@ -101,6 +104,7 @@ function normalizePage(row: PageRow): WorkspacePage {
     cover: row.cover,
     linkedRecordId: row.linkedRecordId ?? null,
     linkedTableId: row.linkedTableId ?? null,
+    style: parsePageStyle(parseJson(row.styleJson, {})),
     position: num(row.position),
     createdBy: row.createdBy,
     createdAt: num(row.createdAt),
@@ -377,9 +381,9 @@ export async function createPage(
   await db.run(
     `INSERT INTO od_pages (
        id, workspace_id, parent_page_id, title, icon, cover,
-       linked_record_id, linked_table_id, position,
+       linked_record_id, linked_table_id, style_json, position,
        created_by, created_at, updated_at, archived_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     [
       id,
       orgId,
@@ -389,6 +393,7 @@ export async function createPage(
       input.cover ?? null,
       input.linkedRecordId ?? null,
       input.linkedTableId ?? null,
+      JSON.stringify(input.style ?? {}),
       position,
       createdBy,
       now,
@@ -453,6 +458,10 @@ export async function updatePage(
     const parent = await assertParentOk(db, orgId, input.parentPageId, pageId);
     sets.push('parent_page_id = ?');
     params.push(parent);
+  }
+  if (input.style !== undefined) {
+    sets.push('style_json = ?');
+    params.push(JSON.stringify(input.style ?? {}));
   }
 
   params.push(pageId, orgId);
@@ -574,6 +583,17 @@ function embedToBlock(input: EmbedPageBlockRequest): PageBlockInput {
       }
       return { type: 'embed', content: url, props: { url } };
     }
+    case 'image':
+    case 'video':
+    case 'audio':
+    case 'file':
+    case 'pdf': {
+      const url = input.url?.trim() || input.path?.trim();
+      if (!url) {
+        throw workspaceValidationError([{ path: 'url', message: `required for ${input.type} embeds` }]);
+      }
+      return { type: input.type, content: url, props: { url } };
+    }
     default:
       throw workspaceValidationError([{ path: 'type', message: 'unsupported embed type' }]);
   }
@@ -639,6 +659,7 @@ export async function duplicatePage(
     parentPageId: source.parentPageId,
     icon: source.icon,
     cover: source.cover,
+    style: source.style,
     blocks: cloneBlockInputs(source.blocks),
     linkOnParent: true,
   });
@@ -674,6 +695,7 @@ async function duplicateSubtree(
     parentPageId,
     icon: source.icon,
     cover: source.cover,
+    style: source.style,
     blocks: cloneBlockInputs(source.blocks),
     linkOnParent: true,
   });
@@ -740,7 +762,7 @@ export async function findPageByLinkedRecord(
   return row ? normalizePage(row) : null;
 }
 
-/** Open or create the notes page for an ERP record. */
+/** Open or create the notes page for a table record. */
 export async function ensurePageForRecord(
   db: SqlExecutor,
   orgId: string,
@@ -769,8 +791,8 @@ export async function ensurePageForRecord(
       {
         type: 'callout',
         content: input.tableName
-          ? `Notes for this ${input.tableName} record. Edit freely — the ERP row stays the source of truth for fields.`
-          : 'Notes for this ERP record. Edit freely — the ERP row stays the source of truth for fields.',
+          ? `Notes for this ${input.tableName} record. Edit freely — the table row stays the source of truth for fields.`
+          : 'Notes for this record. Edit freely — the table row stays the source of truth for fields.',
       },
       { type: 'paragraph', content: '' },
     ],
@@ -795,6 +817,7 @@ export async function upsertPageFromAgent(
       if (input.parentPageId !== undefined) patch.parentPageId = input.parentPageId;
       if (input.icon !== undefined) patch.icon = input.icon;
       if (input.cover !== undefined) patch.cover = input.cover;
+      if (input.style !== undefined) patch.style = input.style;
       if (Object.keys(patch).length > 0) {
         await updatePage(db, orgId, input.pageId, patch);
       }

@@ -20,7 +20,14 @@ import {
   CHAT_FILE_MAX_BYTES,
   personLabel,
   workspaceLabel,
+  type ChatActivityItem,
+  type ChatBookmark,
   type ChatChannel,
+  type ChatPin,
+  type ChatReminder,
+  type ChatScheduledMessage,
+  type ChatSearchHit,
+  type ChatStatus,
   type OrgMember,
   type TeamChatAttachment,
   type TeamChatMessage,
@@ -30,12 +37,25 @@ import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import { useOptionalRunningApp } from '../apps/RunningAppContext';
 import {
+  archiveChatChannel,
+  cancelChatReminder,
+  cancelChatScheduled,
+  createChatBookmark,
   createChatChannel,
+  deleteChatBookmark,
   deleteChatMessage,
   editChatMessage,
+  fetchChatActivity,
+  fetchChatBookmarks,
+  fetchChatChannelFiles,
   fetchChatChannelMembers,
   fetchChatChannels,
+  fetchChatLater,
   fetchChatMessages,
+  fetchChatPins,
+  fetchChatReminders,
+  fetchChatScheduled,
+  fetchChatStatuses,
   fetchDesignSystemFile,
   fetchDesignSystemFiles,
   fetchDesignSystems,
@@ -45,11 +65,19 @@ import {
   joinChatChannel,
   leaveChatChannel,
   markChatChannelRead,
+  markChatChannelUnread,
   openChatDirectMessage,
   postChatMessage,
+  remindChatMessage,
   searchChatMessages,
+  setMyChatStatus,
   setUpChatChannels,
+  toggleChatPin,
   toggleChatReaction,
+  toggleChatSave,
+  unarchiveChatChannel,
+  updateChatChannel,
+  updateChatChannelPrefs,
   uploadChatFile,
 } from '../../providers/registry';
 import { navigate } from '../../router';
@@ -61,6 +89,8 @@ import {
   parseChatAccent,
   type ChatAccent,
 } from '../../runtime/chat-media';
+import { chatWhen, parseRemindWhen, parseSlashCommand, SLASH_HELP, wrapSelection } from '../../runtime/chat-format';
+import { CHAT_EMOJI_GROUPS, QUICK_REACTIONS } from '../../runtime/chat-emoji';
 import { Icon } from '../Icon';
 import { WorkspacePage } from '../workspace/WorkspacePage';
 import { ChatMessageBody } from './ChatMessageBody';
@@ -73,7 +103,9 @@ interface Props {
 }
 
 const POLL_MS = 5_000;
-const QUICK_REACTIONS = ['👍', '🎉', '❤️', '👀', '😄'];
+const DRAFT_PREFIX = 'od:chat-draft:';
+
+type ChatPane = 'channel' | 'unreads' | 'dms' | 'activity' | 'later' | 'browse' | 'reminders' | 'scheduled';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -105,6 +137,38 @@ function formatClock(ts: number): string {
     return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   }
   return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function mentionsCaller(
+  message: TeamChatMessage,
+  memberId: string | null,
+  username: string | null | undefined,
+): boolean {
+  if (message.mentions.includes('@channel') || message.mentions.includes('@here') || message.mentions.includes('@everyone')) {
+    return true;
+  }
+  if (memberId && message.mentions.includes(memberId)) return true;
+  if (username && message.body.toLowerCase().includes(`@${username.toLowerCase()}`)) return true;
+  return false;
+}
+
+function notifyMention(body: string, channelName: string) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  try {
+    new Notification(channelName, { body: body.slice(0, 140), silent: false });
+  } catch {
+    // Browser may still throw if the user revoked permission mid-session.
+  }
+}
+
+function lookupPerson(people: OrgMember[], token: string): OrgMember | undefined {
+  const needle = token.replace(/^@/, '').trim().toLowerCase();
+  if (!needle) return undefined;
+  return people.find((person) =>
+    person.username?.toLowerCase() === needle
+    || person.displayName?.toLowerCase() === needle
+    || person.id.toLowerCase() === needle,
+  );
 }
 
 function PendingThumb({ file }: { file: File }) {
@@ -150,7 +214,44 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [dropping, setDropping] = useState(false);
   const [accent, setAccent] = useState<ChatAccent>(DEFAULT_CHAT_ACCENT);
+  const [pane, setPane] = useState<ChatPane>('channel');
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsTab, setDetailsTab] = useState<'about' | 'members' | 'files' | 'pins'>('about');
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [statusDraft, setStatusDraft] = useState('');
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [jumpQuery, setJumpQuery] = useState('');
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const [activity, setActivity] = useState<ChatActivityItem[]>([]);
+  const [later, setLater] = useState<ChatSearchHit[]>([]);
+  const [reminders, setReminders] = useState<ChatReminder[]>([]);
+  const [scheduled, setScheduled] = useState<ChatScheduledMessage[]>([]);
+  const [pins, setPins] = useState<ChatPin[]>([]);
+  const [bookmarks, setBookmarks] = useState<ChatBookmark[]>([]);
+  const [channelFiles, setChannelFiles] = useState<TeamChatAttachment[]>([]);
+  const [channelMembers, setChannelMembers] = useState<import('@open-design/contracts').ChatChannelMember[]>([]);
+  const [statuses, setStatuses] = useState<ChatStatus[]>([]);
+  const [nextBefore, setNextBefore] = useState<string | null>(null);
+  const [topicDraft, setTopicDraft] = useState('');
+  const [purposeDraft, setPurposeDraft] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
+  const [unreadAfter, setUnreadAfter] = useState<number | null>(null);
+  const [alsoSend, setAlsoSend] = useState(false);
+  const [shareId, setShareId] = useState<string | null>(null);
+  const [remindMenu, setRemindMenu] = useState<string | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [hideStarred, setHideStarred] = useState(false);
+  const [hideChannels, setHideChannels] = useState(false);
+  const [hideDms, setHideDms] = useState(false);
+  const [scheduledOk, setScheduledOk] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mainComposerRef = useRef<HTMLTextAreaElement | null>(null);
+  const threadComposerRef = useRef<HTMLTextAreaElement | null>(null);
+  const lastNotifiedId = useRef<string | null>(null);
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const pinnedToBottom = useRef(true);
@@ -208,6 +309,10 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
 
   const rooms = useMemo(() => channels.filter((channel) => !isDirect(channel)), [channels]);
   const dms = useMemo(() => channels.filter(isDirect), [channels]);
+  const starredRooms = useMemo(
+    () => channels.filter((channel) => channel.starred && channel.joined),
+    [channels],
+  );
   const current = channels.find((channel) => channel.slug === currentSlug || channel.id === currentSlug) ?? null;
   const parentInThread = messages.find((message) => message.id === threadId) ?? threadMessages[0] ?? null;
 
@@ -219,10 +324,18 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     return result.channels;
   }, [activeOrgId]);
 
-  const loadMessages = useCallback(async (slug: string) => {
+  const loadMessages = useCallback(async (slug: string, before?: string) => {
     if (!activeOrgId) return;
-    const result = await fetchChatMessages(activeOrgId, slug, { limit: 80 });
-    setMessages(result.messages);
+    const result = await fetchChatMessages(activeOrgId, slug, { limit: 80, before });
+    if (before) {
+      setMessages((prev) => {
+        const seen = new Set(prev.map((message) => message.id));
+        return [...result.messages.filter((message) => !seen.has(message.id)), ...prev];
+      });
+    } else {
+      setMessages(result.messages);
+    }
+    setNextBefore(result.nextBefore);
   }, [activeOrgId]);
 
   useEffect(() => {
@@ -247,11 +360,15 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   }, [active, activeOrgId, loadChannels]);
 
   useEffect(() => {
-    if (!active || !activeOrgId || !currentSlug) return;
+    if (!active || !activeOrgId || !currentSlug || !myMemberId) return;
     void (async () => {
       try {
+        const members = await fetchChatChannelMembers(activeOrgId, currentSlug).catch(() => []);
+        const mine = members.find((row) => row.memberId === myMemberId);
+        setUnreadAfter(mine && mine.lastReadAt > 0 ? mine.lastReadAt : null);
         await loadMessages(currentSlug);
         pinnedToBottom.current = true;
+        setAtBottom(true);
         await markChatChannelRead(activeOrgId, currentSlug);
         await loadChannels();
         setError(null);
@@ -259,7 +376,7 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
         setError(errorMessage(err));
       }
     })();
-  }, [active, activeOrgId, currentSlug, loadChannels, loadMessages]);
+  }, [active, activeOrgId, currentSlug, loadChannels, loadMessages, myMemberId]);
 
   useEffect(() => {
     if (!active || !activeOrgId || !currentSlug || !threadId) {
@@ -282,14 +399,26 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   useEffect(() => {
     if (!active || !activeOrgId || !currentSlug) return;
     const tick = async () => {
-      if (document.visibilityState !== 'visible') return;
       try {
         const result = await fetchChatMessages(activeOrgId, currentSlug, { limit: 80 });
+        const latest = result.messages[result.messages.length - 1];
+        if (
+          latest
+          && document.visibilityState === 'hidden'
+          && lastNotifiedId.current !== latest.id
+          && latest.authorMemberId !== myMemberId
+          && mentionsCaller(latest, myMemberId, people.find((person) => person.id === myMemberId)?.username)
+        ) {
+          lastNotifiedId.current = latest.id;
+          notifyMention(latest.body, current?.displayName ?? currentSlug);
+        }
+        if (document.visibilityState !== 'visible') return;
         setMessages((prev) => {
-          const latest = result.messages[result.messages.length - 1]?.id;
+          const latestId = latest?.id;
           const known = prev[prev.length - 1]?.id;
-          return latest === known && prev.length === result.messages.length ? prev : result.messages;
+          return latestId === known && prev.length === result.messages.length ? prev : result.messages;
         });
+        setNextBefore(result.nextBefore);
         void markChatChannelRead(activeOrgId, currentSlug);
         void loadChannels();
         if (threadId) {
@@ -305,7 +434,107 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     };
     const timer = window.setInterval(() => void tick(), POLL_MS);
     return () => window.clearInterval(timer);
-  }, [active, activeOrgId, currentSlug, threadId, loadChannels]);
+  }, [active, activeOrgId, currentSlug, threadId, loadChannels, myMemberId, people, current?.displayName]);
+
+  useEffect(() => {
+    if (!activeOrgId || !currentSlug) return;
+    const key = `${DRAFT_PREFIX}${activeOrgId}:${currentSlug}`;
+    const stored = window.localStorage.getItem(key);
+    if (stored) setDraft(stored);
+  }, [activeOrgId, currentSlug]);
+
+  useEffect(() => {
+    if (!activeOrgId || !currentSlug) return;
+    const key = `${DRAFT_PREFIX}${activeOrgId}:${currentSlug}`;
+    if (draft.trim()) window.localStorage.setItem(key, draft);
+    else window.localStorage.removeItem(key);
+  }, [activeOrgId, currentSlug, draft]);
+
+  useEffect(() => {
+    if (!active || !activeOrgId) return;
+    void fetchChatStatuses(activeOrgId)
+      .then((result) => setStatuses(result.statuses ?? []))
+      .catch(() => setStatuses([]));
+  }, [active, activeOrgId, people.length]);
+
+  useEffect(() => {
+    if (!active || !activeOrgId || !currentSlug || pane !== 'channel') return;
+    void Promise.all([
+      fetchChatPins(activeOrgId, currentSlug).then((result) => setPins(result.pins)).catch(() => setPins([])),
+      fetchChatBookmarks(activeOrgId, currentSlug).then((result) => setBookmarks(result.bookmarks)).catch(() => setBookmarks([])),
+      fetchChatChannelMembers(activeOrgId, currentSlug).then(setChannelMembers).catch(() => setChannelMembers([])),
+    ]);
+    setTopicDraft(current?.topic ?? '');
+    setPurposeDraft(current?.purpose ?? '');
+  }, [active, activeOrgId, currentSlug, pane, current?.topic, current?.purpose]);
+
+  useEffect(() => {
+    if (!active || !activeOrgId) return;
+    if (pane === 'activity') {
+      void fetchChatActivity(activeOrgId).then((result) => setActivity(result.items)).catch(() => setActivity([]));
+    }
+    if (pane === 'later') {
+      void fetchChatLater(activeOrgId).then((result) => setLater(result.items)).catch(() => setLater([]));
+    }
+    if (pane === 'reminders') {
+      void fetchChatReminders(activeOrgId).then((result) => setReminders(result.reminders)).catch(() => setReminders([]));
+    }
+    if (pane === 'scheduled') {
+      void fetchChatScheduled(activeOrgId).then((result) => setScheduled(result.messages)).catch(() => setScheduled([]));
+    }
+    if (detailsOpen && detailsTab === 'files' && currentSlug) {
+      void fetchChatChannelFiles(activeOrgId, currentSlug)
+        .then((result) => setChannelFiles(result.files))
+        .catch(() => setChannelFiles([]));
+    }
+  }, [active, activeOrgId, pane, detailsOpen, detailsTab, currentSlug]);
+
+  useEffect(() => {
+    function onKey(event: globalThis.KeyboardEvent) {
+      const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setJumpOpen((prev) => !prev);
+        setSearchOpen(false);
+        setShortcutsOpen(false);
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key === '/') {
+        event.preventDefault();
+        setShortcutsOpen((prev) => !prev);
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        setPane('activity');
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'u') {
+        event.preventDefault();
+        setPane('unreads');
+      }
+      if (event.key === 'ArrowUp' && typing && event.target === mainComposerRef.current && !draft.trim()) {
+        const lastMine = [...messages].reverse().find((message) => message.authorMemberId === myMemberId && !message.system);
+        if (lastMine) {
+          event.preventDefault();
+          setEditingId(lastMine.id);
+          setEditDraft(lastMine.body);
+        }
+      }
+      if (event.key === 'Escape') {
+        setThreadId(null);
+        setEmojiOpen(false);
+        setMentionOpen(false);
+        setJumpOpen(false);
+        setDetailsOpen(false);
+        setStatusOpen(false);
+        setShortcutsOpen(false);
+        setRemindMenu(null);
+        setScheduleOpen(false);
+        setShareId(null);
+        setProfileId(null);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [draft, messages, myMemberId]);
 
   useEffect(() => {
     if (!pinnedToBottom.current) return;
@@ -313,7 +542,38 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     if (node) node.scrollTop = node.scrollHeight;
   }, [messages, currentSlug]);
 
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, '');
+    if (!hash) return;
+    const node = document.querySelector(`[data-testid="team-message-${hash}"]`);
+    if (node instanceof HTMLElement) node.scrollIntoView({ block: 'center' });
+  }, [messages]);
+
+  function renderChannelButton(channel: ChatChannel) {
+    const selected = pane === 'channel' && current?.id === channel.id;
+    const draftKey = activeOrgId ? `${DRAFT_PREFIX}${activeOrgId}:${channel.slug}` : '';
+    const hasDraft = Boolean(draftKey && typeof window !== 'undefined' && window.localStorage.getItem(draftKey));
+    return (
+      <button
+        key={channel.id}
+        type="button"
+        className={`${styles.channelButton}${selected ? ` ${styles.channelActive}` : ''}${channel.unreadCount > 0 ? ` ${styles.channelUnread}` : ''}${channel.muted ? ` ${styles.channelMuted}` : ''}`}
+        onClick={() => selectChannel(channel.slug)}
+        data-testid={`team-channel-${channel.slug}`}
+      >
+        <Icon name={isDirect(channel) ? 'message-circle' : channel.visibility === 'private' ? 'lock' : 'hash'} size={12} />
+        <span className={styles.channelName}>{channel.displayName}</span>
+        {hasDraft && channel.unreadCount === 0 ? <span className={styles.draftMark}>{t('team.draft')}</span> : null}
+        {channel.starred ? <Icon name="star" size={10} /> : null}
+        {channel.unreadCount > 0 ? (
+          <Badge tone="accent" data-testid={`team-unread-${channel.slug}`}>{channel.unreadCount}</Badge>
+        ) : null}
+      </button>
+    );
+  }
+
   function selectChannel(slug: string) {
+    setPane('channel');
     setCurrentSlug(slug);
     setThreadId(null);
     setSearchOpen(false);
@@ -321,11 +581,148 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     navigate({ kind: 'home', view: homeView, channelId: slug });
   }
 
+  function statusFor(memberId: string | null | undefined): ChatStatus | undefined {
+    if (!memberId) return undefined;
+    return statuses.find((item) => item.memberId === memberId && item.text);
+  }
+
+  function isActive(memberId: string | null | undefined): boolean {
+    if (!memberId) return false;
+    const row = channelMembers.find((item) => item.memberId === memberId);
+    return Boolean(row && Date.now() - row.lastReadAt < 5 * 60_000);
+  }
+
+  async function runSlash(slash: ReturnType<typeof parseSlashCommand>) {
+    if (!slash || !activeOrgId || !currentSlug) return;
+    try {
+      if (slash.name === 'shrug') {
+        setDraft(`${slash.rest ? `${slash.rest} ` : ''}¯\\_(ツ)_/¯`);
+        return;
+      }
+      if (slash.name === 'me') {
+        setDraft(`_${slash.rest || 'does a thing'}_`);
+        return;
+      }
+      if (slash.name === 'help') {
+        setError(SLASH_HELP);
+        setDraft('');
+        return;
+      }
+      if (slash.name === 'topic') {
+        await updateChatChannel(activeOrgId, currentSlug, { topic: slash.rest });
+        setDraft('');
+        await loadChannels();
+        return;
+      }
+      if (slash.name === 'purpose') {
+        await updateChatChannel(activeOrgId, currentSlug, { purpose: slash.rest });
+        setDraft('');
+        await loadChannels();
+        return;
+      }
+      if (slash.name === 'mute' || slash.name === 'unmute') {
+        await updateChatChannelPrefs(activeOrgId, currentSlug, { muted: slash.name === 'mute' });
+        setDraft('');
+        await loadChannels();
+        return;
+      }
+      if (slash.name === 'leave') {
+        setDraft('');
+        await leave();
+        return;
+      }
+      if (slash.name === 'join') {
+        setDraft('');
+        await join();
+        return;
+      }
+      if (slash.name === 'archive') {
+        setDraft('');
+        await archiveChatChannel(activeOrgId, currentSlug);
+        await loadChannels();
+        return;
+      }
+      if (slash.name === 'unarchive') {
+        setDraft('');
+        await unarchiveChatChannel(activeOrgId, currentSlug);
+        await loadChannels();
+        return;
+      }
+      if (slash.name === 'who') {
+        setDraft('');
+        setDetailsOpen(true);
+        setDetailsTab('members');
+        return;
+      }
+      if (slash.name === 'status') {
+        await setMyChatStatus(activeOrgId, { text: slash.rest || null, emoji: slash.rest ? '💬' : null });
+        const result = await fetchChatStatuses(activeOrgId);
+        setStatuses(result.statuses ?? []);
+        setDraft('');
+        return;
+      }
+      if (slash.name === 'away') {
+        await setMyChatStatus(activeOrgId, { text: 'Away', emoji: '🌙' });
+        const result = await fetchChatStatuses(activeOrgId);
+        setStatuses(result.statuses ?? []);
+        setDraft('');
+        return;
+      }
+      if (slash.name === 'dnd') {
+        await setMyChatStatus(activeOrgId, { text: 'Do not disturb', emoji: '🔕', expiresAt: Date.now() + 30 * 60_000 });
+        const result = await fetchChatStatuses(activeOrgId);
+        setStatuses(result.statuses ?? []);
+        setDraft('');
+        return;
+      }
+      if (slash.name === 'invite') {
+        const person = lookupPerson(people, slash.rest);
+        if (!person) {
+          setError(t('team.noPeople'));
+          return;
+        }
+        await inviteChatMembers(activeOrgId, currentSlug, [person.id]);
+        setDraft('');
+        await loadChannels();
+        return;
+      }
+      if (slash.name === 'msg') {
+        const person = lookupPerson(people, slash.rest);
+        if (!person) {
+          setError(t('team.noPeople'));
+          return;
+        }
+        const channel = await openChatDirectMessage(activeOrgId, [person.id]);
+        setDraft('');
+        await loadChannels();
+        selectChannel(channel.slug);
+        return;
+      }
+      if (slash.name === 'remind') {
+        const latest = [...messages].reverse().find((message) => !message.system);
+        if (!latest) return;
+        const fireAt = parseRemindWhen(slash.rest) ?? chatWhen('1h');
+        await remindChatMessage(activeOrgId, latest.id, fireAt);
+        setDraft('');
+        return;
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   async function send(parentMessageId?: string) {
     if (!activeOrgId || !currentSlug) return;
     const text = (parentMessageId ? threadDraft : draft).trim();
     const files = pendingFiles;
     if (!text && files.length === 0) return;
+    if (!parentMessageId) {
+      const slash = parseSlashCommand(text);
+      if (slash) {
+        await runSlash(slash);
+        return;
+      }
+    }
     setSending(true);
     try {
       const attachments: TeamChatAttachment[] = [];
@@ -340,11 +737,15 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
       if (parentMessageId) setThreadDraft('');
       else setDraft('');
       setPendingFiles([]);
-      await postChatMessage(activeOrgId, currentSlug, {
+      const posted = await postChatMessage(activeOrgId, currentSlug, {
         body: text,
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(parentMessageId ? { parentMessageId } : {}),
       });
+      if (parentMessageId && alsoSend && posted.message) {
+        await postChatMessage(activeOrgId, currentSlug, { body: text });
+        setAlsoSend(false);
+      }
       pinnedToBottom.current = true;
       await loadMessages(currentSlug);
       if (parentMessageId) {
@@ -408,6 +809,34 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     queueFiles(files);
   }
 
+  function applyMark(mark: string, text: string, setText: (value: string) => void, parentMessageId?: string) {
+    const node = parentMessageId ? threadComposerRef.current : mainComposerRef.current;
+    if (!node) {
+      setText(wrapSelection(text, text.length, text.length, mark));
+      return;
+    }
+    const start = node.selectionStart ?? text.length;
+    const end = node.selectionEnd ?? text.length;
+    setText(wrapSelection(text, start, end, mark));
+  }
+
+  async function sendLater(kind: '20m' | '1h' | 'tomorrow') {
+    if (!activeOrgId || !currentSlug || !draft.trim()) return;
+    try {
+      await postChatMessage(activeOrgId, currentSlug, {
+        body: draft.trim(),
+        sendAt: chatWhen(kind),
+      });
+      setDraft('');
+      setScheduleOpen(false);
+      setScheduledOk(true);
+      window.setTimeout(() => setScheduledOk(false), 2000);
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   function composerForm(
     text: string,
     setText: (value: string) => void,
@@ -455,6 +884,96 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           </ul>
         ) : null}
         {dropping ? <p className={styles.dropHint}>{t('team.dropToAttach')}</p> : null}
+        <div className={styles.composerTools}>
+          <button type="button" className={styles.toolBtn} onClick={() => applyMark('*', text, setText, parentMessageId)} aria-label={t('team.bold')}>
+            B
+          </button>
+          <button type="button" className={styles.toolBtn} onClick={() => applyMark('_', text, setText, parentMessageId)} aria-label={t('team.italic')}>
+            I
+          </button>
+          <button type="button" className={styles.toolBtn} onClick={() => applyMark('~', text, setText, parentMessageId)} aria-label={t('team.strike')}>
+            S
+          </button>
+          <button type="button" className={styles.toolBtn} onClick={() => applyMark('`', text, setText, parentMessageId)} aria-label={t('team.code')}>
+            {'</>'}
+          </button>
+          <button
+            type="button"
+            className={styles.toolBtn}
+            aria-label={t('team.emoji')}
+            onClick={() => setEmojiOpen((prev) => !prev)}
+          >
+            😊
+          </button>
+          <button
+            type="button"
+            className={styles.toolBtn}
+            aria-label={t('team.mention')}
+            onClick={() => setMentionOpen((prev) => !prev)}
+          >
+            @
+          </button>
+          {!parentMessageId ? (
+            <button
+              type="button"
+              className={styles.toolBtn}
+              aria-label={t('team.schedule')}
+              onClick={() => setScheduleOpen((prev) => !prev)}
+            >
+              {t('team.schedule')}
+            </button>
+          ) : null}
+        </div>
+        {scheduleOpen && !parentMessageId ? (
+          <div className={styles.menuPop}>
+            <button type="button" className={styles.mentionBtn} onClick={() => void sendLater('20m')}>{t('team.schedule20m')}</button>
+            <button type="button" className={styles.mentionBtn} onClick={() => void sendLater('1h')}>{t('team.schedule1h')}</button>
+            <button type="button" className={styles.mentionBtn} onClick={() => void sendLater('tomorrow')}>{t('team.scheduleTomorrow')}</button>
+          </div>
+        ) : null}
+        {text.startsWith('/') && !parentMessageId ? <p className={styles.slashHint}>{t('team.slashHint')}</p> : null}
+        {emojiOpen ? (
+          <div className={styles.emojiPicker} data-testid="team-emoji-picker">
+            {CHAT_EMOJI_GROUPS.map((group) => (
+              <div key={group.label}>
+                <p className={styles.emojiLabel}>{group.label}</p>
+                <div className={styles.emojiGrid}>
+                  {group.emoji.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className={styles.emojiBtn}
+                      onClick={() => {
+                        setText(`${text}${emoji}`);
+                        setEmojiOpen(false);
+                      }}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {mentionOpen ? (
+          <ul className={styles.mentionList}>
+            {['@channel', '@here', '@everyone', ...others.map((person) => `@${person.username || person.displayName}`)].map((item) => (
+              <li key={item}>
+                <button
+                  type="button"
+                  className={styles.mentionBtn}
+                  onClick={() => {
+                    setText(`${text}${text.endsWith(' ') || !text ? '' : ' '}${item} `);
+                    setMentionOpen(false);
+                  }}
+                >
+                  {item}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <div className={styles.composerBox}>
           <button
             type="button"
@@ -466,8 +985,13 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             <Icon name="attach" size={16} />
           </button>
           <Textarea
+            ref={parentMessageId ? threadComposerRef : mainComposerRef}
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => {
+              setText(event.target.value);
+              const value = event.target.value;
+              setMentionOpen(value.endsWith('@') || /(?:^|\s)@[\w.-]*$/.test(value));
+            }}
             onKeyDown={(event) => onComposerKey(event, parentMessageId)}
             placeholder={placeholder}
             aria-label={placeholder}
@@ -484,6 +1008,12 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             {sending ? t('team.sending') : t('team.send')}
           </Button>
         </div>
+        {parentMessageId ? (
+          <label className={styles.privateToggle}>
+            <input type="checkbox" checked={alsoSend} onChange={(event) => setAlsoSend(event.target.checked)} />
+            {t('team.alsoSendToChannel')}
+          </label>
+        ) : null}
       </form>
     );
   }
@@ -525,6 +1055,17 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
       setError(errorMessage(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function startDmFrom(memberId: string) {
+    if (!activeOrgId) return;
+    try {
+      const channel = await openChatDirectMessage(activeOrgId, [memberId]);
+      await loadChannels();
+      selectChannel(channel.slug);
+    } catch (err) {
+      setError(errorMessage(err));
     }
   }
 
@@ -607,6 +1148,84 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     }
   }
 
+  async function togglePin(messageId: string) {
+    if (!activeOrgId) return;
+    try {
+      await toggleChatPin(activeOrgId, messageId);
+      if (currentSlug) await loadMessages(currentSlug);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function toggleSave(messageId: string) {
+    if (!activeOrgId) return;
+    try {
+      await toggleChatSave(activeOrgId, messageId);
+      if (currentSlug) await loadMessages(currentSlug);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function remind(messageId: string, kind: '20m' | '1h' | 'tomorrow') {
+    if (!activeOrgId) return;
+    try {
+      await remindChatMessage(activeOrgId, messageId, chatWhen(kind));
+      setRemindMenu(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function shareTo(message: TeamChatMessage, slug: string) {
+    if (!activeOrgId) return;
+    try {
+      await postChatMessage(activeOrgId, slug, {
+        body: `> ${message.body}\n_${t('team.forwardedFrom')} ${current?.displayName ?? ''}_`,
+      });
+      setShareId(null);
+      selectChannel(slug);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function markAllRead() {
+    if (!activeOrgId) return;
+    try {
+      await Promise.all(
+        channels.filter((channel) => channel.joined && channel.unreadCount > 0).map((channel) =>
+          markChatChannelRead(activeOrgId, channel.slug),
+        ),
+      );
+      await loadChannels();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function copyLink(messageId: string) {
+    const url = `${window.location.origin}${window.location.pathname}#${messageId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError(url);
+    }
+  }
+
+  async function markUnread(messageId: string) {
+    if (!activeOrgId || !currentSlug) return;
+    try {
+      await markChatChannelUnread(activeOrgId, currentSlug, messageId);
+      await loadChannels();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   async function saveEdit(messageId: string) {
     if (!activeOrgId) return;
     const body = editDraft.trim();
@@ -646,26 +1265,42 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     }
   }
 
-  function renderMessage(message: TeamChatMessage, inThread = false) {
+  function renderMessage(message: TeamChatMessage, inThread = false, grouped = false) {
     const member = people.find((person) => person.id === message.authorMemberId);
     const mine = Boolean(myMemberId && message.authorMemberId === myMemberId);
     const labeled = message.system
       ? t('team.system')
       : labelPerson(member, message.authorName, t('team.someone'));
     const author = !message.system && mine ? t('team.me') : labeled;
+    const mentioned = mentionsCaller(message, myMemberId, people.find((person) => person.id === myMemberId)?.username);
+    const status = statusFor(message.authorMemberId);
     return (
       <article
         key={message.id}
-        className={`${styles.message}${message.system ? ` ${styles.systemMessage}` : ''}`}
+        id={message.id}
+        className={`${styles.message}${message.system ? ` ${styles.systemMessage}` : ''}${grouped ? ` ${styles.messageGrouped}` : ''}${mentioned ? ` ${styles.mentionRow}` : ''}`}
         data-testid={`team-message-${message.id}`}
       >
-        <PersonAvatar name={labeled} avatarUrl={member?.avatarUrl} className={styles.avatar} />
+        {grouped ? (
+          <time className={styles.groupedTime}>{formatClock(message.createdAt)}</time>
+        ) : (
+          <span className={styles.avatarWrap}>
+            <PersonAvatar name={labeled} avatarUrl={member?.avatarUrl} className={styles.avatar} />
+            <i className={isActive(message.authorMemberId) ? styles.dotOn : styles.dotOff} aria-hidden />
+          </span>
+        )}
         <div className={styles.messageBody}>
-          <header className={styles.messageMeta}>
-            <span className={styles.author}>{author}</span>
-            <time>{formatClock(message.createdAt)}</time>
-            {message.editedAt ? <span className={styles.edited}>{t('team.edited')}</span> : null}
-          </header>
+          {grouped ? null : (
+            <header className={styles.messageMeta}>
+              <button type="button" className={styles.author} onClick={() => setProfileId(message.authorMemberId)}>
+                {author}
+              </button>
+              {status?.text ? <span className={styles.edited}>{status.emoji} {status.text}</span> : null}
+              <time>{formatClock(message.createdAt)}</time>
+              {message.editedAt ? <span className={styles.edited}>{t('team.edited')}</span> : null}
+              {message.pinned ? <Icon name="pin" size={10} /> : null}
+            </header>
+          )}
           {editingId === message.id ? (
             <form
               className={styles.editRow}
@@ -723,6 +1358,80 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
                 {message.replyCount > 0 ? ` (${message.replyCount})` : ''}
               </button>
             ) : null}
+            <button
+              type="button"
+              className={styles.iconAction}
+              onClick={() => void toggleSave(message.id)}
+            >
+              {message.saved ? t('team.unsave') : t('team.saveForLater')}
+            </button>
+            <button
+              type="button"
+              className={styles.iconAction}
+              onClick={() => void togglePin(message.id)}
+            >
+              {message.pinned ? t('team.unpin') : t('team.pin')}
+            </button>
+            <button
+              type="button"
+              className={styles.iconAction}
+              onClick={() => void copyLink(message.id)}
+            >
+              {t('team.copyLink')}
+            </button>
+            <button
+              type="button"
+              className={styles.iconAction}
+              onClick={() => setRemindMenu((prev) => (prev === message.id ? null : message.id))}
+            >
+              {t('team.remind')}
+            </button>
+            {remindMenu === message.id ? (
+              <span className={styles.inlineMenu}>
+                <button type="button" className={styles.iconAction} onClick={() => void remind(message.id, '20m')}>{t('team.remindIn20m')}</button>
+                <button type="button" className={styles.iconAction} onClick={() => void remind(message.id, '1h')}>{t('team.remindIn1h')}</button>
+                <button type="button" className={styles.iconAction} onClick={() => void remind(message.id, 'tomorrow')}>{t('team.remindTomorrow')}</button>
+              </span>
+            ) : null}
+            <button
+              type="button"
+              className={styles.iconAction}
+              onClick={() => setShareId((prev) => (prev === message.id ? null : message.id))}
+            >
+              {t('team.shareTo')}
+            </button>
+            {shareId === message.id ? (
+              <span className={styles.inlineMenu}>
+                {rooms.filter((channel) => channel.joined && channel.id !== current?.id).slice(0, 8).map((channel) => (
+                  <button
+                    key={channel.id}
+                    type="button"
+                    className={styles.iconAction}
+                    onClick={() => void shareTo(message, channel.slug)}
+                  >
+                    #{channel.displayName}
+                  </button>
+                ))}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              className={styles.iconAction}
+              onClick={() => {
+                setDraft((prev) => `${prev}${prev ? '\n' : ''}> ${message.body}\n`);
+              }}
+            >
+              {t('team.quote')}
+            </button>
+            {currentSlug ? (
+              <button
+                type="button"
+                className={styles.iconAction}
+                onClick={() => void markUnread(message.id)}
+              >
+                {t('team.markUnread')}
+              </button>
+            ) : null}
             {mine && !message.system ? (
               <>
                 <button
@@ -745,6 +1454,11 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
               </>
             ) : null}
           </div>
+          {!inThread && message.replyCount > 0 ? (
+            <button type="button" className={styles.threadBar} onClick={() => setThreadId(message.id)}>
+              {t('team.threadReplies', { count: String(message.replyCount) })}
+            </button>
+          ) : null}
         </div>
       </article>
     );
@@ -783,7 +1497,9 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   }
 
   const visibleMessages = searchOpen && searchHits ? searchHits : messages;
+  const unreadRooms = channels.filter((channel) => channel.joined && channel.unreadCount > 0);
   const others = people.filter((person) => person.id !== myMemberId);
+  const profilePerson = people.find((person) => person.id === profileId);
 
   return (
     <div className={styles.root} style={accentVars} data-testid="team-chat-view">
@@ -803,9 +1519,42 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
       ) : null}
 
       <nav className={styles.sidebar} aria-label={t('team.channels')}>
-        <p className={styles.workspaceName} data-testid="team-workspace-name">
+        <button
+          type="button"
+          className={styles.workspaceName}
+          data-testid="team-workspace-name"
+          onClick={() => setStatusOpen((prev) => !prev)}
+        >
           {workspaceLabel(activeOrg?.name, t('team.workspace'))}
-        </p>
+        </button>
+        {statusOpen ? (
+          <form
+            className={styles.createRow}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!activeOrgId) return;
+              void setMyChatStatus(activeOrgId, { text: statusDraft || null, emoji: statusDraft ? '💬' : null })
+                .then(() => fetchChatStatuses(activeOrgId))
+                .then((result) => setStatuses(result.statuses ?? []))
+                .then(() => setStatusOpen(false))
+                .catch((err) => setError(errorMessage(err)));
+            }}
+          >
+            <Input
+              value={statusDraft}
+              onChange={(event) => setStatusDraft(event.target.value)}
+              placeholder={t('team.statusPlaceholder')}
+              aria-label={t('team.setStatus')}
+            />
+            <Button type="submit">{t('team.setStatus')}</Button>
+            <Button type="button" variant="ghost" onClick={() => activeOrgId && void setMyChatStatus(activeOrgId, { text: null, emoji: null }).then(() => fetchChatStatuses(activeOrgId)).then((result) => setStatuses(result.statuses ?? [])).then(() => setStatusOpen(false))}>
+              {t('team.clearStatus')}
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => activeOrgId && void setMyChatStatus(activeOrgId, { text: 'Do not disturb', emoji: '🔕', expiresAt: Date.now() + 30 * 60_000 }).then(() => fetchChatStatuses(activeOrgId)).then((result) => setStatuses(result.statuses ?? [])).then(() => setStatusOpen(false))}>
+              {t('team.snooze30')}
+            </Button>
+          </form>
+        ) : null}
         <form className={styles.search} onSubmit={(event) => void onSearch(event)}>
           <Icon name="search" size={14} />
           <Input
@@ -816,8 +1565,67 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           />
         </form>
 
+        <button type="button" className={`${styles.channelButton}${pane === 'channel' && !searchOpen ? ` ${styles.channelActive}` : ''}`} onClick={() => { setPane('channel'); setSearchOpen(false); }}>
+          <Icon name="home" size={12} />
+          <span className={styles.channelName}>{t('team.home')}</span>
+        </button>
+        <button type="button" className={`${styles.channelButton}${pane === 'unreads' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('unreads')} data-testid="team-unreads">
+          <Icon name="message-circle" size={12} />
+          <span className={styles.channelName}>{t('team.unreads')}</span>
+          {unreadRooms.length > 0 ? <Badge tone="accent">{unreadRooms.reduce((sum, channel) => sum + channel.unreadCount, 0)}</Badge> : null}
+        </button>
+        <button type="button" className={`${styles.channelButton}${pane === 'dms' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('dms')}>
+          <Icon name="message-circle" size={12} />
+          <span className={styles.channelName}>{t('team.dms')}</span>
+        </button>
+        <button type="button" className={`${styles.channelButton}${pane === 'activity' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('activity')} data-testid="team-activity">
+          <Icon name="bell" size={12} />
+          <span className={styles.channelName}>{t('team.activity')}</span>
+        </button>
+        <button type="button" className={`${styles.channelButton}${pane === 'later' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('later')} data-testid="team-later">
+          <Icon name="bookmark" size={12} />
+          <span className={styles.channelName}>{t('team.later')}</span>
+        </button>
+        <button type="button" className={`${styles.channelButton}${pane === 'reminders' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('reminders')} data-testid="team-reminders">
+          <Icon name="bell" size={12} />
+          <span className={styles.channelName}>{t('team.reminders')}</span>
+        </button>
+        <button type="button" className={`${styles.channelButton}${pane === 'scheduled' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('scheduled')}>
+          <Icon name="history" size={12} />
+          <span className={styles.channelName}>{t('team.scheduled')}</span>
+        </button>
+        <button type="button" className={`${styles.channelButton}${pane === 'browse' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('browse')}>
+          <Icon name="hash" size={12} />
+          <span className={styles.channelName}>{t('team.browseChannels')}</span>
+        </button>
+        <button type="button" className={styles.channelButton} onClick={() => void markAllRead()}>
+          <Icon name="check" size={12} />
+          <span className={styles.channelName}>{t('team.markAllRead')}</span>
+        </button>
+        <button type="button" className={styles.channelButton} onClick={() => {
+          if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+            void Notification.requestPermission();
+          }
+        }}>
+          <Icon name="bell" size={12} />
+          <span className={styles.channelName}>{t('team.enableNotifications')}</span>
+        </button>
+        <button type="button" className={styles.channelButton} onClick={() => setShortcutsOpen(true)}>
+          <Icon name="help-circle" size={12} />
+          <span className={styles.channelName}>{t('team.shortcuts')}</span>
+        </button>
+
+        {starredRooms.length > 0 ? (
+          <>
+            <div className={styles.sidebarHead}>
+              <button type="button" className={styles.sectionLabel} onClick={() => setHideStarred((prev) => !prev)}>{t('team.starred')}</button>
+            </div>
+            {hideStarred ? null : starredRooms.map((channel) => renderChannelButton(channel))}
+          </>
+        ) : null}
+
         <div className={styles.sidebarHead}>
-          <h2 className={styles.sectionLabel}>{t('team.channels')}</h2>
+          <button type="button" className={styles.sectionLabel} onClick={() => setHideChannels((prev) => !prev)}>{t('team.channels')}</button>
           <button
             type="button"
             className={styles.ghostIcon}
@@ -857,27 +1665,10 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             <Button type="submit" disabled={busy || !newChannelName.trim()}>{t('team.create')}</Button>
           </form>
         ) : null}
-        {rooms.map((channel) => {
-          const selected = current?.id === channel.id;
-          return (
-            <button
-              key={channel.id}
-              type="button"
-              className={`${styles.channelButton}${selected ? ` ${styles.channelActive}` : ''}`}
-              onClick={() => selectChannel(channel.slug)}
-              data-testid={`team-channel-${channel.slug}`}
-            >
-              <Icon name={channel.visibility === 'private' ? 'lock' : 'hash'} size={12} />
-              <span className={styles.channelName}>{channel.displayName}</span>
-              {channel.unreadCount > 0 ? (
-                <Badge tone="accent" data-testid={`team-unread-${channel.slug}`}>{channel.unreadCount}</Badge>
-              ) : null}
-            </button>
-          );
-        })}
+        {hideChannels ? null : rooms.map((channel) => renderChannelButton(channel))}
 
         <div className={styles.sidebarHead}>
-          <h2 className={styles.sectionLabel}>{t('team.directMessages')}</h2>
+          <button type="button" className={styles.sectionLabel} onClick={() => setHideDms((prev) => !prev)}>{t('team.directMessages')}</button>
           <button
             type="button"
             className={styles.ghostIcon}
@@ -922,28 +1713,148 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             ) : null}
           </div>
         ) : null}
-        {dms.map((channel) => {
-          const selected = current?.id === channel.id;
-          return (
-            <button
-              key={channel.id}
-              type="button"
-              className={`${styles.channelButton}${selected ? ` ${styles.channelActive}` : ''}`}
-              onClick={() => selectChannel(channel.slug)}
-              data-testid={`team-channel-${channel.slug}`}
-            >
-              <Icon name="message-circle" size={12} />
-              <span className={styles.channelName}>{channel.displayName}</span>
-              {channel.unreadCount > 0 ? (
-                <Badge tone="accent" data-testid={`team-unread-${channel.slug}`}>{channel.unreadCount}</Badge>
-              ) : null}
-            </button>
-          );
-        })}
+        {hideDms ? null : dms.map((channel) => renderChannelButton(channel))}
       </nav>
 
       <section className={styles.main} aria-label={current ? current.displayName : t('team.title')}>
-        {!current && !searchOpen ? (
+        {jumpOpen ? (
+          <div className={styles.jump} data-testid="team-jump">
+            <Input
+              value={jumpQuery}
+              onChange={(event) => setJumpQuery(event.target.value)}
+              placeholder={t('team.jumpTo')}
+              aria-label={t('team.jumpTo')}
+              autoFocus
+            />
+            <ul>
+              {channels.filter((channel) =>
+                !jumpQuery.trim()
+                || channel.displayName.toLowerCase().includes(jumpQuery.toLowerCase())
+                || channel.slug.toLowerCase().includes(jumpQuery.toLowerCase()),
+              ).slice(0, 12).map((channel) => (
+                <li key={channel.id}>
+                  <button type="button" className={styles.jumpItem} onClick={() => { selectChannel(channel.slug); setJumpOpen(false); setJumpQuery(''); }}>
+                    {isDirect(channel) ? '' : '#'}{channel.displayName}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {copied ? <p className={styles.copied}>{t('team.linkCopied')}</p> : null}
+        {scheduledOk ? <p className={styles.copied}>{t('team.scheduledOk')}</p> : null}
+        {shortcutsOpen ? (
+          <div className={styles.jump} data-testid="team-shortcuts">
+            <h2 className={styles.channelTitle}>{t('team.shortcuts')}</h2>
+            <p className={styles.topic}>{t('team.shortcutsBody')}</p>
+          </div>
+        ) : null}
+        {profilePerson ? (
+          <div className={styles.jump}>
+            <h2 className={styles.channelTitle}>{labelPerson(profilePerson, profilePerson.displayName, t('team.someone'))}</h2>
+            <p className={styles.topic}>{isActive(profilePerson.id) ? t('team.active') : t('team.away')}</p>
+            {statusFor(profilePerson.id)?.text ? <p className={styles.topic}>{statusFor(profilePerson.id)?.emoji} {statusFor(profilePerson.id)?.text}</p> : null}
+            <Button onClick={() => { void startDmFrom(profilePerson.id); setProfileId(null); }}>{t('team.openDm')}</Button>
+            <Button variant="ghost" onClick={() => setProfileId(null)}>{t('team.closeDetails')}</Button>
+          </div>
+        ) : null}
+        {pane === 'unreads' ? (
+          <>
+            <header className={styles.channelHead}>
+              <h2 className={styles.channelTitle}>{t('team.unreads')}</h2>
+              <Button variant="ghost" onClick={() => void markAllRead()}>{t('team.markAllRead')}</Button>
+            </header>
+            <div className={styles.transcript} data-testid="team-unreads-list">
+              {unreadRooms.length === 0 ? <p className={styles.emptyTranscript}>{t('team.noMessages')}</p> : unreadRooms.map((channel) => (
+                <button key={channel.id} type="button" className={styles.activityItem} onClick={() => selectChannel(channel.slug)}>
+                  <strong>{isDirect(channel) ? '' : '#'}{channel.displayName}</strong>
+                  <em>{channel.unreadCount}</em>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : pane === 'dms' ? (
+          <>
+            <header className={styles.channelHead}><h2 className={styles.channelTitle}>{t('team.dms')}</h2></header>
+            <div className={styles.transcript}>
+              {dms.length === 0 ? <p className={styles.emptyTranscript}>{t('team.noPeople')}</p> : dms.map((channel) => (
+                <button key={channel.id} type="button" className={styles.activityItem} onClick={() => selectChannel(channel.slug)}>
+                  <strong>{channel.displayName}</strong>
+                  <em>{channel.unreadCount > 0 ? String(channel.unreadCount) : channel.topic || ''}</em>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : pane === 'activity' ? (
+          <>
+            <header className={styles.channelHead}><h2 className={styles.channelTitle}>{t('team.activity')}</h2></header>
+            <div className={styles.transcript} data-testid="team-activity-list">
+              {activity.length === 0 ? <p className={styles.emptyTranscript}>{t('team.noActivity')}</p> : activity.map((item) => (
+                <button key={`${item.kind}-${item.message.id}-${item.createdAt}`} type="button" className={styles.activityItem} onClick={() => { selectChannel(item.channelSlug); setThreadId(item.message.parentMessageId ?? item.message.id); }}>
+                  <strong>{item.kind === 'mention' ? t('team.mentionedYou') : item.kind === 'reaction' ? t('team.reacted') : item.kind === 'reminder' ? t('team.reminderDue') : t('team.replied')}</strong>
+                  <span>#{item.channelName}</span>
+                  <em>{item.message.body}</em>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : pane === 'later' ? (
+          <>
+            <header className={styles.channelHead}><h2 className={styles.channelTitle}>{t('team.later')}</h2></header>
+            <div className={styles.transcript}>
+              {later.length === 0 ? <p className={styles.emptyTranscript}>{t('team.noSaved')}</p> : later.map((hit) => (
+                <button key={hit.message.id} type="button" className={styles.activityItem} onClick={() => selectChannel(hit.channelSlug)}>
+                  <strong>#{hit.channelName}</strong>
+                  <em>{hit.message.body}</em>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : pane === 'reminders' ? (
+          <>
+            <header className={styles.channelHead}><h2 className={styles.channelTitle}>{t('team.reminders')}</h2></header>
+            <div className={styles.transcript} data-testid="team-reminders-list">
+              {reminders.length === 0 ? <p className={styles.emptyTranscript}>{t('team.noReminders')}</p> : reminders.map((reminder) => (
+                <div key={reminder.id} className={styles.activityItem}>
+                  <button type="button" className={styles.mentionBtn} onClick={() => selectChannel(reminder.channelSlug)}>
+                    <strong>#{reminder.channelName}</strong>
+                    <em>{formatClock(reminder.fireAt)} — {reminder.message.body}</em>
+                  </button>
+                  <Button variant="ghost" onClick={() => activeOrgId && void cancelChatReminder(activeOrgId, reminder.id).then(() => fetchChatReminders(activeOrgId)).then((result) => setReminders(result.reminders))}>
+                    {t('team.cancelReminder')}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : pane === 'scheduled' ? (
+          <>
+            <header className={styles.channelHead}><h2 className={styles.channelTitle}>{t('team.scheduled')}</h2></header>
+            <div className={styles.transcript}>
+              {scheduled.length === 0 ? <p className={styles.emptyTranscript}>{t('team.noScheduled')}</p> : scheduled.map((item) => (
+                <div key={item.id} className={styles.activityItem}>
+                  <strong>#{item.channelName}</strong>
+                  <em>{formatClock(item.sendAt)} — {item.body}</em>
+                  <Button variant="ghost" onClick={() => activeOrgId && void cancelChatScheduled(activeOrgId, item.id).then(() => fetchChatScheduled(activeOrgId)).then((result) => setScheduled(result.messages))}>
+                    {t('team.cancelSend')}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : pane === 'browse' ? (
+          <>
+            <header className={styles.channelHead}><h2 className={styles.channelTitle}>{t('team.browseTitle')}</h2></header>
+            <div className={styles.transcript}>
+              {rooms.length === 0 ? <p className={styles.emptyTranscript}>{t('team.browseEmpty')}</p> : rooms.map((channel) => (
+                <button key={channel.id} type="button" className={styles.activityItem} onClick={() => selectChannel(channel.slug)}>
+                  <strong>#{channel.displayName}</strong>
+                  <em>{channel.topic || channel.purpose || t('team.join')}</em>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : !current && !searchOpen ? (
           <EmptyState title={t('team.noSelection')} description={t('team.noSelectionBody')} />
         ) : (
           <>
@@ -958,35 +1869,125 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
                 </h2>
                 {current?.topic && !searchOpen ? <p className={styles.topic}>{current.topic}</p> : null}
               </div>
-              {current && !current.joined ? (
-                <Button onClick={() => void join()} disabled={busy} data-testid="team-join">
-                  {t('team.join')}
-                </Button>
-              ) : null}
-              {current?.joined && current.kind === 'channel' ? (
-                <Button variant="ghost" onClick={() => void leave()} disabled={busy}>
-                  {t('team.leave')}
-                </Button>
-              ) : null}
+              <div className={styles.headerActions}>
+                {current && !searchOpen ? (
+                  <button
+                    type="button"
+                    className={styles.ghostIcon}
+                    aria-label={t('team.searchInChannel')}
+                    onClick={() => {
+                      setSearchInput(`in:${current.slug} `);
+                      setSearchOpen(false);
+                    }}
+                  >
+                    <Icon name="search" size={14} />
+                  </button>
+                ) : null}
+                {current && !current.joined ? (
+                  <Button onClick={() => void join()} disabled={busy} data-testid="team-join">
+                    {t('team.join')}
+                  </Button>
+                ) : null}
+                {current?.joined ? (
+                  <>
+                    <button type="button" className={styles.ghostIcon} aria-label={t('team.star')} onClick={() => activeOrgId && currentSlug && void updateChatChannelPrefs(activeOrgId, currentSlug, { starred: !current.starred }).then(loadChannels)}>
+                      <Icon name="star" size={14} />
+                    </button>
+                    <button type="button" className={styles.ghostIcon} aria-label={t('team.mute')} onClick={() => activeOrgId && currentSlug && void updateChatChannelPrefs(activeOrgId, currentSlug, { muted: !current.muted }).then(loadChannels)}>
+                      <Icon name="bell" size={14} />
+                    </button>
+                    <button type="button" className={styles.ghostIcon} aria-label={t('team.details')} onClick={() => setDetailsOpen((prev) => !prev)}>
+                      <Icon name="info" size={14} />
+                    </button>
+                  </>
+                ) : null}
+                {current?.joined && current.kind === 'channel' ? (
+                  <Button variant="ghost" onClick={() => void leave()} disabled={busy}>
+                    {t('team.leave')}
+                  </Button>
+                ) : null}
+              </div>
             </header>
+            {bookmarks.length > 0 ? (
+              <div className={styles.bookmarks}>
+                {bookmarks.map((bookmark) => (
+                  <span key={bookmark.id} className={styles.bookmarkChip}>
+                    <a href={bookmark.url} target="_blank" rel="noreferrer">{bookmark.emoji} {bookmark.label}</a>
+                    <button
+                      type="button"
+                      className={styles.pendingRemove}
+                      aria-label={t('team.removeBookmark')}
+                      onClick={() => {
+                        if (!activeOrgId || !currentSlug) return;
+                        void deleteChatBookmark(activeOrgId, bookmark.id)
+                          .then(() => fetchChatBookmarks(activeOrgId, currentSlug))
+                          .then((result) => setBookmarks(result.bookmarks));
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <div
               className={styles.transcript}
               ref={transcriptRef}
               onScroll={(event) => {
                 const node = event.currentTarget;
-                pinnedToBottom.current =
-                  node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+                const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+                pinnedToBottom.current = bottom;
+                setAtBottom(bottom);
               }}
               data-testid="team-transcript"
             >
+              {nextBefore && currentSlug ? (
+                <button type="button" className={styles.loadOlder} onClick={() => void loadMessages(currentSlug, nextBefore)}>
+                  {t('team.loadOlder')}
+                </button>
+              ) : null}
               {visibleMessages.length === 0 ? (
                 <p className={styles.emptyTranscript}>
                   {searchOpen ? t('team.emptySearch') : t('team.noMessages')}
                 </p>
               ) : (
-                visibleMessages.map((message) => renderMessage(message))
+                visibleMessages.map((message, index) => {
+                  const prev = visibleMessages[index - 1];
+                  const day = new Date(message.createdAt).toDateString();
+                  const prevDay = prev ? new Date(prev.createdAt).toDateString() : '';
+                  const grouped = Boolean(
+                    prev
+                    && prev.authorMemberId === message.authorMemberId
+                    && !message.system
+                    && !prev.system
+                    && message.createdAt - prev.createdAt < 5 * 60_000
+                    && day === prevDay,
+                  );
+                  const showUnread = Boolean(
+                    unreadAfter
+                    && message.createdAt > unreadAfter
+                    && (!prev || prev.createdAt <= unreadAfter),
+                  );
+                  return (
+                    <div key={message.id}>
+                      {day !== prevDay ? <p className={styles.dayDivider}>{day}</p> : null}
+                      {showUnread ? <p className={styles.unreadDivider} data-testid="team-unread-divider">{t('team.unreadDivider')}</p> : null}
+                      {renderMessage(message, false, grouped)}
+                    </div>
+                  );
+                })
               )}
             </div>
+            {!atBottom ? (
+              <button type="button" className={styles.jumpLatest} onClick={() => {
+                pinnedToBottom.current = true;
+                setAtBottom(true);
+                const node = transcriptRef.current;
+                if (node) node.scrollTop = node.scrollHeight;
+              }}>
+                {t('team.jumpLatest')}
+              </button>
+            ) : null}
             {!searchOpen && current
               ? composerForm(
                   draft,
@@ -999,6 +2000,103 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           </>
         )}
       </section>
+
+      {detailsOpen && current ? (
+        <aside className={styles.detailsPane} aria-label={t('team.details')}>
+          <header className={styles.threadHead}>
+            <h2>{t('team.details')}</h2>
+            <Button variant="ghost" onClick={() => setDetailsOpen(false)}>{t('team.closeDetails')}</Button>
+          </header>
+          <div className={styles.detailsTabs}>
+            {(['about', 'members', 'files', 'pins'] as const).map((tab) => (
+              <button key={tab} type="button" className={detailsTab === tab ? styles.tabActive : styles.tab} onClick={() => setDetailsTab(tab)}>
+                {t(`team.${tab}` as 'team.about')}
+              </button>
+            ))}
+          </div>
+          <div className={styles.transcript}>
+            {detailsTab === 'about' ? (
+              <form className={styles.aboutForm} onSubmit={(event) => {
+                event.preventDefault();
+                if (!activeOrgId || !currentSlug) return;
+                void updateChatChannel(activeOrgId, currentSlug, { topic: topicDraft, purpose: purposeDraft }).then(loadChannels);
+              }}>
+                <label>
+                  {t('team.setTopic')}
+                  <Input value={topicDraft} onChange={(event) => setTopicDraft(event.target.value)} placeholder={t('team.topicPlaceholder')} />
+                </label>
+                <label>
+                  {t('team.setPurpose')}
+                  <Input value={purposeDraft} onChange={(event) => setPurposeDraft(event.target.value)} placeholder={t('team.purposePlaceholder')} />
+                </label>
+                <Button type="submit">{t('team.save')}</Button>
+                <label className={styles.privateToggle}>
+                  {t('team.channelPref')}
+                  <select
+                    value={current.notify}
+                    onChange={(event) => activeOrgId && currentSlug && void updateChatChannelPrefs(activeOrgId, currentSlug, { notify: event.target.value as 'all' | 'mentions' | 'nothing' }).then(loadChannels)}
+                  >
+                    <option value="all">{t('team.notifyAll')}</option>
+                    <option value="mentions">{t('team.notifyMentions')}</option>
+                    <option value="nothing">{t('team.notifyNothing')}</option>
+                  </select>
+                </label>
+                {current.kind === 'channel' ? (
+                  current.archivedAt ? (
+                    <Button variant="ghost" onClick={() => activeOrgId && currentSlug && void unarchiveChatChannel(activeOrgId, currentSlug).then(loadChannels)}>
+                      {t('team.unarchive')}
+                    </Button>
+                  ) : (
+                    <Button variant="ghost" onClick={() => activeOrgId && currentSlug && void archiveChatChannel(activeOrgId, currentSlug).then(loadChannels)}>
+                      {t('team.archive')}
+                    </Button>
+                  )
+                ) : null}
+              </form>
+            ) : null}
+            {detailsTab === 'members' ? (
+              <ul className={styles.memberList}>
+                {channelMembers.map((member) => (
+                  <li key={member.id}>
+                    {member.displayName || member.memberId}
+                    {isActive(member.memberId) ? ` · ${t('team.active')}` : ` · ${t('team.away')}`}
+                    {statusFor(member.memberId)?.text ? ` · ${statusFor(member.memberId)?.emoji ?? ''} ${statusFor(member.memberId)?.text}` : ''}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {detailsTab === 'files' ? (
+              channelFiles.length === 0 ? <p>{t('team.noFiles')}</p> : (
+                <ul className={styles.memberList}>
+                  {channelFiles.map((file) => (
+                    <li key={file.id}><a href={file.url} target="_blank" rel="noreferrer">{file.label}</a></li>
+                  ))}
+                </ul>
+              )
+            ) : null}
+            {detailsTab === 'pins' ? (
+              pins.length === 0 ? <p>{t('team.noPins')}</p> : pins.map((pin) => (
+                <article key={pin.id} className={styles.message}>{pin.message.body}</article>
+              ))
+            ) : null}
+            <form className={styles.createRow} onSubmit={(event) => {
+              event.preventDefault();
+              const form = event.currentTarget;
+              const label = (form.elements.namedItem('bookmark-label') as HTMLInputElement | null)?.value ?? '';
+              const url = (form.elements.namedItem('bookmark-url') as HTMLInputElement | null)?.value ?? '';
+              if (!activeOrgId || !currentSlug || !label || !url) return;
+              void createChatBookmark(activeOrgId, currentSlug, { label, url })
+                .then(() => fetchChatBookmarks(activeOrgId, currentSlug))
+                .then((result) => setBookmarks(result.bookmarks));
+            }}>
+              <p>{t('team.bookmarkAdd')}</p>
+              <Input name="bookmark-label" placeholder={t('team.bookmarkAdd')} />
+              <Input name="bookmark-url" placeholder="https://" />
+              <Button type="submit">{t('team.create')}</Button>
+            </form>
+          </div>
+        </aside>
+      ) : null}
 
       {threadId && current ? (
         <aside className={styles.threadPane} aria-label={t('team.thread')}>

@@ -1,7 +1,6 @@
-// Agent-facing CLI wrapper for ERP: magic-import a URL, apply a sentence to
-// tables, and define/install custom packs. Invoked from agent runs as:
-//   "$OD_NODE_BIN" "$OD_BIN" tools erp <verb> ...
-// Auth rides the per-run OD_TOOL_TOKEN bearer.
+// Agent-facing CLI wrapper kept so existing `tools erp import-url` calls
+// (scheduled refresh jobs, older prompts) still work. New runs should use
+// `tools data import-url` instead.
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -22,9 +21,9 @@ const ERP_USAGE = `Usage:
 
 Magic import:
   Pulls a public Google Sheet, CSV, JSON, HTML table, open-data dump, or any
-  public page (AI scrapes unstructured pages into rows) and creates a
-  workspace table. Re-importing the same link updates matching unique keys
-  instead of duplicating rows. Default commits. Pass --plan-only to preview.
+  public page (JS directories, Algolia catalogs, or AI-scraped prose) and
+  creates a workspace table. Re-importing the same link updates matching unique
+  keys instead of duplicating rows. Default commits. Pass --plan-only to preview.
 
 Ask:
   Interprets a sentence against the live schema. Queries run immediately.

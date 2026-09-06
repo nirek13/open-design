@@ -199,6 +199,8 @@ describe('agent runtime tool environment', () => {
     expect(prompt).toContain('do not print, persist, or override it');
     expect(prompt).toContain('tools pages');
     expect(prompt).toContain('tools data');
+    expect(prompt).toContain('tools team');
+    expect(prompt).toContain('tools mail');
     expect(prompt).toContain('window.od');
     expect(prompt).toContain("api.create('leads'");
     expect(prompt).toContain('org_data_write');
@@ -214,6 +216,34 @@ describe('agent runtime tool environment', () => {
     expect(prompt).toContain('`OD_TOOL_TOKEN` is not available');
     expect(prompt).not.toContain('Bearer');
     expect(prompt).not.toContain('tools pages');
+    expect(prompt).not.toContain('tools team');
+    expect(prompt).not.toContain('tools mail');
+  });
+
+  it('omits pages, team chat, and mail when those catalog tools are off', () => {
+    const prompt = createAgentRuntimeToolPrompt('http://127.0.0.1:7456', {
+      token: 'secret-run-token',
+    }, {
+      disabledTools: ['internal:pages', 'internal:team_chat', 'internal:mail'],
+    });
+
+    expect(prompt).toContain('tools data');
+    expect(prompt).not.toContain('### Pages wiki');
+    expect(prompt).not.toContain('### Team chat');
+    expect(prompt).not.toContain('### Mail (`tools mail`)');
+  });
+
+  it('keeps only granted internal wrappers when a run lists tool ids', () => {
+    const prompt = createAgentRuntimeToolPrompt('http://127.0.0.1:7456', {
+      token: 'secret-run-token',
+    }, {
+      grantedToolIds: ['internal:team_chat'],
+    });
+
+    expect(prompt).toContain('### Team chat');
+    expect(prompt).not.toContain('### Pages wiki');
+    expect(prompt).not.toContain('### Mail (`tools mail`)');
+    expect(prompt).not.toContain('### Workspace database');
   });
 });
 

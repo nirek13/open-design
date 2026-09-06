@@ -41,6 +41,16 @@ describe('parseRoute / buildPath (issue #1505)', () => {
     expect(buildPath(route)).toBe('/connect');
   });
 
+  it('sends former ERP module paths onto Tables', () => {
+    const tables: Route = { kind: 'home', view: 'tables' };
+    expect(parseRoute('/erp')).toEqual(tables);
+    expect(parseRoute('/erp/netsuite')).toEqual(tables);
+    expect(parseRoute('/books')).toEqual(tables);
+    expect(parseRoute('/crm')).toEqual(tables);
+    expect(buildPath({ kind: 'home', view: 'erp' })).toBe('/tables');
+    expect(buildPath({ kind: 'home', view: 'books' })).toBe('/tables');
+  });
+
   it('round-trips a bare project route', () => {
     const route: Route = {
       kind: 'project',

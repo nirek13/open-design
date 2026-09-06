@@ -10,10 +10,21 @@
 //     uses for its byline.
 //   - A private channel the caller is not in returns 404, never 403. A 403
 //     would confirm that #board-comp exists.
+//
+// Agents use /api/tools/team/* with a chat tool token; people use
+// /api/orgs/:orgId/chat/*.
 
 import type { Express, Request as ExpressRequest, Response } from 'express';
 import multer from 'multer';
-import { CHAT_FILE_MAX_BYTES, createApiError, personLabel, type PostMessageRequest } from '@open-design/contracts';
+import {
+  CHAT_FILE_MAX_BYTES,
+  LOCAL_OWNER_USER_ID,
+  createApiError,
+  extractChatMentions,
+  parseChatSearchQuery,
+  personLabel,
+  type PostMessageRequest,
+} from '@open-design/contracts';
 import { sendApiError } from '../http/response.js';
 import type { RouteDeps } from '../server-context.js';
 import type { IdentityService } from '../auth/identity.js';
@@ -28,6 +39,7 @@ import {
   assertMemberRole,
   getActiveMemberForUser,
   getOrganization,
+  listOrganizationsForUser,
   listOrgMembers,
 } from '../workspace-data/tenancy.js';
 import {
@@ -49,10 +61,34 @@ import {
   setUpDefaultChannels,
   toggleReaction,
   totalUnread,
+  unarchiveChannel,
   updateChannel,
   inviteChannelMembers,
   type ResolveMemberName,
 } from '../workspace-data/chat.js';
+import {
+  cancelReminder,
+  cancelScheduled,
+  createBookmark,
+  createReminder,
+  deleteBookmark,
+  deliverDueScheduled,
+  getChatStatus,
+  listActivity,
+  listBookmarks,
+  listChannelFiles,
+  listChatStatuses,
+  listPins,
+  listReminders,
+  listSaved,
+  listScheduled,
+  markChannelUnread,
+  scheduleMessage,
+  setChatStatus,
+  togglePin,
+  toggleSave,
+  updateChannelPrefs,
+} from '../workspace-data/chat-messaging.js';
 
 type Request = ExpressRequest<Record<string, string>>;
 
@@ -69,6 +105,7 @@ export interface RegisterTeamChatRoutesDeps extends RouteDeps<'db' | 'auth' | 'p
 
 export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutesDeps) {
   const { manager, identity } = ctx.chat;
+  const { authorizeToolRequest } = ctx.auth;
   const dataDir = ctx.paths.RUNTIME_DATA_DIR;
   const directory = () => manager.directoryExecutor;
   const fileUpload = multer({
@@ -141,7 +178,8 @@ export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutes
   // --- Channels -----------------------------------------------------------
 
   app.get('/api/orgs/:orgId/chat/channels', handle(async (req, res) => {
-    const { orgId, member, db } = await scope(req);
+    const { orgId, member, db, withNames } = await scope(req);
+    await deliverDueScheduled(db, orgId, await withNames());
     const channels = await listChannels(db, orgId, member.id, {
       includeArchived: req.query.includeArchived === '1',
     });
@@ -176,6 +214,26 @@ export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutes
   app.post('/api/orgs/:orgId/chat/channels/:channelRef/archive', handle(async (req, res) => {
     const { orgId, member, db } = await scope(req, 'admin');
     res.json({ channel: await archiveChannel(db, orgId, param(req, 'channelRef'), member.id) });
+  }));
+
+  app.post('/api/orgs/:orgId/chat/channels/:channelRef/unarchive', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req, 'admin');
+    res.json({ channel: await unarchiveChannel(db, orgId, param(req, 'channelRef'), member.id) });
+  }));
+
+  app.patch('/api/orgs/:orgId/chat/channels/:channelRef/prefs', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    res.json({
+      channel: await updateChannelPrefs(db, orgId, param(req, 'channelRef'), member.id, req.body ?? {}),
+    });
+  }));
+
+  app.post('/api/orgs/:orgId/chat/channels/:channelRef/unread', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    const messageId = typeof req.body?.messageId === 'string' ? req.body.messageId : undefined;
+    res.json({
+      channel: await markChannelUnread(db, orgId, param(req, 'channelRef'), member.id, messageId),
+    });
   }));
 
   app.post('/api/orgs/:orgId/chat/channels/:channelRef/join', handle(async (req, res) => {
@@ -271,12 +329,32 @@ export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutes
 
   app.post('/api/orgs/:orgId/chat/channels/:channelRef/messages', handle(async (req, res) => {
     const { orgId, member, db, withNames } = await scope(req);
+    const body = (req.body ?? {}) as PostMessageRequest;
+    const sendAt = typeof body.sendAt === 'number' ? body.sendAt : undefined;
+    const people = await listOrgMembers(directory(), orgId);
+    const mentions = [
+      ...new Set([
+        ...(Array.isArray(body.mentions) ? body.mentions.filter((id) => typeof id === 'string') : []),
+        ...extractChatMentions(String(body.body ?? ''), people),
+      ]),
+    ];
+    if (sendAt && sendAt > Date.now()) {
+      const scheduled = await scheduleMessage(db, orgId, param(req, 'channelRef'), member.id, {
+        body: String(body.body ?? ''),
+        ...(body.attachments ? { attachments: body.attachments } : {}),
+        mentions,
+        ...(body.parentMessageId ? { parentMessageId: body.parentMessageId } : {}),
+        sendAt,
+      });
+      res.status(201).json({ scheduled });
+      return;
+    }
     const message = await postMessage(
       db,
       orgId,
       param(req, 'channelRef'),
       member.id,
-      (req.body ?? {}) as PostMessageRequest,
+      { ...body, mentions },
       await withNames(),
     );
     res.status(201).json({ message });
@@ -331,7 +409,19 @@ export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutes
   app.get('/api/orgs/:orgId/chat/search', handle(async (req, res) => {
     const { orgId, member, db, withNames } = await scope(req);
     const q = typeof req.query.q === 'string' ? req.query.q : '';
-    res.json({ hits: await searchMessages(db, orgId, member.id, q, await withNames()) });
+    const filters = parseChatSearchQuery(q);
+    let fromMemberId: string | null = null;
+    if (filters.from) {
+      const people = await listOrgMembers(directory(), orgId);
+      const needle = filters.from.toLowerCase();
+      const found = people.find((person) =>
+        person.id === filters.from
+        || person.username?.toLowerCase() === needle
+        || person.displayName?.toLowerCase().replace(/\s+/g, '') === needle,
+      );
+      fromMemberId = found?.id ?? filters.from;
+    }
+    res.json({ hits: await searchMessages(db, orgId, member.id, q, await withNames(), fromMemberId) });
   }));
 
   app.post('/api/orgs/:orgId/chat/channels/:channelRef/members', handle(async (req, res) => {
@@ -362,4 +452,272 @@ export function registerTeamChatRoutes(app: Express, ctx: RegisterTeamChatRoutes
     );
     res.json({ message });
   }));
+
+  app.post('/api/orgs/:orgId/chat/messages/:messageId/pin', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    res.json({
+      message: await togglePin(db, orgId, param(req, 'messageId'), member.id, await withNames()),
+    });
+  }));
+
+  app.post('/api/orgs/:orgId/chat/messages/:messageId/save', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    res.json({
+      message: await toggleSave(db, orgId, param(req, 'messageId'), member.id, await withNames()),
+    });
+  }));
+
+  app.post('/api/orgs/:orgId/chat/messages/:messageId/remind', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    const fireAt = typeof req.body?.fireAt === 'number' ? req.body.fireAt : 0;
+    const note = typeof req.body?.note === 'string' ? req.body.note : undefined;
+    res.status(201).json({
+      reminder: await createReminder(
+        db,
+        orgId,
+        param(req, 'messageId'),
+        member.id,
+        fireAt,
+        note,
+        await withNames(),
+      ),
+    });
+  }));
+
+  app.get('/api/orgs/:orgId/chat/channels/:channelRef/pins', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    res.json({ pins: await listPins(db, orgId, param(req, 'channelRef'), member.id, await withNames()) });
+  }));
+
+  app.get('/api/orgs/:orgId/chat/channels/:channelRef/bookmarks', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    res.json({ bookmarks: await listBookmarks(db, orgId, param(req, 'channelRef'), member.id) });
+  }));
+
+  app.post('/api/orgs/:orgId/chat/channels/:channelRef/bookmarks', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    res.status(201).json({
+      bookmark: await createBookmark(db, orgId, param(req, 'channelRef'), member.id, {
+        label: String(req.body?.label ?? ''),
+        url: String(req.body?.url ?? ''),
+        emoji: typeof req.body?.emoji === 'string' ? req.body.emoji : undefined,
+      }),
+    });
+  }));
+
+  app.delete('/api/orgs/:orgId/chat/bookmarks/:bookmarkId', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    await deleteBookmark(db, orgId, param(req, 'bookmarkId'), member.id);
+    res.status(204).end();
+  }));
+
+  app.get('/api/orgs/:orgId/chat/channels/:channelRef/files', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    res.json({ files: await listChannelFiles(db, orgId, param(req, 'channelRef'), member.id) });
+  }));
+
+  app.get('/api/orgs/:orgId/chat/later', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    res.json({ items: await listSaved(db, orgId, member.id, await withNames()) });
+  }));
+
+  app.get('/api/orgs/:orgId/chat/activity', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    await deliverDueScheduled(db, orgId, await withNames());
+    res.json({ items: await listActivity(db, orgId, member.id, await withNames()) });
+  }));
+
+  app.get('/api/orgs/:orgId/chat/reminders', handle(async (req, res) => {
+    const { orgId, member, db, withNames } = await scope(req);
+    res.json({ reminders: await listReminders(db, orgId, member.id, await withNames()) });
+  }));
+
+  app.delete('/api/orgs/:orgId/chat/reminders/:reminderId', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    await cancelReminder(db, orgId, param(req, 'reminderId'), member.id);
+    res.status(204).end();
+  }));
+
+  app.get('/api/orgs/:orgId/chat/scheduled', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    res.json({ messages: await listScheduled(db, orgId, member.id) });
+  }));
+
+  app.delete('/api/orgs/:orgId/chat/scheduled/:scheduledId', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    await cancelScheduled(db, orgId, param(req, 'scheduledId'), member.id);
+    res.status(204).end();
+  }));
+
+  app.get('/api/orgs/:orgId/chat/status', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    const memberId = typeof req.query.memberId === 'string' ? req.query.memberId : member.id;
+    if (req.query.all === '1') {
+      res.json({ statuses: await listChatStatuses(db, orgId) });
+      return;
+    }
+    res.json({ status: await getChatStatus(db, orgId, memberId) });
+  }));
+
+  app.put('/api/orgs/:orgId/chat/status', handle(async (req, res) => {
+    const { orgId, member, db } = await scope(req);
+    res.json({
+      status: await setChatStatus(db, orgId, member.id, {
+        text: req.body?.text,
+        emoji: req.body?.emoji,
+        expiresAt: req.body?.expiresAt,
+      }),
+    });
+  }));
+
+  // --- Agent tools --------------------------------------------------------
+
+  async function namesFor(orgId: string): Promise<ResolveMemberName> {
+    const names = new Map(
+      (await listOrgMembers(directory(), orgId)).map((row) => [
+        row.id,
+        personLabel({
+          displayName: row.displayName,
+          username: row.username,
+          email: row.email,
+        }),
+      ]),
+    );
+    return (memberId) => names.get(memberId) ?? null;
+  }
+
+  async function toolOrgActor(req: Request) {
+    const orgs = await listOrganizationsForUser(directory(), LOCAL_OWNER_USER_ID);
+    const orgId = typeof req.body?.orgId === 'string' && req.body.orgId.trim()
+      ? req.body.orgId.trim()
+      : orgs[0]?.id;
+    if (!orgId) throw new WorkspaceDataError('ORG_NOT_FOUND', 404, 'no organization to act in');
+    await getOrganization(directory(), orgId);
+    const local = await getActiveMemberForUser(directory(), orgId, LOCAL_OWNER_USER_ID);
+    const people = local ? null : await listOrgMembers(directory(), orgId);
+    const member = local ?? people?.find((row) => row.role === 'owner') ?? people?.[0];
+    if (!member) {
+      throw new WorkspaceDataError('UNAUTHORIZED', 401, 'no organization member to act as');
+    }
+    return {
+      orgId,
+      member,
+      db: manager.workspaceExecutor(orgId),
+      resolveMemberName: await namesFor(orgId),
+    };
+  }
+
+  function requiredChannelRef(req: Request): string {
+    const value = req.body?.channel ?? req.body?.channelRef ?? req.body?.channelId;
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new WorkspaceDataError('WORKSPACE_VALIDATION_FAILED', 422, 'channel is required');
+    }
+    return value.trim();
+  }
+
+  app.post(
+    '/api/tools/team/channels',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'team:channels');
+      if (!grant) return;
+      const { orgId, member, db, resolveMemberName } = await toolOrgActor(req);
+      await deliverDueScheduled(db, orgId, resolveMemberName);
+      const channels = await listChannels(db, orgId, member.id, {
+        includeArchived: req.body?.includeArchived === true,
+      });
+      res.json({ orgId, channels, totalUnread: await totalUnread(db, orgId, member.id) });
+    }),
+  );
+
+  app.post(
+    '/api/tools/team/members',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'team:members');
+      if (!grant) return;
+      const { orgId, member, db, resolveMemberName } = await toolOrgActor(req);
+      const channelRef = typeof req.body?.channel === 'string' ? req.body.channel.trim() : '';
+      if (channelRef) {
+        const members = await listChannelMembers(db, orgId, channelRef, member.id, resolveMemberName);
+        res.json({ orgId, channel: channelRef, members });
+        return;
+      }
+      const people = await listOrgMembers(directory(), orgId);
+      res.json({
+        orgId,
+        members: people.map((row) => ({
+          id: row.id,
+          displayName: row.displayName,
+          username: row.username,
+          email: row.email,
+          role: row.role,
+        })),
+      });
+    }),
+  );
+
+  app.post(
+    '/api/tools/team/messages',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'team:messages');
+      if (!grant) return;
+      const { orgId, member, db, resolveMemberName } = await toolOrgActor(req);
+      const result = await listMessages(
+        db,
+        orgId,
+        requiredChannelRef(req),
+        member.id,
+        {
+          ...(typeof req.body?.before === 'string' ? { before: req.body.before } : {}),
+          ...(typeof req.body?.parentMessageId === 'string'
+            ? { parentMessageId: req.body.parentMessageId }
+            : {}),
+          ...(typeof req.body?.limit === 'number' ? { limit: req.body.limit } : {}),
+        },
+        resolveMemberName,
+      );
+      res.json({ orgId, ...result });
+    }),
+  );
+
+  app.post(
+    '/api/tools/team/dm',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'team:dm');
+      if (!grant) return;
+      const { orgId, member, db, resolveMemberName } = await toolOrgActor(req);
+      const memberIds = Array.isArray(req.body?.memberIds)
+        ? req.body.memberIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
+        : typeof req.body?.member === 'string'
+          ? req.body.member.split(',').map((id: string) => id.trim()).filter(Boolean)
+          : [];
+      const channel = await openDirectMessage(db, orgId, member.id, memberIds, resolveMemberName);
+      res.status(201).json({ orgId, channel });
+    }),
+  );
+
+  app.post(
+    '/api/tools/team/post',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'team:post');
+      if (!grant) return;
+      const { orgId, member, db, resolveMemberName } = await toolOrgActor(req);
+      const people = await listOrgMembers(directory(), orgId);
+      const body = (req.body ?? {}) as PostMessageRequest;
+      const mentions = [
+        ...new Set([
+          ...(Array.isArray(body.mentions) ? body.mentions.filter((id) => typeof id === 'string') : []),
+          ...extractChatMentions(String(body.body ?? ''), people),
+        ]),
+      ];
+      const message = await postMessage(
+        db,
+        orgId,
+        requiredChannelRef(req),
+        member.id,
+        { ...body, mentions },
+        resolveMemberName,
+      );
+      res.status(201).json({ orgId, message });
+    }),
+  );
 }

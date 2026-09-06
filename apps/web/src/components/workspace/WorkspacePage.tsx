@@ -28,6 +28,8 @@ interface Props {
   banner?: ReactNode;
   children: ReactNode;
   testId?: string;
+  /** Fill the parent pane and skip the reading-column max-width. */
+  fill?: boolean;
 }
 
 export function WorkspacePage({
@@ -41,10 +43,11 @@ export function WorkspacePage({
   banner,
   children,
   testId,
+  fill = false,
 }: Props) {
   return (
-    <div className={styles.root} data-testid={testId}>
-      <div className={styles.column}>
+    <div className={`${styles.root}${fill ? ` ${styles.rootFill}` : ''}`} data-testid={testId}>
+      <div className={`${styles.column}${fill ? ` ${styles.columnFill}` : ''}`}>
         <header className={styles.head}>
           <div className={styles.headText}>
             {eyebrow ? <p className={styles.eyebrow}>{eyebrow}</p> : null}

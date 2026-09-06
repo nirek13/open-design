@@ -43,7 +43,7 @@ describe('jsonToCsv', () => {
       ]),
     );
     expect(csv).toContain('name,amount,tags');
-    expect(csv).toContain('Ada,12.5,"[""a"",""b""]"');
+    expect(csv).toContain('Ada,12.5,"a, b"');
     expect(csv).toContain('Bob,3');
   });
 
@@ -142,6 +142,45 @@ describe('fetchImportSource', () => {
     await expect(
       fetchImportSource('https://example.com/team', mockFetch(PROSE_PAGE, 'text/html'), null),
     ).rejects.toThrow(/no rows could be read/);
+  });
+
+  it('follows a public Algolia index when the page is an empty JS directory', async () => {
+    const key = Buffer.from(
+      `${'b'.repeat(64)}restrictIndices=YCCompany_production`,
+    ).toString('base64');
+    const html = `<!DOCTYPE html><html><head><title>The YC Startup Directory</title>
+      <script>window.AlgoliaOpts = {"app":"45BWZJ1SGC","key":"${key}"};</script>
+      </head><body><div id="root"></div></body></html>`;
+    const source = await fetchImportSource(
+      'https://www.ycombinator.com/companies',
+      async (url, init) => {
+        if (url.includes('algolia.net')) {
+          expect(init?.method).toBe('POST');
+          return new Response(
+            JSON.stringify({
+              hits: [
+                { name: 'DoorDash', batch: 'Summer 2013', one_liner: 'Restaurant delivery.' },
+                { name: 'Airbnb', batch: 'Winter 2009', one_liner: 'Book unique homes.' },
+              ],
+              nbHits: 2,
+              nbPages: 1,
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+          url,
+        } as ResponseInit);
+      },
+      null,
+    );
+    expect(source.kind).toBe('json');
+    expect(source.fileName).toBe('companies.csv');
+    expect(source.content).toContain('DoorDash');
+    expect(source.content).toContain('Airbnb');
+    expect(source.content).toContain('Restaurant delivery.');
   });
 
   it('asks AI to turn unstructured prose into rows', async () => {

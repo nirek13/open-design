@@ -19,7 +19,11 @@ import {
   fidelityToTracking,
 } from '@open-design/contracts/analytics';
 import type { AmrModelsResponse, ChatSessionMode, RunContextSelection } from '@open-design/contracts';
-import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
+import {
+  DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
+  INTERNAL_SKILLS,
+  isToolEnabled,
+} from '@open-design/contracts';
 import { EntryView } from './components/EntryView';
 import type { IntegrationTab } from './components/IntegrationsView';
 import { MarketplaceView } from './components/MarketplaceView';
@@ -2502,12 +2506,15 @@ function AppInner() {
     () => [...skills, ...designTemplates],
     [skills, designTemplates],
   );
+  const skillsCatalogEnabled = isToolEnabled(INTERNAL_SKILLS, config.disabledTools);
   const enabledSkills = useMemo(
     () =>
-      allSkillSummaries.filter(
-        (s) => !(config.disabledSkills ?? []).includes(s.id),
-      ),
-    [allSkillSummaries, config.disabledSkills],
+      skillsCatalogEnabled
+        ? allSkillSummaries.filter(
+            (s) => !(config.disabledSkills ?? []).includes(s.id),
+          )
+        : [],
+    [allSkillSummaries, config.disabledSkills, skillsCatalogEnabled],
   );
   // Functional-skills-only enabled subset — what ProjectView's chat
   // composer @-picker should see. Without this, a skill the user has
@@ -2516,10 +2523,12 @@ function AppInner() {
   // Library toggle for projects opened on the post-split branch.
   const enabledFunctionalSkills = useMemo(
     () =>
-      skills.filter(
-        (s) => !(config.disabledSkills ?? []).includes(s.id),
-      ),
-    [skills, config.disabledSkills],
+      skillsCatalogEnabled
+        ? skills.filter(
+            (s) => !(config.disabledSkills ?? []).includes(s.id),
+          )
+        : [],
+    [skills, config.disabledSkills, skillsCatalogEnabled],
   );
   // Templates-only enabled subset — what the EntryView Templates gallery
   // actually renders. Filtering in App keeps the EntryView prop surface

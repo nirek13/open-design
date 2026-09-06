@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { composeImportAppPrompt, composeImportRefreshPrompt } from '../src/prompts/import-feed.js';
+import {
+  composeImportAppPrompt,
+  composeImportRefreshPrompt,
+  composeTableAppPrompt,
+} from '../src/prompts/import-feed.js';
 
 describe('import-feed prompts', () => {
   it('tells the refresh job to reuse the existing table', () => {
@@ -7,7 +11,7 @@ describe('import-feed prompts', () => {
       url: 'https://canadabuys.canada.ca/opendata/pub/newTenderNotice-nouvelAvisAppelOffres.csv',
       tableName: 'new_tender_notice',
     });
-    expect(prompt).toContain('tools erp import-url');
+    expect(prompt).toContain('tools data import-url');
     expect(prompt).toContain('new_tender_notice');
     expect(prompt).toContain('canadabuys.canada.ca');
     expect(prompt).toContain('do not create a new one');
@@ -36,5 +40,29 @@ describe('import-feed prompts', () => {
     });
     expect(prompt).toContain('A board of open tenders grouped by closing week');
     expect(prompt.indexOf('A board of open tenders')).toBeLessThan(prompt.indexOf('api.query'));
+  });
+
+  it('tells the app builder to reuse existing workspace tables instead of inventing new ones', () => {
+    const prompt = composeTableAppPrompt({
+      origin: 'existing',
+      tables: [
+        {
+          tableName: 'invoices',
+          displayName: 'Invoices',
+          columns: [{ header: 'Number', fieldName: 'number', type: 'text' }],
+        },
+        {
+          tableName: 'customers',
+          displayName: 'Customers',
+          columns: [{ header: 'Name', fieldName: 'name', type: 'text' }],
+        },
+      ],
+    });
+    expect(prompt).toContain('existing workspace tables');
+    expect(prompt).toContain('do not create parallel tables');
+    expect(prompt).toContain("api.query('invoices'");
+    expect(prompt).toContain("api.query('customers'");
+    expect(prompt).toContain('--scope invoices:read');
+    expect(prompt).toContain('--scope customers:read');
   });
 });

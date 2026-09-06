@@ -44,6 +44,8 @@ import {
   updateRecord,
 } from '../workspace-data/records.js';
 import { queryRecords } from '../workspace-data/query.js';
+import { buildImportPlan, commitImport } from '../workspace-data/import.js';
+import { fetchImportSource } from '../workspace-data/import-url.js';
 import type { WorkspaceActor } from '../workspace-data/types.js';
 
 export interface WorkspaceDataRouteServices {
@@ -269,13 +271,17 @@ export function registerWorkspaceDataRoutes(app: Express, ctx: RegisterWorkspace
 
   const toolHandle = (
     operation: string,
-    fn: (req: Request, res: Response, scope: { db: ReturnType<WorkspaceDbManager['openWorkspace']>; workspaceId: string; actor: WorkspaceActor }) => void,
+    fn: (
+      req: Request,
+      res: Response,
+      scope: { db: ReturnType<WorkspaceDbManager['openWorkspace']>; workspaceId: string; actor: WorkspaceActor },
+    ) => void | Promise<void>,
   ) =>
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, operation);
       if (!grant) return;
       const workspaceId = await workspaceForGrant(grant);
-      fn(req, res, { db: manager.openWorkspace(workspaceId), workspaceId, actor: agentActor(grant) });
+      await fn(req, res, { db: manager.openWorkspace(workspaceId), workspaceId, actor: agentActor(grant) });
     });
 
   app.post('/api/tools/data/list-tables', toolHandle('data:list-tables', (_req, res, scope) => {
@@ -321,5 +327,29 @@ export function registerWorkspaceDataRoutes(app: Express, ctx: RegisterWorkspace
     );
     events.emitRecordChange({ workspaceId: scope.workspaceId, tableId: table.id, recordId: record.id, op: 'update' });
     res.json({ record });
+  }));
+
+  app.post('/api/tools/data/import-url', toolHandle('data:import-url', async (req, res, scope) => {
+    const url = String(req.body?.url ?? '').trim();
+    if (!url) throw new WorkspaceDataError('BAD_REQUEST', 400, 'pass the link to import');
+    const source = await fetchImportSource(url);
+    const plan = buildImportPlan(scope.db, {
+      content: source.content,
+      fileName: source.fileName,
+      sourceUrl: source.url,
+      ...(req.body?.tableName ? { tableName: String(req.body.tableName) } : {}),
+    });
+    const sourceMeta = {
+      url: source.url,
+      finalUrl: source.finalUrl,
+      kind: source.kind,
+      fileName: source.fileName,
+    };
+    if (req.body?.commit === false) {
+      res.json({ source: sourceMeta, plan, content: source.content });
+      return;
+    }
+    const result = commitImport(scope.db, scope.actor, plan, source.content);
+    res.status(201).json({ source: sourceMeta, plan, ...result });
   }));
 }

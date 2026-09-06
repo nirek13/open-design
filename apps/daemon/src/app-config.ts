@@ -111,6 +111,7 @@ export interface AppConfigPrefs {
   designSystemId?: string | null;
   disabledSkills?: string[];
   disabledDesignSystems?: string[];
+  disabledTools?: string[];
   installationId?: string | null;
   telemetry?: TelemetryPrefs;
   privacyDecisionAt?: number | null;
@@ -140,6 +141,7 @@ const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
   'designSystemId',
   'disabledSkills',
   'disabledDesignSystems',
+  'disabledTools',
   'installationId',
   'telemetry',
   'privacyDecisionAt',
@@ -539,7 +541,7 @@ function applyConfigValue(
       delete target[key];
     }
   }
-  if (key === 'disabledSkills' || key === 'disabledDesignSystems') {
+  if (key === 'disabledSkills' || key === 'disabledDesignSystems' || key === 'disabledTools') {
     if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
       target[key] = value;
     } else {

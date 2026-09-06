@@ -21,7 +21,7 @@ export const SPOTLIGHT_DESTINATIONS: ReadonlyArray<{
     | 'entry.navDatabase'
     | 'entry.navIntegrations'
     | 'entry.navOrganization'
-    | 'entry.navErp'
+    | 'entry.navTables'
     | 'entry.navDev';
   aliases: readonly string[];
 }> = [
@@ -38,10 +38,10 @@ export const SPOTLIGHT_DESTINATIONS: ReadonlyArray<{
   { id: 'design-systems', view: 'design-systems', labelKey: 'entry.navDesignSystems', aliases: ['design systems', 'brands'] },
   { id: 'library', view: 'library', labelKey: 'entry.navLibrary', aliases: ['assets', 'library', 'upload'] },
   { id: 'tasks', view: 'tasks', labelKey: 'entry.navTasks', aliases: ['automations', 'tasks'] },
-  { id: 'database', view: 'database', labelKey: 'entry.navDatabase', aliases: ['database', 'tables'] },
+  { id: 'database', view: 'database', labelKey: 'entry.navDatabase', aliases: ['database'] },
   { id: 'integrations', view: 'integrations', labelKey: 'entry.navIntegrations', aliases: ['connect', 'integrations', 'accounts'] },
   { id: 'organization', view: 'organization', labelKey: 'entry.navOrganization', aliases: ['people', 'members', 'team'] },
-  { id: 'erp', view: 'books', labelKey: 'entry.navErp', aliases: ['books', 'erp', 'finance'] },
+  { id: 'tables', view: 'tables', labelKey: 'entry.navTables', aliases: ['tables', 'spreadsheet', 'grid'] },
   { id: 'dev', view: 'dev', labelKey: 'entry.navDev', aliases: ['dev', 'github'] },
 ];
 

@@ -41,10 +41,17 @@ describe('entry team chat fullscreen styles', () => {
       ".entry-main__inner--fullscreen > [data-testid='entry-view-mail']",
     );
 
+    const workspace = cssDeclarations(
+      entryLayoutCss,
+      ".entry-main__inner--fullscreen > [data-testid='entry-view-workspace']",
+    );
+
     expect(ruleValue(team, 'flex')).toBe(ruleValue(mail, 'flex'));
     expect(ruleValue(team, 'overflow')).toBe('hidden');
     expect(ruleValue(slack, 'overflow')).toBe('hidden');
+    expect(ruleValue(workspace, 'overflow')).toBe('hidden');
     expect(ruleValue(team, 'min-height')).toBe('0');
+    expect(ruleValue(workspace, 'flex')).toBe(ruleValue(mail, 'flex'));
   });
 
   it('floats the entry topbar over team chat so the workspace is edge-to-edge', () => {

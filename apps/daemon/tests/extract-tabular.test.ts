@@ -44,4 +44,38 @@ describe('extractTabularFromHtml', () => {
     expect(csv).toContain('Bea');
     expect(csv).toContain('Owner');
   });
+
+  it('reads a window-assigned JSON array when the markup is an empty SPA shell', () => {
+    const html = `
+      <html><body>
+        <div id="root"></div>
+        <script>window.__DIRECTORY__ = ${JSON.stringify({
+          hits: [
+            { name: 'DoorDash', batch: 'Summer 2013', one_liner: 'Restaurant delivery.' },
+            { name: 'Airbnb', batch: 'Winter 2009', one_liner: 'Book unique homes.' },
+          ],
+        })};</script>
+      </body></html>
+    `;
+    const csv = extractTabularFromHtml(html);
+    expect(csv).toContain('DoorDash');
+    expect(csv).toContain('Airbnb');
+    expect(csv).toContain('Restaurant delivery.');
+  });
+
+  it('reads an Inertia data-page payload of records', () => {
+    const page = {
+      component: 'Companies/Index',
+      props: {
+        companies: [
+          { name: 'Stripe', batch: 'S09' },
+          { name: 'Dropbox', batch: 'S07' },
+        ],
+      },
+    };
+    const html = `<div data-page="${JSON.stringify(page).replace(/"/g, '&quot;')}"></div>`;
+    const csv = extractTabularFromHtml(html);
+    expect(csv).toContain('Stripe');
+    expect(csv).toContain('Dropbox');
+  });
 });

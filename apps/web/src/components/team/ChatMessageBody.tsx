@@ -6,8 +6,8 @@ import {
   chatFileKind,
   extractMessageUrls,
   formatChatFileSize,
-  splitMessageText,
 } from '../../runtime/chat-media';
+import { parseChatBlocks, parseChatInline } from '../../runtime/chat-format';
 import { RichEmbed } from '../pages/RichEmbed';
 import styles from './ChatMessageBody.module.css';
 
@@ -26,27 +26,43 @@ export function ChatMessageBody({ body, attachments, onOpenApp }: Props) {
     files.map((attachment) => attachment.url).filter((url): url is string => Boolean(url)),
   );
   const unfurls = extractMessageUrls(body).filter((url) => !attachedUrls.has(url) && looksLikeUrl(url));
+  const blocks = parseChatBlocks(body);
 
   return (
     <div className={styles.root}>
       {body ? (
-        <p className={styles.body}>
-          {splitMessageText(body).map((part, index) =>
-            part.type === 'url' ? (
-              <a
-                key={`${part.value}-${index}`}
-                className={styles.link}
-                href={part.value}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {part.value}
-              </a>
-            ) : (
-              <span key={`t-${index}`}>{part.value}</span>
-            ),
-          )}
-        </p>
+        <div className={styles.body}>
+          {blocks.map((block, index) => {
+            if (block.kind === 'code') {
+              return (
+                <pre key={index} className={styles.codeBlock}>
+                  <code>{block.text}</code>
+                </pre>
+              );
+            }
+            if (block.kind === 'quote') {
+              return (
+                <blockquote key={index} className={styles.quote}>
+                  <Inline text={block.text} />
+                </blockquote>
+              );
+            }
+            if (block.kind === 'list') {
+              return (
+                <ul key={index} className={styles.list}>
+                  {(block.items ?? []).map((item, itemIndex) => (
+                    <li key={itemIndex}><Inline text={item} /></li>
+                  ))}
+                </ul>
+              );
+            }
+            return (
+              <p key={index} className={styles.paragraph}>
+                <Inline text={block.text} />
+              </p>
+            );
+          })}
+        </div>
       ) : null}
 
       {files.length > 0 ? (
@@ -159,4 +175,36 @@ function ChatFilePreview({ attachment }: { attachment: TeamChatAttachment }) {
 function extensionGlyph(name: string): string {
   const ext = name.split('.').pop()?.slice(0, 4).toUpperCase() ?? 'FILE';
   return ext || 'FILE';
+}
+
+function Inline({ text }: { text: string }) {
+  return (
+    <>
+      {parseChatInline(text).map((part, index) => {
+        if (part.kind === 'url') {
+          return (
+            <a key={index} className={styles.link} href={part.value} target="_blank" rel="noreferrer">
+              {part.value}
+            </a>
+          );
+        }
+        if (part.kind === 'mention') {
+          return <span key={index} className={styles.mention}>{part.value}</span>;
+        }
+        if (part.kind === 'code') {
+          return <code key={index} className={styles.code}>{part.value}</code>;
+        }
+        if (part.kind === 'bold') {
+          return <strong key={index}>{part.value}</strong>;
+        }
+        if (part.kind === 'italic') {
+          return <em key={index}>{part.value}</em>;
+        }
+        if (part.kind === 'strike') {
+          return <s key={index}>{part.value}</s>;
+        }
+        return <span key={index}>{part.value}</span>;
+      })}
+    </>
+  );
 }

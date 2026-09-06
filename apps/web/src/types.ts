@@ -446,6 +446,7 @@ export interface AppConfig {
   // IDs of skills/design-systems the user has explicitly disabled.
   disabledSkills?: string[];
   disabledDesignSystems?: string[];
+  disabledTools?: string[];
   // Anonymous install identifier for telemetry. Generated locally the first
   // time a user opts in via Settings → Privacy. `null` after the user
   // explicitly opts out (or rotates "Delete my data"); `undefined` when the

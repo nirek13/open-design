@@ -166,24 +166,18 @@ export function parseRoute(pathname: string): Route {
     return { kind: 'home', view: 'workspace' };
   }
   if (parts[0] === 'erp') {
-    if (parts[1] === 'netsuite') return { kind: 'home', view: 'erp' };
     if (parts[1] === 'connections') return { kind: 'home', view: 'integrations' };
-    return { kind: 'home', view: 'books' };
+    return { kind: 'home', view: 'tables' };
   }
   if (parts[0] === 'connections' && !parts[1]) {
     return { kind: 'home', view: 'integrations' };
   }
-  if (parts[0] === 'books' && !parts[1]) {
-    return { kind: 'home', view: 'books' };
-  }
-  if (parts[0] === 'approvals' && !parts[1]) {
-    return { kind: 'home', view: 'approvals' };
-  }
-  if (parts[0] === 'crm' && !parts[1]) {
-    return { kind: 'home', view: 'crm' };
-  }
-  if (parts[0] === 'purchasing' && !parts[1]) {
-    return { kind: 'home', view: 'purchasing' };
+  if (
+    (parts[0] === 'books' || parts[0] === 'approvals' || parts[0] === 'crm'
+      || parts[0] === 'purchasing')
+    && !parts[1]
+  ) {
+    return { kind: 'home', view: 'tables' };
   }
   if (parts[0] === 'team') {
     if (parts[1]) {
@@ -224,7 +218,7 @@ export function parseRoute(pathname: string): Route {
     return { kind: 'home', view: 'dev' };
   }
   if (parts[0] === 'templates' && !parts[1]) {
-    return { kind: 'home', view: 'templates' };
+    return { kind: 'home', view: 'tables' };
   }
   if (parts[0] === 'tables') {
     if (parts[1]) {
@@ -232,11 +226,8 @@ export function parseRoute(pathname: string): Route {
     }
     return { kind: 'home', view: 'tables' };
   }
-  if (parts[0] === 'inventory' && !parts[1]) {
-    return { kind: 'home', view: 'inventory' };
-  }
-  if (parts[0] === 'jobs' && !parts[1]) {
-    return { kind: 'home', view: 'jobs' };
+  if ((parts[0] === 'inventory' || parts[0] === 'jobs') && !parts[1]) {
+    return { kind: 'home', view: 'tables' };
   }
   if (parts[0] === 'apps' && !parts[1]) {
     return { kind: 'home', view: 'apps' };
@@ -265,7 +256,6 @@ export function buildPath(route: Route): string {
   if (route.kind === 'home') {
     if (route.view === 'onboarding') return '/onboarding';
     if (route.view === 'search') return '/search';
-    if (route.view === 'jobs') return '/jobs';
     if (route.view === 'tasks') return '/automations';
     if (route.view === 'plugins') return '/plugins';
     if (route.view === 'design-systems') return '/design-systems';
@@ -276,12 +266,11 @@ export function buildPath(route: Route): string {
     if (route.view === 'integrations') return '/connect';
     if (route.view === 'database') return DATABASE_UI_VISIBLE ? '/database' : '/';
     if (route.view === 'workspace') return '/';
-    if (route.view === 'erp') return '/erp/netsuite';
+    if (route.view === 'erp' || route.view === 'books' || route.view === 'approvals'
+      || route.view === 'crm' || route.view === 'purchasing') {
+      return '/tables';
+    }
     if (route.view === 'connections') return '/connect';
-    if (route.view === 'books') return '/books';
-    if (route.view === 'approvals') return '/approvals';
-    if (route.view === 'crm') return '/crm';
-    if (route.view === 'purchasing') return '/purchasing';
     if (route.view === 'team') {
       return route.channelId ? `/team/${encodeURIComponent(route.channelId)}` : '/team';
     }
@@ -301,11 +290,12 @@ export function buildPath(route: Route): string {
       }
       return '/dev';
     }
-    if (route.view === 'templates') return '/templates';
+    if (route.view === 'templates' || route.view === 'inventory' || route.view === 'jobs') {
+      return '/tables';
+    }
     if (route.view === 'tables') {
       return route.tableName ? `/tables/${encodeURIComponent(route.tableName)}` : '/tables';
     }
-    if (route.view === 'inventory') return '/inventory';
     if (route.view === 'projects') return '/projects';
     if (route.view === 'apps') return '/apps';
     if (route.view === 'organization') return '/organization';

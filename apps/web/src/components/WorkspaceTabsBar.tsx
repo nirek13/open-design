@@ -1283,7 +1283,7 @@ function displayTabFor(
     tables: t('entry.navTables'),
     inventory: t('entry.navInventory'),
     jobs: t('entry.navJobs'),
-    connections: t('erp.module.connections'),
+    connections: t('entry.navIntegrations'),
   };
   const entryIcon: Record<EntryHomeView, IconName> = {
     home: 'home',

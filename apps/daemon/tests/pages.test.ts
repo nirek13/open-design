@@ -191,4 +191,36 @@ describe('organization pages', () => {
     const parent = await getPage(db(), orgId, root.id);
     expect(parent.blocks.some((block) => block.type === 'page')).toBe(false);
   });
+
+  it('persists page appearance and Notion media/layout blocks', async () => {
+    const page = await createPage(db(), orgId, 'member-1', {
+      title: 'Design notes',
+      style: { font: 'serif', fullWidth: true, smallText: true },
+      blocks: [
+        { type: 'heading_1', content: 'Welcome' },
+        { type: 'equation', content: 'E = mc^2' },
+        { type: 'table_of_contents', content: null },
+        { type: 'image', content: 'https://example.com/hero.png', props: { url: 'https://example.com/hero.png' } },
+        {
+          type: 'column_list',
+          content: '',
+          children: [
+            { type: 'column', content: '', children: [{ type: 'paragraph', content: 'Left' }] },
+            { type: 'column', content: '', children: [{ type: 'paragraph', content: 'Right' }] },
+          ],
+        },
+      ],
+    });
+    expect(page.style).toEqual({ font: 'serif', fullWidth: true, smallText: true });
+    expect(page.blocks.map((block) => block.type)).toEqual([
+      'heading_1',
+      'equation',
+      'table_of_contents',
+      'image',
+      'column_list',
+    ]);
+    expect(page.blocks[4]!.children).toHaveLength(2);
+    const updated = await updatePage(db(), orgId, page.id, { style: { locked: true, font: 'mono' } });
+    expect(updated.style).toEqual({ locked: true, font: 'mono' });
+  });
 });

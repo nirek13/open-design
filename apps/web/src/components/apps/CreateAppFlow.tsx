@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Input, Select } from '@open-design/components';
 import {
+  alignAppScopesToTables,
   appRequestsTableWrites,
   inferAppScopesFromHtml,
   type AppAccessMode,
@@ -24,6 +25,7 @@ import {
   fetchOrgTeams,
   fetchProjectFileText,
   fetchProjectFiles,
+  fetchWorkspaceTables,
   publishApp,
   publishAppToWeb,
 } from '../../providers/registry';
@@ -159,8 +161,9 @@ export function CreateAppFlow({
       const text =
         htmlSource ??
         (projectId && filePath ? await fetchProjectFileText(projectId, filePath) : null);
+      const tables = await fetchWorkspaceTables(orgId).catch(() => []);
       if (cancelled) return;
-      const inferred = inferAppScopesFromHtml(text);
+      const inferred = alignAppScopesToTables(inferAppScopesFromHtml(text), tables);
       setInferredScopes(inferred);
       setAllowOrgWrites(false);
       setTableScopes(readOnlyInferredTables(inferred));
@@ -168,7 +171,7 @@ export function CreateAppFlow({
     return () => {
       cancelled = true;
     };
-  }, [filePath, htmlSource, projectId]);
+  }, [filePath, htmlSource, orgId, projectId]);
 
   useEffect(() => {
     if (!showAdvanced) return;
@@ -233,6 +236,8 @@ export function CreateAppFlow({
     setBusy(true);
     setError(null);
     try {
+      const tables = await fetchWorkspaceTables(orgId).catch(() => []);
+      const alignedTables = alignAppScopesToTables(grantedTables, tables);
       const app = await publishApp(orgId, {
         name: name.trim(),
         description: description.trim() || undefined,
@@ -241,7 +246,7 @@ export function CreateAppFlow({
         visibility: 'org',
         accessMode,
         pinned,
-        dataScopes: withGmailScope(grantedTables, allowGmail),
+        dataScopes: withGmailScope(alignedTables, allowGmail),
         ...(accessMode === 'restricted' ? { grants, teamGrants } : {}),
         ...(denials.length ? { denials: denials.map((memberId) => ({ memberId })) } : {}),
       });

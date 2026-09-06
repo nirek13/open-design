@@ -19,7 +19,7 @@ const PAGES_USAGE = `Usage:
   od tools pages search --query <text> [--limit <n>]
   od tools pages upsert --input page.json
   od tools pages append --page <page-id> --input blocks.json
-  od tools pages embed --page <page-id> --type <page|database|record|artifact|bookmark|embed> [--target <id>] [--table <id>] [--record <id>] [--path <file>] [--url <url>]
+  od tools pages embed --page <page-id> --type <page|database|record|artifact|bookmark|embed|image|video|audio|file|pdf> [--target <id>] [--table <id>] [--record <id>] [--path <file>] [--url <url>]
   od tools pages scaffold --input tree.json
   od tools pages duplicate --page <page-id> [--recursive]
   od tools pages archive --page <page-id>
@@ -35,7 +35,9 @@ Input files:
 Block types:
   paragraph, heading_1, heading_2, heading_3, bulleted_list_item,
   numbered_list_item, to_do, toggle, callout, quote, code, divider,
-  bookmark, embed, table, database, artifact, page, record.
+  bookmark, embed, image, video, audio, file, pdf, equation,
+  table_of_contents, breadcrumb, column_list, column, table,
+  database, artifact, page, record.
 
 Embeds:
   page       props.pageId     — nested page / wiki link

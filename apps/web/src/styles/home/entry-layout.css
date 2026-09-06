@@ -559,7 +559,8 @@
 /* Mail / team chat / Slack are contained apps: the inner pane scrolls, not the page. */
 .entry-main--scroll:has([data-testid='entry-view-mail'][data-active='true']),
 .entry-main--scroll:has([data-testid='entry-view-team'][data-active='true']),
-.entry-main--scroll:has([data-testid='entry-view-slack'][data-active='true']) {
+.entry-main--scroll:has([data-testid='entry-view-slack'][data-active='true']),
+.entry-main--scroll:has([data-testid='entry-view-workspace'][data-active='true']) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -567,7 +568,8 @@
 
 .entry-main--scroll:has([data-testid='entry-view-mail'][data-active='true']) .entry-main__inner--fullscreen,
 .entry-main--scroll:has([data-testid='entry-view-team'][data-active='true']) .entry-main__inner--fullscreen,
-.entry-main--scroll:has([data-testid='entry-view-slack'][data-active='true']) .entry-main__inner--fullscreen {
+.entry-main--scroll:has([data-testid='entry-view-slack'][data-active='true']) .entry-main__inner--fullscreen,
+.entry-main--scroll:has([data-testid='entry-view-workspace'][data-active='true']) .entry-main__inner--fullscreen {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
@@ -575,12 +577,18 @@
 
 .entry-main__inner--fullscreen > [data-testid='entry-view-mail'],
 .entry-main__inner--fullscreen > [data-testid='entry-view-team'],
-.entry-main__inner--fullscreen > [data-testid='entry-view-slack'] {
+.entry-main__inner--fullscreen > [data-testid='entry-view-slack'],
+.entry-main__inner--fullscreen > [data-testid='entry-view-workspace'] {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+.entry-main__inner--fullscreen > [data-testid='entry-view-workspace'] > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Team chat / Slack: float the rail toggle over the canvas so the workspace

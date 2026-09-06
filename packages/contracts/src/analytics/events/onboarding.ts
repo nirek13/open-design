@@ -31,6 +31,7 @@ export type TrackingChatPanelPageViewSource =
 export type TrackingOnboardingArea =
   | 'runtime'
   | 'about_you'
+  | 'tools'
   | 'newsletter'
   | 'design_system'
   /** @deprecated legacy onboarding final-step area; use `design_system`. */
@@ -44,6 +45,7 @@ export type TrackingOnboardingStepIndex = '1' | '2' | '3' | '4' | 'progress';
 export type TrackingOnboardingStepName =
   | 'connect'
   | 'about_you'
+  | 'tools'
   | 'newsletter'
   | 'design_system'
   /** @deprecated legacy onboarding final-step name; use `design_system`. */
@@ -165,6 +167,7 @@ export type TrackingOnboardingClickElement =
   // funnel always has the user's final picks even when individual
   // dropdown clicks were dropped on a fast navigate.
   | 'about_you_submit'
+  | 'tool_toggle'
   // Design system source options
   | 'github_repo'
   | 'local_code'

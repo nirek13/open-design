@@ -14,13 +14,15 @@ import { parseDesignSystemRenameArgs } from './design-systems/rename-args.js';
 import { runLiveArtifactsToolCli } from './tools-live-artifacts-cli.js';
 import { runDataToolCli } from './tools-data-cli.js';
 import { runPagesToolCli } from './tools-pages-cli.js';
+import { runTeamToolCli } from './tools-team-cli.js';
+import { runMailToolCli } from './tools-mail-cli.js';
 import { runErpToolCli } from './tools-erp-cli.js';
 import { runByokToolCli } from './tools-byok-cli.js';
 import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
 import { requestJsonIpc } from '@open-design/sidecar';
 import { SIDECAR_ENV, SIDECAR_MESSAGES } from '@open-design/sidecar-proto';
-import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS, composeImportRefreshPrompt, parseJoinInput } from '@open-design/contracts';
+import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS, composeImportRefreshPrompt, parseJoinInput, TOOL_CATALOG, isToolEnabled } from '@open-design/contracts';
 import { buildExportCliRequestBody, buildExportCliResultEnvelope, resolveExportCliDeckMode } from './export-cli-request.js';
 import { exportRoutePath } from './export-cli-routing.js';
 import {
@@ -258,7 +260,7 @@ const PUBLISH_BOOLEAN_FLAGS = new Set([
 // automations headlessly without going through the web UI.
 const AUTOMATION_STRING_FLAGS = new Set([
   'daemon-url', 'name', 'prompt', 'prompt-file', 'schedule', 'target',
-  'project', 'skill', 'agent', 'limit', 'plugin', 'mcp', 'connector',
+  'project', 'skill', 'agent', 'limit', 'plugin', 'mcp', 'connector', 'tool',
   'status', 'reason', 'template', 'source-kind', 'source-ref', 'title',
   'body', 'body-file', 'compression', 'sensitivity', 'account',
   'candidate-sinks', 'memory-type',
@@ -365,6 +367,7 @@ const APP_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'include-archived', 'all
 const DATA_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'workspace', 'name', 'table', 'data', 'data-file',
   'expected-revision', 'limit', 'cursor', 'sort', 'direction', 'subject',
+  'file', 'url', 'refresh',
 ]);
 const DATA_BOOLEAN_FLAGS = new Set([
   'help', 'h', 'json', 'include-deleted', 'include-archived', 'off',
@@ -378,10 +381,10 @@ const ERP_BOOLEAN_FLAGS = new Set([
   'help', 'h', 'json', 'off', 'pin', 'save', 'required', 'accept-data-loss',
 ]);
 const TEAM_STRING_FLAGS = new Set([
-  'daemon-url', 'org', 'message', 'prompt-file', 'topic', 'limit', 'before',
-  'member', 'emoji', 'query', 'q', 'file',
+  'daemon-url', 'org', 'message', 'prompt-file', 'topic', 'purpose', 'limit', 'before',
+  'member', 'emoji', 'query', 'q', 'file', 'note', 'at', 'notify', 'url', 'label', 'status',
 ]);
-const TEAM_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'private']);
+const TEAM_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'private', 'starred', 'muted']);
 const PAGES_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'title', 'parent', 'icon', 'cover', 'data-file',
   'query', 'q', 'limit', 'type', 'target', 'table', 'record', 'path', 'url',
@@ -684,6 +687,26 @@ if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
       process.stderr.write(`${JSON.stringify({ ok: false, error: { message } })}\n`);
       process.exitCode = 1;
     });
+} else if (argv[0] === 'tools' && argv[1] === 'team') {
+  runTeamToolCli(argv.slice(2))
+    .then(({ exitCode }) => {
+      process.exitCode = exitCode;
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${JSON.stringify({ ok: false, error: { message } })}\n`);
+      process.exitCode = 1;
+    });
+} else if (argv[0] === 'tools' && argv[1] === 'mail') {
+  runMailToolCli(argv.slice(2))
+    .then(({ exitCode }) => {
+      process.exitCode = exitCode;
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${JSON.stringify({ ok: false, error: { message } })}\n`);
+      process.exitCode = 1;
+    });
 } else if (argv[0] === 'tools' && argv[1] === 'erp') {
   runErpToolCli(argv.slice(2))
     .then(({ exitCode }) => {
@@ -787,9 +810,16 @@ function printRootHelp() {
       Build a Notion-shaped wiki (nested pages, embeds) through daemon wrapper
       commands. Same store as the Pages UI; agents should prefer this over files.
 
-  od tools erp <import-url|ask|pack|pack-install|preview|propose>
-      Magic-import a public spreadsheet/JSON/HTML table, apply a sentence to
-      ERP tables, and define custom packs. Same store as the ERP UI.
+  od tools team <channels|members|messages|dm|post>
+      Message colleagues in organization channels and DMs. Same store as the
+      messaging UI.
+
+  od tools mail <list|get|send|reply>
+      Read and send organization email through the connected Gmail mailbox.
+
+  od tools data <list-tables|describe-table|create-table|query|insert|update|import-url>
+      Workspace tables for agents. Magic-import a public spreadsheet, JSON,
+      HTML table, or page with \`import-url\`. Same store as the Tables UI.
 
   od mcp live-artifacts
       Start the MCP server exposing live-artifact and connector tools.
@@ -8790,6 +8820,9 @@ async function runConfig(args) {
   od config set <key> --value-json '<json>'
                                        Set a key to a JSON value.
   od config unset <key>               Remove a top-level key.
+  od config tools list [--json]       List catalog tools and whether each is on.
+  od config tools enable <id>         Turn a catalog tool on.
+  od config tools disable <id>        Turn a catalog tool off.
 
 Common options:
   --daemon-url <url>   Open Design daemon HTTP base.
@@ -8885,6 +8918,60 @@ Common options:
         process.stdout.write(JSON.stringify(written, null, 2) + '\n');
       } else {
         console.log(`[config] unset ${key}`);
+      }
+      return;
+    }
+    case 'tools': {
+      const action = rest.find((a) => !a.startsWith('-')) ?? 'list';
+      const toolId = rest.filter((a) => !a.startsWith('-'))[1];
+      const cfg = await fetchConfig();
+      const disabled = Array.isArray(cfg.disabledTools)
+        ? cfg.disabledTools.filter((id) => typeof id === 'string')
+        : [];
+      if (action === 'list') {
+        const rows = TOOL_CATALOG.map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          origin: entry.origin,
+          enabled: isToolEnabled(entry.id, disabled),
+        }));
+        if (flags.json) {
+          process.stdout.write(JSON.stringify({ tools: rows }, null, 2) + '\n');
+        } else {
+          for (const row of rows) {
+            console.log(`${row.enabled ? 'on ' : 'off'}  ${row.id}  ${row.title}`);
+          }
+        }
+        return;
+      }
+      if (action !== 'enable' && action !== 'disable') {
+        console.error('Usage: od config tools <list|enable|disable> [id]');
+        process.exit(2);
+      }
+      if (!toolId) {
+        console.error(`Usage: od config tools ${action} <id>`);
+        process.exit(2);
+      }
+      const known = TOOL_CATALOG.some((entry) => entry.id === toolId)
+        || toolId.startsWith('mcp:')
+        || toolId.startsWith('connector:')
+        || toolId.startsWith('internal:');
+      if (!known) {
+        console.error(`unknown tool id: ${toolId}`);
+        process.exit(2);
+      }
+      const nextDisabled = new Set(disabled);
+      if (action === 'disable') nextDisabled.add(toolId);
+      else nextDisabled.delete(toolId);
+      const written = await writeConfig({ ...cfg, disabledTools: [...nextDisabled] });
+      if (flags.json) {
+        process.stdout.write(JSON.stringify({
+          id: toolId,
+          enabled: action === 'enable',
+          disabledTools: written.disabledTools ?? [...nextDisabled],
+        }, null, 2) + '\n');
+      } else {
+        console.log(`[config] tools ${action} ${toolId}`);
       }
       return;
     }
@@ -9793,11 +9880,13 @@ function automationContextFromFlags(flags) {
   const pluginIds = splitAutomationIds(flags.plugin);
   const mcpServerIds = splitAutomationIds(flags.mcp);
   const connectorIds = splitAutomationIds(flags.connector);
+  const toolIds = splitAutomationIds(flags.tool);
   const context = {
     ...(skillIds.length > 0 ? { skillIds } : {}),
     ...(pluginIds.length > 0 ? { pluginIds } : {}),
     ...(mcpServerIds.length > 0 ? { mcpServerIds } : {}),
     ...(connectorIds.length > 0 ? { connectorIds } : {}),
+    ...(toolIds.length > 0 ? { toolIds } : {}),
   };
   return Object.keys(context).length > 0 ? context : null;
 }
@@ -9861,11 +9950,12 @@ function printAutomationHelp() {
                        [--prompt-file <path|->] (alternative to --prompt)
                        [--skill <id>[,<id>]] [--plugin <id>[,<id>]]
                        [--mcp <id>[,<id>]] [--connector <id>[,<id>]]
+                       [--tool <id>[,<id>]]
                        [--agent <id>]
   od automation update <id> [--name ...] [--prompt ...]
                             [--schedule ...] [--target ...]
                             [--skill ...] [--plugin ...] [--mcp ...]
-                            [--connector ...] [--enabled|--disabled]
+                            [--connector ...] [--tool ...] [--enabled|--disabled]
                             Patch fields.
   od automation run <id>                                       Trigger a manual run; prints projectId/conversationId.
   od automation runs <id> [--limit 10]                         Print run history.
@@ -10384,7 +10474,7 @@ async function runAutomation(args) {
         patch.context = context;
       }
       if (Object.keys(patch).length === 0) {
-        console.error('update needs at least one of --name --prompt(--prompt-file) --schedule --target --skill --plugin --mcp --connector --enabled --disabled');
+        console.error('update needs at least one of --name --prompt(--prompt-file) --schedule --target --skill --plugin --mcp --connector --tool --enabled --disabled');
         process.exit(2);
       }
       let resp;
@@ -10815,11 +10905,20 @@ Subcommands:
   revisions <record-id>                Full row history
   audit                                Audit trail (--table, --subject,
                                        --limit, --cursor)
+  import plan --file <path|->          Read a spreadsheet, show what we found
+  import commit --file <path|->        Import it (--table to name the table)
+  import plan --url <https://...>      Magic-import a public Sheet / CSV /
+                                       JSON / HTML table / JS directory /
+                                       open-data dump
+  import commit --url <https://...>    Fetch and import in one step
+                                       [--refresh daily|hourly|weekdays]
+                                       schedules a rescrape into the same table
 
 Options:
   --org <id>         Organization to operate in (default: your first)
   --data <json>      Inline JSON payload
   --data-file <path|->  JSON payload from a file, or - for stdin
+  --file <path|->    Spreadsheet (CSV/TSV) for import, or - for stdin
   --json             Machine-readable output
   --daemon-url <url> Daemon base URL
 
@@ -10833,6 +10932,7 @@ Examples:
   od data insert employees --data '{"full_name":"Ada","email":"ada@co.com"}'
   od data query employees --data '{"filters":[{"field":"email","op":"contains","value":"@co.com"}]}' --json
   od data tables public-write leads
+  od data import commit --url https://example.com/customers.csv
 `);
 }
 
@@ -11088,6 +11188,105 @@ async function runData(args) {
     return;
   }
 
+  if (sub === 'import') {
+    const action = positionals[1] ?? 'plan';
+    const orgId = await resolveOrgId();
+    const scope = `/api/orgs/${encodeURIComponent(orgId)}`;
+    if (flags.url) {
+      const body = {
+        url: flags.url,
+        ...(flags.table ? { tableName: flags.table } : {}),
+        commit: action === 'commit',
+      };
+      const data = await request('POST', `${scope}/import/from-url`, body);
+      if (flags.json) return writeJsonOut(data);
+      const plan = data.plan;
+      console.log(
+        `[data] ${plan.rowCount} rows -> ${plan.tableName}${plan.appendingToExisting ? ' (appending)' : ''} (${data.source?.kind ?? 'url'})`,
+      );
+      for (const column of plan.columns ?? []) {
+        console.log(`  ${column.header}\t${column.type}\t${column.reason}`);
+      }
+      if (plan.skipped?.length) console.log(`  ${plan.skipped.length} rows skipped`);
+      if (action === 'commit') {
+        console.log(`[data] imported ${data.imported ?? 0} rows into ${plan.tableName}`);
+        if (data.updated) console.log(`[data] updated ${data.updated} existing rows`);
+        if (data.removed) console.log(`[data] removed ${data.removed} rows that left the feed`);
+        if (flags.refresh) {
+          let schedule;
+          try {
+            const raw = String(flags.refresh);
+            schedule =
+              raw === 'daily'
+                ? { kind: 'daily', time: '06:00', timezone: 'UTC' }
+                : raw === 'hourly'
+                  ? { kind: 'hourly', minute: 0 }
+                  : raw === 'weekdays'
+                    ? { kind: 'weekdays', time: '06:00', timezone: 'UTC' }
+                    : parseScheduleFlag(raw);
+          } catch (err) {
+            console.error(String(err?.message ?? err));
+            process.exit(2);
+          }
+          const routine = await request('POST', '/api/routines', {
+            name: `Refresh ${plan.tableName}`,
+            prompt: composeImportRefreshPrompt({ url: flags.url, tableName: plan.tableName }),
+            schedule,
+            target: { mode: 'create_each_run' },
+            enabled: true,
+          });
+          if (flags.json) return writeJsonOut({ ...data, routine: routine.routine ?? routine });
+          console.log(`[data] refresh scheduled (${routine.routine?.id ?? routine.id})`);
+        }
+      } else {
+        console.log('[data] run the same command with `commit` to import');
+      }
+      return;
+    }
+    const file = flags.file;
+    if (!file) {
+      console.error('provide --url <https://...> or --file <path|->');
+      process.exit(2);
+    }
+    let content;
+    if (file === '-') {
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      content = Buffer.concat(chunks).toString('utf8');
+    } else {
+      const { readFile } = await import('node:fs/promises');
+      content = await readFile(file, 'utf8');
+    }
+    const fileName =
+      file !== '-'
+        ? (await import('node:path')).basename(file)
+        : 'pasted.csv';
+    if (action === 'plan') {
+      const data = await request('POST', `${scope}/import/plan`, { content, fileName });
+      if (flags.json) return writeJsonOut(data);
+      const plan = data.plan;
+      console.log(
+        `[data] ${plan.rowCount} rows -> ${plan.tableName}${plan.appendingToExisting ? ' (appending)' : ''}`,
+      );
+      for (const column of plan.columns ?? []) {
+        console.log(`  ${column.header}\t${column.type}\t${column.reason}`);
+      }
+      if (plan.skipped?.length) console.log(`  ${plan.skipped.length} rows skipped`);
+      console.log('[data] run the same command with `commit` to import');
+      return;
+    }
+    if (action === 'commit') {
+      const planned = await request('POST', `${scope}/import/plan`, { content, fileName });
+      const plan = flags.table ? { ...planned.plan, tableName: flags.table } : planned.plan;
+      const data = await request('POST', `${scope}/import/commit`, { plan, content });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[data] imported ${data.imported ?? 0} rows into ${plan.tableName}`);
+      return;
+    }
+    console.error(`unknown import action: ${action}`);
+    process.exit(2);
+  }
+
   console.error(`unknown subcommand: ${sub}`);
   printDataHelp();
   process.exit(2);
@@ -11181,7 +11380,8 @@ Subcommands:
   import plan --file <path|->          Read a spreadsheet, show what we found
   import commit --file <path|->        Import it (--table to name the table)
   import plan --url <https://...>      Magic-import a public Sheet / CSV /
-                                       JSON / HTML table / open-data dump
+                                       JSON / HTML table / JS directory /
+                                       open-data dump
   import commit --url <https://...>    Fetch and import in one step
                                        [--refresh daily|hourly|weekdays]
                                        schedules a rescrape into the same table
@@ -12336,8 +12536,29 @@ Subcommands:
   dm --member <id>                     Open a DM (repeat --member for a group)
   search --query <text>                Search messages you can see
   react <message-id> --emoji <name>    Toggle a reaction
+  pin <message-id>                     Pin or unpin a message
+  save <message-id>                    Save or unsave for later
+  later                                Saved messages
+  activity                             Mentions, reactions, thread replies
+  remind <message-id> --at <iso>       Remind yourself about a message
+  reminders                            Your message reminders
+  cancel-reminder <id>                 Delete a reminder
+  mute <channel>                       Mute a channel
+  unmute <channel>                     Unmute a channel
+  star <channel>                       Star a channel
+  unstar <channel>                     Unstar a channel
+  notify <channel> --notify all|mentions|nothing
+  unread <channel>                     Mark a channel unread
+  topic <channel> --topic <text>       Set the channel topic
+  purpose <channel> --purpose <text>   Set the channel description
+  status --status <text> [--emoji]     Set your status (empty --status clears)
+  bookmarks <channel>                  Channel bookmarks
+  bookmark <channel> --label --url     Add a bookmark
+  scheduled                            Your scheduled messages
+  cancel-scheduled <id>                Delete a scheduled message
   read <channel>                       Mark a channel read
   archive <channel>                    Archive a channel (admin)
+  unarchive <channel>                  Unarchive a channel (admin)
 
 Options:
   --org <id>            Organization to operate in (default: your first)
@@ -12568,14 +12789,15 @@ async function runTeam(args) {
     return;
   }
 
-  if (sub === 'join' || sub === 'leave' || sub === 'read' || sub === 'archive') {
+  if (sub === 'join' || sub === 'leave' || sub === 'read' || sub === 'archive' || sub === 'unarchive' || sub === 'unread') {
     const ref = positionals[1];
     if (!ref) {
       console.error(`usage: od team ${sub} <channel>`);
       process.exit(2);
     }
     const action = sub === 'read' ? 'read' : sub;
-    const data = await request('POST', `${channelPath(ref)}/${action}`);
+    const method = sub === 'unarchive' || sub === 'unread' || sub === 'archive' || sub === 'read' ? 'POST' : 'POST';
+    const data = await request(method, `${channelPath(ref)}/${action}`);
     if (flags.json) return writeJsonOut(data ?? { ok: true });
     console.log(`[team] ${sub} #${String(ref).replace(/^#/, '')}`);
     return;
@@ -12651,6 +12873,172 @@ async function runTeam(args) {
     });
     if (flags.json) return writeJsonOut(data);
     console.log('[team] reacted');
+    return;
+  }
+
+  if (sub === 'pin' || sub === 'save') {
+    const messageId = positionals[1];
+    if (!messageId) {
+      console.error(`usage: od team ${sub} <message-id>`);
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/messages/${encodeURIComponent(messageId)}/${sub}`);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] ${sub}ned`);
+    return;
+  }
+
+  if (sub === 'later') {
+    const data = await request('GET', `${scope}/later`);
+    if (flags.json) return writeJsonOut(data);
+    for (const hit of data.items ?? []) {
+      console.log(`#${hit.channelSlug}\t${hit.message.body}`);
+    }
+    if (!data.items?.length) console.log('[team] nothing saved');
+    return;
+  }
+
+  if (sub === 'activity') {
+    const data = await request('GET', `${scope}/activity`);
+    if (flags.json) return writeJsonOut(data);
+    for (const item of data.items ?? []) {
+      console.log(`${item.kind}\t#${item.channelSlug}\t${item.message.body}`);
+    }
+    if (!data.items?.length) console.log('[team] no activity');
+    return;
+  }
+
+  if (sub === 'remind') {
+    const messageId = positionals[1];
+    const at = flags.at;
+    if (!messageId || !at) {
+      console.error('usage: od team remind <message-id> --at <iso-or-ms> [--note <text>]');
+      process.exit(2);
+    }
+    const fireAt = /^\d+$/.test(String(at)) ? Number(at) : Date.parse(String(at));
+    const data = await request('POST', `${scope}/messages/${encodeURIComponent(messageId)}/remind`, {
+      fireAt,
+      ...(flags.note ? { note: flags.note } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log('[team] reminder set');
+    return;
+  }
+
+  if (sub === 'mute' || sub === 'unmute' || sub === 'star' || sub === 'unstar' || sub === 'notify') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error(`usage: od team ${sub} <channel>${sub === 'notify' ? ' --notify all|mentions|nothing' : ''}`);
+      process.exit(2);
+    }
+    const body =
+      sub === 'mute' ? { muted: true }
+      : sub === 'unmute' ? { muted: false }
+      : sub === 'star' ? { starred: true }
+      : sub === 'unstar' ? { starred: false }
+      : { notify: flags.notify || 'all' };
+    const data = await request('PATCH', `${channelPath(ref)}/prefs`, body);
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] ${sub} #${String(ref).replace(/^#/, '')}`);
+    return;
+  }
+
+  if (sub === 'topic' || sub === 'purpose') {
+    const ref = positionals[1];
+    const value = flags[sub] || positionals.slice(2).join(' ');
+    if (!ref || !value) {
+      console.error(`usage: od team ${sub} <channel> --${sub} <text>`);
+      process.exit(2);
+    }
+    const data = await request('PATCH', channelPath(ref), { [sub]: value });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] updated #${String(ref).replace(/^#/, '')} ${sub}`);
+    return;
+  }
+
+  if (sub === 'status') {
+    const text = flags.status === undefined ? '' : String(flags.status);
+    const data = await request('PUT', `${scope}/status`, {
+      text: text || null,
+      ...(flags.emoji ? { emoji: flags.emoji } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(text ? `[team] status: ${flags.emoji || ''} ${text}`.trim() : '[team] status cleared');
+    return;
+  }
+
+  if (sub === 'bookmarks') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error('usage: od team bookmarks <channel>');
+      process.exit(2);
+    }
+    const data = await request('GET', `${channelPath(ref)}/bookmarks`);
+    if (flags.json) return writeJsonOut(data);
+    for (const bookmark of data.bookmarks ?? []) {
+      console.log(`${bookmark.label}\t${bookmark.url}`);
+    }
+    if (!data.bookmarks?.length) console.log('[team] no bookmarks');
+    return;
+  }
+
+  if (sub === 'bookmark') {
+    const ref = positionals[1];
+    if (!ref || !flags.label || !flags.url) {
+      console.error('usage: od team bookmark <channel> --label <name> --url <https://…>');
+      process.exit(2);
+    }
+    const data = await request('POST', `${channelPath(ref)}/bookmarks`, {
+      label: flags.label,
+      url: flags.url,
+      ...(flags.emoji ? { emoji: flags.emoji } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log('[team] bookmark added');
+    return;
+  }
+
+  if (sub === 'scheduled') {
+    const data = await request('GET', `${scope}/scheduled`);
+    if (flags.json) return writeJsonOut(data);
+    for (const message of data.messages ?? []) {
+      console.log(`${when(message.sendAt)}\t#${message.channelSlug}\t${message.body}`);
+    }
+    if (!data.messages?.length) console.log('[team] nothing scheduled');
+    return;
+  }
+
+  if (sub === 'reminders') {
+    const data = await request('GET', `${scope}/reminders`);
+    if (flags.json) return writeJsonOut(data);
+    for (const reminder of data.reminders ?? []) {
+      console.log(`${when(reminder.fireAt)}\t#${reminder.channelSlug}\t${reminder.message?.body ?? ''}`);
+    }
+    if (!data.reminders?.length) console.log('[team] no reminders');
+    return;
+  }
+
+  if (sub === 'cancel-reminder') {
+    const reminderId = positionals[1];
+    if (!reminderId) {
+      console.error('usage: od team cancel-reminder <reminder-id>');
+      process.exit(2);
+    }
+    await request('DELETE', `${scope}/reminders/${encodeURIComponent(reminderId)}`);
+    if (flags.json) return writeJsonOut({ ok: true });
+    console.log('[team] reminder cancelled');
+    return;
+  }
+
+  if (sub === 'cancel-scheduled') {
+    const scheduledId = positionals[1];
+    if (!scheduledId) {
+      console.error('usage: od team cancel-scheduled <scheduled-id>');
+      process.exit(2);
+    }
+    await request('DELETE', `${scope}/scheduled/${encodeURIComponent(scheduledId)}`);
+    if (flags.json) return writeJsonOut({ ok: true });
+    console.log('[team] scheduled message cancelled');
     return;
   }
 
@@ -13619,7 +14007,7 @@ Options:
   --cover <id-or-url>   Cover preset id or image URL
   --query <text>        Search query
   --limit <n>           Search hit cap
-  --type <kind>         Embed kind: page|database|record|artifact|bookmark|embed
+  --type <kind>         Embed kind: page|database|record|artifact|bookmark|embed|image|video|audio|file|pdf
   --target <page-id>    Page to embed
   --table <table-id>    Workspace table to embed
   --record <record-id>  Record to embed
@@ -13846,7 +14234,7 @@ async function runPages(args) {
   if (sub === 'embed') {
     const id = positionals[1];
     if (!id || !flags.type) {
-      console.error('usage: od pages embed <page-id> --type <page|database|record|artifact|bookmark|embed> [...]');
+      console.error('usage: od pages embed <page-id> --type <page|database|record|artifact|bookmark|embed|image|video|audio|file|pdf> [...]');
       process.exit(2);
     }
     const body = {
@@ -14188,7 +14576,7 @@ Options:
 Examples:
   od org create --name "Acme" --json
   od org invite --email teammate@acme.com --role member
-  od erp import commit --url https://example.com/customers.csv
+  od data import commit --url https://example.com/customers.csv
   od org invite --username jane --role admin
   od org invite --role member --expires-in 168 --max-uses 25
   od org pending

@@ -61,6 +61,10 @@ const CHANNEL: ChatChannel = {
   unreadCount: 0,
   joined: true,
   lastMessageAt: 1,
+  purpose: null,
+  starred: false,
+  muted: false,
+  notify: 'all',
 };
 
 const APP: OrgApp = {
@@ -215,6 +219,32 @@ describe('CreateAppFlow', () => {
         'ws-1',
         expect.objectContaining({
           dataScopes: [{ table: 'leads', mode: 'write' }],
+        }),
+      );
+    });
+  });
+
+  it('maps HTML table labels onto the existing workspace table name', async () => {
+    render(
+      <I18nProvider initial="en">
+        <OrgProvider>
+          <CreateAppFlow
+            orgId="ws-1"
+            projectId="proj-1"
+            filePath="leads.html"
+            htmlSource={'await od.query("Leads")'}
+            onClose={() => {}}
+          />
+        </OrgProvider>
+      </I18nProvider>,
+    );
+
+    fireEvent.click(await screen.findByTestId('create-app-deploy-workspace'));
+    await waitFor(() => {
+      expect(registry.publishApp).toHaveBeenCalledWith(
+        'ws-1',
+        expect.objectContaining({
+          dataScopes: [{ table: 'leads', mode: 'read' }],
         }),
       );
     });

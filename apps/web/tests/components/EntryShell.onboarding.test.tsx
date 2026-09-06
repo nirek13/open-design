@@ -1797,10 +1797,23 @@ describe('EntryShell onboarding Substrate AMR runtime', () => {
       expect(screen.getAllByText('Default OpenAI key is ready to use.').length).toBeGreaterThan(0);
     }, { timeout: 4000 });
 
-    fireEvent.click(screen.getByRole('button', { name: /^Continue$/i }));
+    const finish = screen.getByRole('button', { name: /^Continue$/i });
     await waitFor(() => {
-      expect(props.onCompleteOnboarding).toHaveBeenCalledTimes(1);
+      expect(finish.getAttribute('aria-disabled')).not.toBe('true');
     });
+    fireEvent.click(finish);
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'About you' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Choose tools' })).toBeTruthy();
+      expect(screen.getByTestId('tools-catalog')).toBeTruthy();
+    });
+    const toggle = screen.getByTestId('tool-row-internal:generate_image').querySelector('input');
+    expect(toggle).toBeTruthy();
+    fireEvent.click(toggle!);
+    expect(props.onConfigPersist).toHaveBeenCalledWith(expect.objectContaining({
+      disabledTools: ['internal:generate_image'],
+    }));
+    expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
     expect(props.onPersistByokCredential).not.toHaveBeenCalled();
     expect(props.onModeChange).toHaveBeenCalledWith('api');
     expect(props.onApiProtocolChange).toHaveBeenCalledWith('openai');

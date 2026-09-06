@@ -23,11 +23,14 @@ and design artifacts.
 
 | Gesture | Behavior |
 | --- | --- |
-| `/` at line start | Slash catalogue (Notion “basic blocks”) |
+| `/` at line start | Slash catalogue (Notion “basic blocks”, media, columns, TOC) |
+| `@` | Mention another page inline |
 | Enter | New sibling block (lists/todos continue type; toggles add a child) |
 | Backspace on empty | Convert to paragraph, then remove / focus previous |
-| Hover gutter | Move ↑↓ and `+` insert |
-| Title / icon | Autosaved with the block tree (~700ms debounce) |
+| Markdown prefixes | `# ## ###`, `- *`, `1.`, `[]`, `>`, `` ``` ``, `---`, `$$ ` |
+| Selection | Cmd/Ctrl+B I U E, Cmd+Shift+S, Cmd+K; floating format bar |
+| Hover gutter | Move ↑↓, `+` insert, color / turn into / duplicate |
+| Title / icon / cover / style | Autosaved with the block tree (~700ms debounce) |
 
 ## Block catalogue
 
@@ -35,10 +38,22 @@ Aligned with Notion’s public vocabulary where possible, plus Substrate bridges
 
 - `paragraph`, `heading_1..3`, `bulleted_list_item`, `numbered_list_item`
 - `to_do`, `toggle`, `callout`, `quote`, `code`, `divider`, `bookmark`
+- `image`, `video`, `audio`, `file`, `pdf` — first-class media with captions
+- `equation` — LaTeX math block (`$$ ` shortcut)
+- `table_of_contents`, `breadcrumb`
+- `column_list` / `column` — 2- and 3-column layouts
 - `table` — inline JSON grid owned by the page
 - `database` — embed org workspace table by id
 - `artifact` — link a project design file
 - `page` — link another Substrate page
+- `record` — live ERP / workspace record card
+
+Slash extras (same persistence as headings/columns):
+
+- Toggle heading 1/2/3 (`props.toggle`)
+- 2 columns / 3 columns
+
+Page appearance (`style` on the page row): font (default/serif/mono), small text, full width, lock.
 
 ## Surfaces
 
@@ -61,4 +76,5 @@ artifacts / Write when they want a **designed** HTML app or deck. Use a
 ## Non-goals (still later)
 
 Realtime multiplayer / CRDT, synced blocks, comments, permissions per page,
-full Notion import/export, Lexical rich marks inside every block.
+full Notion import/export, Lexical rich marks inside every block (markdown
+marks + a selection toolbar cover the daily formatting path).

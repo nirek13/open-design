@@ -61,6 +61,10 @@ const CHANNEL: ChatChannel = {
   unreadCount: 0,
   joined: true,
   lastMessageAt: 1,
+  purpose: null,
+  starred: false,
+  muted: false,
+  notify: 'all',
 };
 
 const DM: ChatChannel = {
@@ -148,6 +152,8 @@ describe('SendAppPicker', () => {
       editedAt: null,
       deletedAt: null,
       createdAt: 1,
+      pinned: false,
+      saved: false,
     });
   });
 

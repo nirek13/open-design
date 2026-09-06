@@ -52,6 +52,10 @@ const CHANNEL: ChatChannel = {
   unreadCount: 0,
   joined: true,
   lastMessageAt: 1,
+  purpose: null,
+  starred: false,
+  muted: false,
+  notify: 'all',
 };
 
 const MESSAGE: TeamChatMessage = {
@@ -70,6 +74,8 @@ const MESSAGE: TeamChatMessage = {
   editedAt: null,
   deletedAt: null,
   createdAt: Date.now(),
+  pinned: false,
+  saved: false,
 };
 
 function renderChat() {
@@ -126,9 +132,7 @@ describe('TeamChatView', () => {
     });
     vi.spyOn(registry, 'markChatChannelRead').mockResolvedValue(CHANNEL);
     const post = vi.spyOn(registry, 'postChatMessage').mockResolvedValue({
-      ...MESSAGE,
-      id: 'msg-2',
-      body: 'On it',
+      message: { ...MESSAGE, id: 'msg-2', body: 'On it' },
     });
 
     renderChat();
@@ -285,6 +289,69 @@ describe('TeamChatView', () => {
     expect(await screen.findByTestId('team-file-file-1')).toBeTruthy();
     expect(await screen.findByTestId('team-link-embed')).toBeTruthy();
     expect(screen.getByTestId('team-attach')).toBeTruthy();
+  });
+
+  it('opens the activity inbox from the Slack sidebar', async () => {
+    vi.spyOn(registry, 'fetchChatChannels').mockResolvedValue({
+      channels: [CHANNEL],
+      totalUnread: 1,
+    });
+    vi.spyOn(registry, 'fetchChatMessages').mockResolvedValue({
+      messages: [MESSAGE],
+      nextBefore: null,
+    });
+    vi.spyOn(registry, 'markChatChannelRead').mockResolvedValue(CHANNEL);
+    vi.spyOn(registry, 'fetchChatActivity').mockResolvedValue({
+      items: [
+        {
+          kind: 'mention',
+          createdAt: Date.now(),
+          channelId: CHANNEL.id,
+          channelSlug: CHANNEL.slug,
+          channelName: CHANNEL.displayName,
+          message: MESSAGE,
+          actorMemberId: 'wsm-2',
+          actorName: 'Ada',
+        },
+      ],
+    });
+    vi.spyOn(registry, 'fetchChatStatuses').mockResolvedValue({ statuses: [] });
+    vi.spyOn(registry, 'fetchChatPins').mockResolvedValue({ pins: [] });
+    vi.spyOn(registry, 'fetchChatBookmarks').mockResolvedValue({ bookmarks: [] });
+    vi.spyOn(registry, 'fetchChatChannelMembers').mockResolvedValue([]);
+
+    renderChat();
+    fireEvent.click(await screen.findByTestId('team-activity'));
+    expect(await screen.findByTestId('team-activity-list')).toBeTruthy();
+    expect(await screen.findByText('mentioned you')).toBeTruthy();
+  });
+
+  it('lists unread conversations in the Unreads pane', async () => {
+    const unread: ChatChannel = {
+      ...CHANNEL,
+      id: 'chn-2',
+      slug: 'sales',
+      displayName: 'Sales',
+      unreadCount: 3,
+    };
+    vi.spyOn(registry, 'fetchChatChannels').mockResolvedValue({
+      channels: [CHANNEL, unread],
+      totalUnread: 3,
+    });
+    vi.spyOn(registry, 'fetchChatMessages').mockResolvedValue({
+      messages: [MESSAGE],
+      nextBefore: null,
+    });
+    vi.spyOn(registry, 'markChatChannelRead').mockResolvedValue(CHANNEL);
+    vi.spyOn(registry, 'fetchChatStatuses').mockResolvedValue({ statuses: [] });
+    vi.spyOn(registry, 'fetchChatPins').mockResolvedValue({ pins: [] });
+    vi.spyOn(registry, 'fetchChatBookmarks').mockResolvedValue({ bookmarks: [] });
+    vi.spyOn(registry, 'fetchChatChannelMembers').mockResolvedValue([]);
+
+    renderChat();
+    fireEvent.click(await screen.findByTestId('team-unreads'));
+    expect(await screen.findByTestId('team-unreads-list')).toBeTruthy();
+    expect(screen.getByTestId('team-unreads-list').textContent).toContain('Sales');
   });
 });
 

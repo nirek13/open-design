@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeTeamChatAttachments } from '../src/api/team-chat.js';
+import {
+  extractChatMentions,
+  parseChatSearchQuery,
+  sanitizeTeamChatAttachments,
+} from '../src/api/team-chat.js';
 
 describe('sanitizeTeamChatAttachments', () => {
   it('keeps record and app links that chat already posted', () => {
@@ -42,5 +46,24 @@ describe('sanitizeTeamChatAttachments', () => {
       url: `https://example.com/${i}`,
     }));
     expect(sanitizeTeamChatAttachments(raw)).toHaveLength(16);
+  });
+});
+
+describe('chat search and mentions', () => {
+  it('parses Slack-style search modifiers', () => {
+    const filters = parseChatSearchQuery('invoice in:sales from:ada has:file after:2026-01-01');
+    expect(filters.text).toBe('invoice');
+    expect(filters.in).toBe('sales');
+    expect(filters.from).toBe('ada');
+    expect(filters.has).toBe('file');
+    expect(filters.after).toBeDefined();
+  });
+
+  it('extracts @user and @channel mentions', () => {
+    expect(
+      extractChatMentions('see @ada and @channel', [
+        { id: 'wsm-ada', username: 'ada', displayName: 'Ada' },
+      ]),
+    ).toEqual(['@channel', 'wsm-ada']);
   });
 });

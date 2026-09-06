@@ -20,6 +20,16 @@ export type ChannelVisibility = 'public' | 'private';
 
 export type ChannelMemberRole = 'owner' | 'member';
 
+/** How a member is notified in a channel they have joined. `muted` is a
+ * shortcut for `nothing` plus hiding the unread badge. */
+export type ChatNotifyLevel = 'all' | 'mentions' | 'nothing';
+
+export const CHAT_NOTIFY_LEVELS = ['all', 'mentions', 'nothing'] as const;
+
+export const CHAT_SPECIAL_MENTIONS = ['@channel', '@here', '@everyone'] as const;
+
+export type ChatSpecialMention = (typeof CHAT_SPECIAL_MENTIONS)[number];
+
 /** `channel` is a named room. `dm` is exactly two people. `group_dm` is a
  * private conversation among three or more, without a public slug people join. */
 export type ChatChannelKind = 'channel' | 'dm' | 'group_dm';
@@ -33,6 +43,9 @@ export interface ChatChannel {
   slug: string;
   displayName: string;
   topic: string | null;
+  /** Longer “what this channel is for” copy, distinct from the short topic
+   * that sits under the channel name. */
+  purpose: string | null;
   kind: ChatChannelKind;
   visibility: ChannelVisibility;
   archivedAt: number | null;
@@ -48,6 +61,9 @@ export interface ChatChannel {
    * this is what the UI joins on. */
   joined: boolean;
   lastMessageAt: number | null;
+  starred: boolean;
+  muted: boolean;
+  notify: ChatNotifyLevel;
 }
 
 export interface ChatChannelMember {
@@ -200,6 +216,8 @@ export interface TeamChatMessage {
   editedAt: number | null;
   deletedAt: number | null;
   createdAt: number;
+  pinned: boolean;
+  saved: boolean;
 }
 
 // --- Requests -------------------------------------------------------------
@@ -209,6 +227,7 @@ export interface CreateChannelRequest {
   slug?: string;
   displayName: string;
   topic?: string;
+  purpose?: string;
   visibility?: ChannelVisibility;
   /** Organization member ids to add on creation. The creator is always added. */
   memberIds?: string[];
@@ -217,6 +236,7 @@ export interface CreateChannelRequest {
 export interface UpdateChannelRequest {
   displayName?: string;
   topic?: string;
+  purpose?: string;
   visibility?: ChannelVisibility;
 }
 
@@ -225,6 +245,8 @@ export interface PostMessageRequest {
   attachments?: TeamChatAttachment[];
   mentions?: string[];
   parentMessageId?: string;
+  /** When set, the message is held until this epoch-ms instead of posting now. */
+  sendAt?: number;
 }
 
 export interface EditMessageRequest {
@@ -242,6 +264,36 @@ export interface ListMessagesQuery {
 export interface MarkReadRequest {
   /** Defaults to now. */
   readAt?: number;
+}
+
+export interface MarkUnreadRequest {
+  /** Leave everything after this message unread. Defaults to the latest. */
+  messageId?: string;
+}
+
+export interface UpdateChannelPrefsRequest {
+  starred?: boolean;
+  muted?: boolean;
+  notify?: ChatNotifyLevel;
+}
+
+export interface RemindMessageRequest {
+  /** Epoch-ms. The UI offers 20 minutes / 1 hour / tomorrow morning. */
+  fireAt: number;
+  note?: string;
+}
+
+export interface SetChatStatusRequest {
+  text?: string | null;
+  emoji?: string | null;
+  /** Epoch-ms, or null to keep it until cleared. */
+  expiresAt?: number | null;
+}
+
+export interface CreateBookmarkRequest {
+  label: string;
+  url: string;
+  emoji?: string;
 }
 
 export interface OpenDirectMessageRequest {
@@ -331,4 +383,189 @@ export function slugifyChannelName(input: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 48);
+}
+
+export interface ChatSearchFilters {
+  text: string;
+  in?: string;
+  from?: string;
+  has?: 'link' | 'file' | 'reaction';
+  before?: number;
+  after?: number;
+}
+
+const HAS_KINDS = new Set(['link', 'file', 'reaction']);
+
+function parseSearchDate(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (/^\d{10,13}$/.test(trimmed)) {
+    const n = Number(trimmed);
+    return n < 1e12 ? n * 1000 : n;
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** Slack-style modifiers: `in:general from:ada has:file before:2026-01-01`. */
+export function parseChatSearchQuery(raw: string): ChatSearchFilters {
+  const tokens = raw.trim().split(/\s+/).filter(Boolean);
+  const text: string[] = [];
+  const filters: ChatSearchFilters = { text: '' };
+  for (const token of tokens) {
+    const match = /^(in|from|has|before|after):(.+)$/i.exec(token);
+    if (!match) {
+      text.push(token);
+      continue;
+    }
+    const key = match[1]!.toLowerCase();
+    const value = match[2]!.replace(/^#/, '').replace(/^@/, '');
+    if (key === 'in') filters.in = value.toLowerCase();
+    else if (key === 'from') filters.from = value;
+    else if (key === 'has' && HAS_KINDS.has(value.toLowerCase())) {
+      filters.has = value.toLowerCase() as 'link' | 'file' | 'reaction';
+    } else if (key === 'before') {
+      const ts = parseSearchDate(value);
+      if (ts !== undefined) filters.before = ts;
+    } else if (key === 'after') {
+      const ts = parseSearchDate(value);
+      if (ts !== undefined) filters.after = ts;
+    } else {
+      text.push(token);
+    }
+  }
+  filters.text = text.join(' ').trim();
+  return filters;
+}
+
+export interface ChatMentionMember {
+  id: string;
+  username?: string | null;
+  displayName?: string | null;
+}
+
+/** Pull `@ada`, `@channel`, `@here`, and `@everyone` out of a message body. */
+export function extractChatMentions(body: string, members: ChatMentionMember[]): string[] {
+  const found = new Set<string>();
+  const special = /(?:^|[\s(])(@(?:channel|here|everyone))\b/gi;
+  let match: RegExpExecArray | null;
+  while ((match = special.exec(body))) found.add(match[1]!.toLowerCase());
+  const at = /(?:^|[\s(])@([A-Za-z0-9._-]{1,32})/g;
+  while ((match = at.exec(body))) {
+    const token = match[1]!.toLowerCase();
+    if (token === 'channel' || token === 'here' || token === 'everyone') continue;
+    const member = members.find((person) => {
+      const username = person.username?.trim().toLowerCase();
+      const display = person.displayName?.trim().toLowerCase().replace(/\s+/g, '');
+      return username === token || display === token;
+    });
+    if (member) found.add(member.id);
+  }
+  return [...found];
+}
+
+export interface ChatPin {
+  id: string;
+  channelId: string;
+  messageId: string;
+  pinnedBy: string;
+  pinnedAt: number;
+  message: TeamChatMessage;
+}
+
+export interface ChatBookmark {
+  id: string;
+  channelId: string;
+  label: string;
+  url: string;
+  emoji: string | null;
+  position: number;
+  createdBy: string;
+  createdAt: number;
+}
+
+export interface ChatReminder {
+  id: string;
+  orgId: string;
+  memberId: string;
+  messageId: string;
+  fireAt: number;
+  note: string | null;
+  deliveredAt: number | null;
+  createdAt: number;
+  message: TeamChatMessage;
+  channelId: string;
+  channelSlug: string;
+  channelName: string;
+}
+
+export interface ChatScheduledMessage {
+  id: string;
+  orgId: string;
+  channelId: string;
+  channelSlug: string;
+  channelName: string;
+  authorMemberId: string;
+  body: string;
+  attachments: TeamChatAttachment[];
+  mentions: string[];
+  parentMessageId: string | null;
+  sendAt: number;
+  createdAt: number;
+}
+
+export interface ChatStatus {
+  memberId: string;
+  text: string | null;
+  emoji: string | null;
+  expiresAt: number | null;
+  updatedAt: number;
+}
+
+export type ChatActivityKind = 'mention' | 'reaction' | 'thread' | 'reminder';
+
+export interface ChatActivityItem {
+  kind: ChatActivityKind;
+  createdAt: number;
+  channelId: string;
+  channelSlug: string;
+  channelName: string;
+  message: TeamChatMessage;
+  actorMemberId?: string;
+  actorName?: string | null;
+  emoji?: string;
+  reminderId?: string;
+  note?: string | null;
+  fireAt?: number;
+}
+
+export interface ChatActivityResponse {
+  items: ChatActivityItem[];
+}
+
+export interface ChatLaterResponse {
+  items: ChatSearchHit[];
+}
+
+export interface ChatPinsResponse {
+  pins: ChatPin[];
+}
+
+export interface ChatBookmarksResponse {
+  bookmarks: ChatBookmark[];
+}
+
+export interface ChatRemindersResponse {
+  reminders: ChatReminder[];
+}
+
+export interface ChatScheduledResponse {
+  messages: ChatScheduledMessage[];
+}
+
+export interface ChatStatusResponse {
+  status: ChatStatus | null;
+}
+
+export interface ChatFilesResponse {
+  files: TeamChatAttachment[];
 }

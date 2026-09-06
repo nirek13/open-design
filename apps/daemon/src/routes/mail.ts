@@ -2,9 +2,13 @@
 //
 // Same membership scoping as calendar / pages. The mailbox is live Gmail via
 // Composio — nothing is stored in the org database.
+//
+// Agents use /api/tools/mail/* with a chat tool token; people use
+// /api/orgs/:orgId/mail/*.
 
 import type { Express, Request as ExpressRequest, Response } from 'express';
 import {
+  LOCAL_OWNER_USER_ID,
   createApiError,
   type ModifyMailRequest,
   type ReplyMailRequest,
@@ -20,6 +24,7 @@ import {
   assertMemberRole,
   getActiveMemberForUser,
   getOrganization,
+  listOrganizationsForUser,
 } from '../workspace-data/tenancy.js';
 import {
   createGmailExecutor,
@@ -94,6 +99,7 @@ function asModifyBody(value: unknown): ModifyMailRequest {
 
 export function registerMailRoutes(app: Express, ctx: RegisterMailRoutesDeps) {
   const { manager, identity, connectors } = ctx.mail;
+  const { authorizeToolRequest } = ctx.auth;
   const directory = () => manager.directoryExecutor;
 
   function fail(res: Response, err: unknown): void {
@@ -260,6 +266,112 @@ export function registerMailRoutes(app: Express, ctx: RegisterMailRoutesDeps) {
       const exec = requireExecutor();
       await trashMailMessage(exec, param(req, 'messageId'));
       res.status(204).end();
+    }),
+  );
+
+  // --- Agent tools --------------------------------------------------------
+
+  async function toolOrgId(req: Request): Promise<string> {
+    const orgs = await listOrganizationsForUser(directory(), LOCAL_OWNER_USER_ID);
+    const orgId = typeof req.body?.orgId === 'string' && req.body.orgId.trim()
+      ? req.body.orgId.trim()
+      : orgs[0]?.id;
+    if (!orgId) throw new WorkspaceDataError('ORG_NOT_FOUND', 404, 'no organization to act in');
+    await getOrganization(directory(), orgId);
+    return orgId;
+  }
+
+  app.post(
+    '/api/tools/mail/list',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'mail:list');
+      if (!grant) return;
+      const orgId = await toolOrgId(req);
+      if (!gmailConnected()) {
+        res.json({
+          orgId,
+          connected: false,
+          profile: null,
+          messages: [],
+          nextPageToken: null,
+          resultSizeEstimate: null,
+        });
+        return;
+      }
+      const exec = requireExecutor();
+      const listed = await listMailMessages(exec, {
+        ...(typeof req.body?.label === 'string' ? { labelIds: [req.body.label] } : {}),
+        ...(typeof req.body?.query === 'string' ? { query: req.body.query } : {}),
+        ...(typeof req.body?.q === 'string' ? { query: req.body.q } : {}),
+        ...(typeof req.body?.pageToken === 'string' ? { pageToken: req.body.pageToken } : {}),
+        ...(typeof req.body?.maxResults === 'number' && Number.isFinite(req.body.maxResults)
+          ? { maxResults: req.body.maxResults }
+          : {}),
+      });
+      res.json({
+        orgId,
+        connected: true,
+        profile: await fetchMailProfile(exec),
+        ...listed,
+      });
+    }),
+  );
+
+  app.post(
+    '/api/tools/mail/get',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'mail:get');
+      if (!grant) return;
+      const orgId = await toolOrgId(req);
+      const exec = requireExecutor();
+      const threadId = String(req.body?.threadId ?? req.body?.thread ?? '');
+      if (!threadId) {
+        throw new WorkspaceDataError('WORKSPACE_VALIDATION_FAILED', 422, 'threadId is required');
+      }
+      const messages = await getMailThread(exec, threadId);
+      const unread = messages.filter((message) => message.unread);
+      await Promise.all(unread.slice(0, 5).map((message) =>
+        modifyMailMessage(exec, message.id, { removeLabelIds: ['UNREAD'] }).catch(() => undefined),
+      ));
+      res.json({
+        orgId,
+        thread: {
+          id: threadId,
+          messages: messages.map((message) => ({
+            ...message,
+            unread: false,
+            labelIds: message.labelIds.filter((id) => id !== 'UNREAD'),
+          })),
+        },
+      });
+    }),
+  );
+
+  app.post(
+    '/api/tools/mail/send',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'mail:send');
+      if (!grant) return;
+      const orgId = await toolOrgId(req);
+      const exec = requireExecutor();
+      const result = await sendMail(exec, asSendBody(req.body));
+      res.status(201).json({ orgId, ...result });
+    }),
+  );
+
+  app.post(
+    '/api/tools/mail/reply',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'mail:reply');
+      if (!grant) return;
+      const orgId = await toolOrgId(req);
+      const exec = requireExecutor();
+      const threadId = String(req.body?.threadId ?? req.body?.thread ?? '');
+      if (!threadId) {
+        throw new WorkspaceDataError('WORKSPACE_VALIDATION_FAILED', 422, 'threadId is required');
+      }
+      const result = await replyToThread(exec, threadId, asReplyBody(req.body));
+      res.status(201).json({ orgId, ...result });
     }),
   );
 }

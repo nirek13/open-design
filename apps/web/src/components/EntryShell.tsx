@@ -100,7 +100,7 @@ import { BrandsTab } from './BrandsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
 import { LibrarySection } from './LibrarySection';
 import { DatabaseView } from './database/DatabaseView';
-import { ErpShell, erpModuleFromView, isErpEntryView } from './erp/ErpShell';
+import { TablesView } from './grid/TablesView';
 import { TeamChatView } from './team/TeamChatView';
 import { PagesView } from './pages/PagesView';
 import { CalendarView } from './calendar/CalendarView';
@@ -132,6 +132,7 @@ import { ONBOARDING_ARTIFACT_CHIP_IDS } from './home-hero/chips';
 import { homeHeroChipLabel } from './home-hero/chip-labels';
 import type { PluginUseAction } from './plugins-home/useActions';
 import { Icon } from './Icon';
+import { ToolsCatalogPanel } from './ToolsCatalogPanel';
 import { defaultAgentModelId, effectiveAgentModelChoice } from './agentModelSelection';
 import { AgentIcon } from './AgentIcon';
 import {
@@ -972,7 +973,7 @@ export function EntryShell({
           </div>
           <div
             className={`entry-main__inner${
-              view === 'pages' || view === 'mail' || view === 'slack' || view === 'dev' || view === 'team'
+              view === 'pages' || view === 'mail' || view === 'slack' || view === 'dev' || view === 'team' || view === 'workspace'
                 ? ' entry-main__inner--fullscreen'
                 : view === 'home'
                   ? ''
@@ -1115,13 +1116,12 @@ export function EntryShell({
               />
             </div>
             <div
-              data-testid="entry-view-erp"
-              data-active={isErpEntryView(view) ? 'true' : 'false'}
-              {...inactiveViewProps(isErpEntryView(view))}
+              data-testid="entry-view-tables"
+              data-active={view === 'tables' ? 'true' : 'false'}
+              {...inactiveViewProps(view === 'tables')}
             >
-              <ErpShell
-                module={erpModuleFromView(view)}
-                active={isErpEntryView(view)}
+              <TablesView
+                active={view === 'tables'}
                 {...(route.kind === 'home' && route.view === 'tables' && route.tableName
                   ? { initialTableName: route.tableName }
                   : {})}
@@ -2049,8 +2049,7 @@ function OnboardingView({
           onApiProtocolChange('openai');
           await onConfigPersist(applyDefaultOpenAiByokProfile(config, defaultByokProfile));
           emitOnboardingClick('continue', 'continue');
-          await runOnboardingCompletion('completed_without_design_system');
-          onFinish();
+          setStep(1);
         } catch (error) {
           setProviderTestState({
             status: 'done',
@@ -2114,9 +2113,7 @@ function OnboardingView({
         });
         await onConfigPersist(applySavedByokCredentialProfile(config, profile));
         emitOnboardingClick('continue', 'continue');
-        // API-key setup is the whole onboarding — skip survey / newsletter.
-        await runOnboardingCompletion('completed_without_design_system');
-        onFinish();
+        setStep(1);
       } catch (error) {
         setProviderTestState({
           status: 'done',
@@ -2787,8 +2784,6 @@ function OnboardingView({
     ? t('settings.amrSigningIn')
     : step === 0 && amrSelectedAndSignedOut
       ? t('settings.amrSignInToContinue')
-    : step === 0 && runtime === 'byok'
-      ? t('settings.onboardingFinish')
     : isLastStep
       ? t('settings.onboardingFinish')
       : t('settings.onboardingContinue');
@@ -3144,6 +3139,18 @@ function OnboardingView({
                   }
                 />
               </div>
+              <OnboardingPanelHeader
+                title={t('settings.onboardingToolsTitle')}
+                body={t('settings.onboardingToolsBody')}
+              />
+              <ToolsCatalogPanel
+                compact
+                mode="preference"
+                disabledTools={config.disabledTools ?? []}
+                onDisabledToolsChange={(disabledTools) => {
+                  void onConfigPersist({ ...config, disabledTools });
+                }}
+              />
             </div>
           ) : null}
 

@@ -23,6 +23,8 @@ import { useI18n, useT } from '../i18n';
 import type { Dict } from '../i18n/types';
 import { localizePluginDescription, localizePluginTitle } from './plugins-home/localization';
 import { describeRoutineSchedule, describeRoutineScheduleParts } from './routineScheduleLabels';
+import { ToolsCatalogPanel, defaultGrantedToolIds } from './ToolsCatalogPanel';
+import { connectorToolId, mcpToolId } from '@open-design/contracts';
 
 type ProjectSummary = { id: string; name: string };
 type ScheduleKind = RoutineSchedule['kind'];
@@ -53,6 +55,17 @@ const SCHEDULE_KINDS: { kind: ScheduleKind; labelKey: keyof Dict }[] = [
 ];
 
 const WEEKDAYS: Weekday[] = [0, 1, 2, 3, 4, 5, 6];
+
+function uniqueIds(ids: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
 
 function weekdayShortLabel(day: Weekday, t: TranslateFn): string {
   return t(`routines.weekday.short.${day}` as keyof Dict);
@@ -251,7 +264,7 @@ export function NewAutomationModal({
   const [form, setForm] = useState<FormState>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [popover, setPopover] = useState<'template' | 'project' | 'schedule' | null>(null);
+  const [popover, setPopover] = useState<'template' | 'project' | 'schedule' | 'tools' | null>(null);
   const [plugins, setPlugins] = useState<InstalledPluginRecord[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [mentionTab, setMentionTab] = useState<CapabilityPickerTab>('all');
@@ -261,6 +274,8 @@ export function NewAutomationModal({
   const [selectedPluginIds, setSelectedPluginIds] = useState<string[]>([]);
   const [selectedMcpIds, setSelectedMcpIds] = useState<string[]>([]);
   const [selectedConnectorIds, setSelectedConnectorIds] = useState<string[]>([]);
+  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([]);
+  const [disabledTools, setDisabledTools] = useState<string[]>([]);
   const titleRef = useRef<HTMLInputElement | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -279,17 +294,24 @@ export function NewAutomationModal({
     if (!open) return;
     let canceled = false;
     void (async () => {
-      const [pluginResult, mcpResult] = await Promise.allSettled([
+      const [pluginResult, mcpResult, configResult] = await Promise.allSettled([
         listPlugins(),
         fetchMcpServers(),
+        fetch('/api/app-config').then((res) => (res.ok ? res.json() : null)),
       ]);
       if (canceled) return;
       setPlugins(pluginResult.status === 'fulfilled' ? (pluginResult.value ?? []) : []);
-      setMcpServers(
+      const mcpServersNext =
         mcpResult.status === 'fulfilled'
           ? (mcpResult.value?.servers ?? []).filter((server) => server.enabled)
-          : [],
-      );
+          : [];
+      setMcpServers(mcpServersNext);
+      const prefs = configResult.status === 'fulfilled' ? configResult.value?.config : null;
+      const nextDisabled = Array.isArray(prefs?.disabledTools) ? prefs.disabledTools : [];
+      setDisabledTools(nextDisabled);
+      if (!initial?.routine) {
+        setSelectedToolIds(defaultGrantedToolIds(nextDisabled, mcpServersNext));
+      }
     })();
     return () => {
       canceled = true;
@@ -305,6 +327,13 @@ export function NewAutomationModal({
       setSelectedPluginIds(initial.routine.context?.pluginIds ?? []);
       setSelectedMcpIds(initial.routine.context?.mcpServerIds ?? []);
       setSelectedConnectorIds(initial.routine.context?.connectorIds ?? []);
+      setSelectedToolIds(
+        initial.routine.context?.toolIds
+          ?? [
+            ...(initial.routine.context?.connectorIds ?? []).map((id) => connectorToolId(id)),
+            ...(initial.routine.context?.mcpServerIds ?? []).map((id) => mcpToolId(id)),
+          ],
+      );
     } else if (initial?.template) {
       applyTemplate(initial.template, { closePopover: false });
     } else {
@@ -465,8 +494,27 @@ export function NewAutomationModal({
         context: {
           ...(selectedSkillIds.length > 0 ? { skillIds: selectedSkillIds } : {}),
           ...(selectedPluginIds.length > 0 ? { pluginIds: selectedPluginIds } : {}),
-          ...(selectedMcpIds.length > 0 ? { mcpServerIds: selectedMcpIds } : {}),
-          ...(selectedConnectorIds.length > 0 ? { connectorIds: selectedConnectorIds } : {}),
+          ...(selectedMcpIds.length > 0 || selectedToolIds.some((id) => id.startsWith('mcp:'))
+            ? {
+                mcpServerIds: uniqueIds([
+                  ...selectedMcpIds,
+                  ...selectedToolIds
+                    .filter((id) => id.startsWith('mcp:'))
+                    .map((id) => id.slice('mcp:'.length)),
+                ]),
+              }
+            : {}),
+          ...(selectedConnectorIds.length > 0 || selectedToolIds.some((id) => id.startsWith('connector:'))
+            ? {
+                connectorIds: uniqueIds([
+                  ...selectedConnectorIds,
+                  ...selectedToolIds
+                    .filter((id) => id.startsWith('connector:'))
+                    .map((id) => id.slice('connector:'.length)),
+                ]),
+              }
+            : {}),
+          ...(selectedToolIds.length > 0 ? { toolIds: selectedToolIds } : {}),
         },
         enabled: true,
       };
@@ -850,6 +898,31 @@ export function NewAutomationModal({
                 />
               ) : null}
             </PillButton>
+
+            <PillButton
+              icon="puzzle"
+              active={popover === 'tools'}
+              label={t('automations.toolsCount', {
+                count: selectedToolIds.length,
+              })}
+              onClick={() => setPopover((p) => (p === 'tools' ? null : 'tools'))}
+            >
+              {popover === 'tools' ? (
+                <PopoverMenu>
+                  <div className="automation-tools-popover" onMouseDown={(e) => e.stopPropagation()}>
+                    <p className="automation-tools-popover__hint">{t('automations.toolsHint')}</p>
+                    <ToolsCatalogPanel
+                      compact
+                      mode="grant"
+                      disabledTools={disabledTools}
+                      grantedIds={selectedToolIds}
+                      onGrantedIdsChange={setSelectedToolIds}
+                      mcpServers={mcpServers}
+                    />
+                  </div>
+                </PopoverMenu>
+              ) : null}
+            </PillButton>
           </div>
 
           <div className="automation-modal__actions">
@@ -993,7 +1066,7 @@ function PillButton({
   onClick,
   children,
 }: {
-  icon: 'folder' | 'history';
+  icon: 'folder' | 'history' | 'puzzle';
   label: ReactNode;
   active?: boolean;
   'aria-label'?: string;

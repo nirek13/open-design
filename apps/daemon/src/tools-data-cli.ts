@@ -20,6 +20,7 @@ const DATA_USAGE = `Usage:
   od tools data query --table <name-or-id> [--input query.json]
   od tools data insert --table <name-or-id> --input record.json
   od tools data update --table <name-or-id> --record <record-id> --input patch.json [--expected-revision <n>]
+  od tools data import-url --url <https://...> [--table <name>] [--plan-only]
 
 Input files:
   create-table  {"name":"employees","fields":[{"name":"email","type":"text","required":true,"unique":true}]}
@@ -27,6 +28,12 @@ Input files:
   insert        {"full_name":"Ada","email":"ada@co.com"}      (the record's data object)
   update        {"salary":120000}                              (partial data patch; null clears a field)
   Pass --input - to read the JSON payload from stdin.
+
+Magic import:
+  Pulls a public Google Sheet, CSV, JSON, HTML table, open-data dump, or any
+  public page (JS directories, Algolia catalogs, or AI-scraped prose) and
+  creates a workspace table. Re-importing the same link updates matching unique
+  keys instead of duplicating rows. Default commits. Pass --plan-only to preview.
 
 Environment:
   OD_NODE_BIN     Node-compatible runtime for agent wrapper invocations
@@ -85,7 +92,9 @@ interface ParsedDataOptions {
   table?: string;
   record?: string;
   inputPath?: string;
+  url?: string;
   expectedRevision?: number;
+  planOnly: boolean;
   help: boolean;
 }
 
@@ -94,6 +103,7 @@ function parseOptions(args: string[]): ParsedDataOptions | { error: string } {
   const options: ParsedDataOptions = {
     command: command === '-h' || command === '--help' ? undefined : command,
     help: command === '-h' || command === '--help',
+    planOnly: false,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
@@ -105,6 +115,10 @@ function parseOptions(args: string[]): ParsedDataOptions | { error: string } {
       const value = rest[++index];
       if (!value) return { error: '--record requires a record id' };
       options.record = value;
+    } else if (arg === '--url') {
+      const value = rest[++index];
+      if (!value) return { error: '--url requires a link' };
+      options.url = value;
     } else if (arg === '--input') {
       const value = rest[++index];
       if (!value) return { error: '--input requires a file path or -' };
@@ -114,6 +128,8 @@ function parseOptions(args: string[]): ParsedDataOptions | { error: string } {
       const parsed = value === undefined ? Number.NaN : Number.parseInt(value, 10);
       if (!Number.isInteger(parsed) || parsed < 1) return { error: '--expected-revision must be a positive integer' };
       options.expectedRevision = parsed;
+    } else if (arg === '--plan-only') {
+      options.planOnly = true;
     } else if (arg === '-h' || arg === '--help') {
       options.help = true;
     } else {
@@ -200,6 +216,14 @@ export async function runDataToolCli(args: string[]): Promise<ToolCliResult> {
           recordId: options.record,
           data,
           ...(options.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
+        });
+      }
+      case 'import-url': {
+        if (!options.url) return fail('import-url requires --url');
+        return await post(baseUrl, token, '/api/tools/data/import-url', {
+          url: options.url,
+          ...(options.table ? { tableName: options.table } : {}),
+          commit: !options.planOnly,
         });
       }
       default:

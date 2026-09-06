@@ -22,7 +22,7 @@ export const ENTRY_NAV_ISLANDS: ReadonlyArray<{
   { id: 'work', labelKey: 'entry.navIslandWork', ids: ['home', 'pages', 'team', 'organization'] },
   { id: 'make', labelKey: 'entry.navIslandMake', ids: ['projects', 'apps', 'design-systems', 'library', 'plugins'] },
   { id: 'connect', labelKey: 'entry.navIslandConnect', ids: ['mail', 'calendar', 'slack', 'integrations', 'dev'] },
-  { id: 'more', labelKey: 'entry.navIslandMore', ids: ['search', 'erp', 'tasks', 'database'] },
+  { id: 'more', labelKey: 'entry.navIslandMore', ids: ['search', 'tables', 'tasks', 'database'] },
 ];
 
 /** Company spine on the default sidebar. Everything else is one Add away. */
@@ -41,7 +41,7 @@ export const DEFAULT_ENTRY_NAV_HIDDEN = [
   'mail',
   'calendar',
   'slack',
-  'erp',
+  'tables',
   'dev',
   'design-systems',
   'library',

@@ -206,4 +206,31 @@ describe('NewAutomationModal context picker', () => {
     expect(screen.getByText('实时看板')).toBeTruthy();
     expect(screen.queryByText('Live artifact')).toBeNull();
   });
+
+  it('opens a catalog of built-in and connected tools when creating an automation', async () => {
+    vi.mocked(listPlugins).mockResolvedValue([]);
+    vi.mocked(fetchMcpServers).mockResolvedValue({ servers: [mcpServer], templates: [] });
+
+    render(
+      <I18nProvider>
+        <NewAutomationModal
+          open
+          templates={[]}
+          projects={[]}
+          skills={[]}
+          connectors={[]}
+          onClose={() => undefined}
+          onSaved={() => undefined}
+        />
+      </I18nProvider>,
+    );
+
+    const toolsBtn = await waitFor(() => screen.getByRole('button', { name: /tools$/i }));
+    fireEvent.click(toolsBtn);
+    expect(screen.getByTestId('tools-catalog')).toBeTruthy();
+    expect(screen.getByTestId('tool-row-internal:memory')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByTestId('tool-row-mcp:figma')).toBeTruthy();
+    });
+  });
 });

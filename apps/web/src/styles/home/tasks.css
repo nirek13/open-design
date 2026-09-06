@@ -1611,6 +1611,20 @@
   border-color: var(--accent-strong, var(--accent));
 }
 
+.automation-tools-popover {
+  width: min(420px, 78vw);
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  padding: 12px 12px 8px;
+}
+
+.automation-tools-popover__hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 @media (max-width: 960px) {
   .automations-templates__grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

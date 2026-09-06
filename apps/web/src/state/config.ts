@@ -1634,6 +1634,9 @@ export function mergeDaemonConfig(
   if (daemonConfig.disabledDesignSystems !== undefined) {
     next.disabledDesignSystems = daemonConfig.disabledDesignSystems;
   }
+  if (daemonConfig.disabledTools !== undefined) {
+    next.disabledTools = daemonConfig.disabledTools;
+  }
   if (daemonConfig.orbit !== undefined) {
     next.orbit = normalizeOrbit(daemonConfig.orbit);
   }
@@ -1803,6 +1806,7 @@ export async function syncConfigToDaemon(
     designSystemId: config.designSystemId,
     disabledSkills: config.disabledSkills,
     disabledDesignSystems: config.disabledDesignSystems,
+    disabledTools: config.disabledTools,
     orbit: normalizeOrbit(config.orbit),
     installationId: config.installationId,
     telemetry: config.telemetry,

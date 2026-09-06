@@ -176,6 +176,34 @@ export function inferAppScopesFromHtml(source: string | null | undefined): AppDa
   return normalizeAppScopes(out);
 }
 
+/** Map inferred or typed table labels onto the workspace's machine names.
+ *
+ * HTML and people often use a display name or different casing (`Leads`,
+ * `INVOICES`). Grants are enforced by exact `table.name`, so a publish that
+ * kept the label would silently refuse every `od.query` against the real
+ * table. Unmatched names pass through — they may be tables the app will
+ * create, or grants the picker still needs to show. */
+export function alignAppScopesToTables(
+  scopes: readonly AppDataScope[],
+  tables: readonly { name: string; displayName?: string | null }[],
+): AppDataScope[] {
+  const byKey = new Map<string, string>();
+  for (const table of tables) {
+    const name = table.name.trim();
+    if (!name) continue;
+    byKey.set(name.toLowerCase(), name);
+    const display = table.displayName?.trim();
+    if (display) byKey.set(display.toLowerCase(), name);
+  }
+  return normalizeAppScopes(
+    scopes.map((scope) => {
+      if (scope.table === APP_GMAIL_SCOPE_TABLE) return scope;
+      const mapped = byKey.get(scope.table.toLowerCase());
+      return mapped ? { table: mapped, mode: scope.mode } : scope;
+    }),
+  );
+}
+
 /** Normalize and bound a declared scope list. Rejects nothing — a malformed
  * entry is dropped rather than throwing, because a publish should not fail on
  * a stray value, and dropping is the safe direction. */

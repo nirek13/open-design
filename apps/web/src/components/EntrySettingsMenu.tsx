@@ -34,6 +34,7 @@ export type EntrySettingsSection =
   | 'library'
   | 'about'
   | 'memory'
+  | 'tools'
   | 'designSystems';
 
 const ENTRY_THEME_OPTIONS: Array<{

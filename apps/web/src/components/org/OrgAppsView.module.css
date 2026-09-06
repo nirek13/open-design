@@ -1,38 +1,78 @@
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
 }
 
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px;
+  overflow: visible;
   border: 1px solid var(--od-border, rgba(127, 127, 127, 0.24));
-  border-radius: 12px;
-  transition: border-color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+  border-radius: 14px;
+  background: var(--od-surface-1, transparent);
+  transition:
+    border-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .card:hover {
   border-color: var(--od-border-strong, rgba(127, 127, 127, 0.4));
+  box-shadow: 0 10px 28px rgba(28, 27, 26, 0.08);
 }
 
-.cardMain {
+.cardMenuOpen {
+  z-index: 4;
+}
+
+.previewWrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 13px 13px 0 0;
+}
+
+.previewHit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cardBody {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 14px;
+}
+
+.cardCopy {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.cardName {
+  margin: 0;
   padding: 0;
   border: none;
   background: transparent;
   color: inherit;
-  text-align: left;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: start;
   cursor: pointer;
 }
 
-.cardName {
-  font-size: 14px;
-  font-weight: 600;
+.cardDescription,
+.cardMeta {
+  margin: 0;
 }
 
 .cardDescription {
@@ -49,25 +89,78 @@
   opacity: 0.55;
 }
 
-.cardActions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
+.moreWrap {
+  position: relative;
+  flex: none;
 }
 
-.cardActions select {
-  font-size: 12px;
+.moreTrigger {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-color: transparent;
+  color: var(--text-muted, inherit);
+}
+
+.moreTrigger:hover,
+.moreTrigger[aria-expanded='true'] {
+  border-color: var(--od-border, rgba(127, 127, 127, 0.24));
+}
+
+.moreMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 8;
+  min-width: 188px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--od-border, rgba(127, 127, 127, 0.28));
+  border-radius: 10px;
+  background: var(--od-surface-1, var(--bg-elevated, #fff));
+  box-shadow: var(--shadow-lg, 0 16px 40px rgba(28, 27, 26, 0.14));
+  animation: menu-in 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.moreMenu button {
+  width: 100%;
+  display: block;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.moreMenu button:hover {
+  background: var(--od-surface-2, rgba(127, 127, 127, 0.1));
+}
+
+.moreDanger {
+  color: var(--od-danger, #c0392b);
 }
 
 .shareBox {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  border: 1px solid var(--od-accent-border, rgba(91, 108, 255, 0.4));
-  border-radius: 8px;
-  background: var(--od-accent-surface, rgba(91, 108, 255, 0.08));
+  gap: 8px;
 }
 
 .shareUrl {
@@ -131,9 +224,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 10px;
-  border-radius: 8px;
-  background: rgba(127, 127, 127, 0.06);
+  max-height: min(70vh, 560px);
+  overflow: auto;
 }
 
 .fieldset {

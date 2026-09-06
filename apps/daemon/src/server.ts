@@ -116,6 +116,15 @@ import {
   normalizeRunContextSelection,
   renderRunContextPrompt,
 } from './runtimes/chat-run-context.js';
+import { applyToolAccess, filterChatToolSurface, isCatalogToolAllowed } from './tool-access.js';
+import {
+  INTERNAL_MAIL,
+  INTERNAL_PAGES,
+  INTERNAL_TEAM_CHAT,
+  INTERNAL_WORKSPACE_DATA,
+  isToolEnabled,
+  mcpToolId,
+} from '@open-design/contracts';
 import {
   daemonAgentPayloadToPersistedAgentEvent,
   persistRunEventToAssistantMessage,
@@ -1223,12 +1232,20 @@ export function createAgentRuntimeEnv(
 export function createAgentRuntimeToolPrompt(
   daemonUrl: string,
   toolTokenGrant: { token?: string } | null = null,
+  access?: {
+    disabledTools?: readonly string[] | null;
+    grantedToolIds?: readonly string[] | null;
+  },
 ): string {
   const tokenLine = toolTokenGrant?.token
     ? '- `OD_TOOL_TOKEN` is available in your environment for this run. Use it only through project wrapper commands; do not print, persist, or override it.'
     : '- `OD_TOOL_TOKEN` is not available for this run, so `/api/tools/*` wrapper commands may be unavailable.';
 
-  const workspaceDataBlock = toolTokenGrant?.token
+  const allow = (id: string): boolean =>
+    Boolean(toolTokenGrant?.token) &&
+    isCatalogToolAllowed(id, access?.disabledTools, access?.grantedToolIds);
+
+  const workspaceDataBlock = allow(INTERNAL_WORKSPACE_DATA)
     ? [
         '',
         '### Workspace database (`tools data`)',
@@ -1237,7 +1254,8 @@ export function createAgentRuntimeToolPrompt(
         '- Discover before inventing: `"$OD_NODE_BIN" "$OD_BIN" tools data list-tables`, then `tools data describe-table --table <name>`. Reuse existing tables and fields whenever they fit; never create a parallel table for data that already has a home.',
         '- Create schemas deliberately: `tools data create-table --input schema.json` with snake_case names, `required`/`unique` where the business rule demands it, `link` fields (config.targetTableId) for relations, and type `money` for amounts — money values are ALWAYS integer minor units (cents); never floats.',
         '- Read and write through `tools data query|insert|update` (see `tools data --help` for payload shapes). The daemon validates every write against the schema, enforces uniqueness and link integrity, soft-deletes only, and records full row history plus an audit trail attributed to this run — do not try to bypass it or batch-edit data through files.',
-        '- Records never truly delete. To add a column, rename a field, or create a table from a sentence, use `tools erp ask --text "..." --apply` (it is stored as an undoable proposal). Do not work around the schema with ad-hoc files.',
+        '- Magic-import a public Google Sheet, CSV, JSON, HTML table, open-data dump, or any public page (JS directories like YC companies, Algolia catalogs, or AI-scraped prose): `"$OD_NODE_BIN" "$OD_BIN" tools data import-url --url <https://...>` (optional `--table <name>`; `--plan-only` to preview). Re-importing the same link updates matching unique keys. Then `tools data query --table <name>` to read what landed.',
+        '- Records never truly delete. To add a column, rename a field, or create a table from a sentence, use `tools data create-table` or a custom pack instead of inventing ad-hoc files.',
         '',
         '### Data-connected HTML apps (`window.od`)',
         '',
@@ -1255,25 +1273,46 @@ export function createAgentRuntimeToolPrompt(
         '- If they refuse, still write the HTML; publish without `--scope` (or skip publish). Tell them it cannot change organization data until they grant Write when adding it to the workspace.',
         '- Guard the page: if `window.od` is missing, tell the person to stay in the workspace preview. Public web links can append rows only to tables marked Public form (Data → Public form) when the app has Write on that table — they still cannot read or edit existing rows.',
         '- Wire submit handlers to `od.create`. A form that only looks like it saves, or that POSTs to a made-up URL, is unfinished.',
-        '',
-        '### ERP (`tools erp`)',
-        '',
-        '- You MAY change the organization ERP: import data, add tables/fields, define packs, and edit any wiki page that lives beside those tables.',
-        '- Magic-import a public Google Sheet, CSV, JSON, HTML table, open-data dump, or any public page (AI scrapes unstructured pages into rows): `"$OD_NODE_BIN" "$OD_BIN" tools erp import-url --url <https://...>` (optional `--table <name>`; `--plan-only` to preview). Re-importing the same link updates matching unique keys. Then `tools data query --table <name>` to read what landed.',
-        '- Say what to change: `"$OD_NODE_BIN" "$OD_BIN" tools erp ask --text "add a phone column to customers" --apply`. Queries (show/list/find) run without `--apply`. Low-confidence sentences should be turned into `tools data create-table` or a custom pack instead of guessed.',
-        '- Invent a new ERP module as a pack: `tools erp pack --input spec.json` then `tools erp pack-install --pack <slug>`. Spec shape: `{displayName, description?, tables:[{name, displayName, fields:[{name, type, required?}]}]}`.',
-        '- Put imported data on any page: `tools pages embed --page <id> --type database --table <table-id>` or `--type record --record <id>`. You may upsert, append, duplicate, or archive any wiki page in this organization — that is how you modify ERP pages and build new ones.',
-        '- Do NOT post journal entries or close ledger periods; those stay a person\'s action.',
+      ].join('\n')
+    : '';
+
+  const pagesBlock = allow(INTERNAL_PAGES)
+    ? [
         '',
         '### Pages wiki (`tools pages`)',
         '',
-        '- The organization has a Notion-shaped wiki: nested pages with typed blocks. This is the durable file system for notes, handbooks, and docs — not project HTML files. Prefer `tools pages` over inventing markdown files when the user wants a wiki, knowledge base, handbook, or nested notes.',
+        '- The organization has a Notion-shaped wiki: nested pages with typed blocks. This is the durable file system for notes, handbooks, and docs — not project HTML files. Prefer `tools pages` over inventing markdown files when the user wants a wiki, knowledge base, handbook, document page, or nested notes.',
         '- Discover first: `"$OD_NODE_BIN" "$OD_BIN" tools pages list --tree`, then `tools pages search --query <text>` and `tools pages get --page <id>`. Reuse existing pages before creating parallel ones.',
         '- Scaffold a whole tree in one call: `tools pages scaffold --input tree.json` with nested `{title, icon, blocks, children}`. Creating a child with `parentPageId` also embeds it on the parent (a page-in-a-page) unless `linkOnParent` is false.',
-        '- Write content with `tools pages upsert --input page.json` (create or replace) or `tools pages append --page <id> --input blocks.json`. Block types: paragraph, heading_1/2/3, bulleted_list_item, numbered_list_item, to_do, toggle, callout, quote, code, divider, bookmark, embed, table, database, artifact, page, record.',
-        '- Embed inside a page with `tools pages embed --page <id> --type page|database|record|artifact|bookmark|embed` plus `--target` (page id), `--table`, `--record`, `--path`, or `--url`. Use `type=embed --url` for a live YouTube, Figma, Notion, Google Doc, or any preview — including apps, pictures, videos, and HTML slides you created, via `--url /api/projects/<projectId>/raw/<file>`; nested pages (`type=page`) put pages inside pages; `database` embeds a live workspace table; `artifact` can use that same `/raw/` path.',
+        '- Write content with `tools pages upsert --input page.json` (create or replace) or `tools pages append --page <id> --input blocks.json`. Block types: paragraph, heading_1/2/3, bulleted_list_item, numbered_list_item, to_do, toggle, callout, quote, code, divider, bookmark, embed, image, video, audio, file, pdf, equation, table_of_contents, breadcrumb, column_list, column, table, database, artifact, page, record. Headings can be collapsible with `props.toggle`. Page appearance is `style: { font, smallText, fullWidth, locked }`.',
+        '- Embed inside a page with `tools pages embed --page <id> --type page|database|record|artifact|bookmark|embed|image|video|audio|file|pdf` plus `--target` (page id), `--table`, `--record`, `--path`, or `--url`. Use `type=embed --url` for a live YouTube, Figma, Notion, Google Doc, or any preview — including apps, pictures, videos, and HTML slides you created, via `--url /api/projects/<projectId>/raw/<file>`; nested pages (`type=page`) put pages inside pages; `database` embeds a live workspace table; `artifact` can use that same `/raw/` path.',
         '- When asked to make a unique app, picture, video, or slides for a page, generate the file in this project (customize it — do not reuse a generic template unchanged) and embed it with `tools pages embed --page <id> --type embed --url /api/projects/<this project id>/raw/<file>`. Do not stop at a description.',
         '- Duplicate with `tools pages duplicate --page <id> [--recursive]`. Archive with `tools pages archive --page <id>`. See `tools pages --help` for payload shapes.',
+      ].join('\n')
+    : '';
+
+  const teamChatBlock = allow(INTERNAL_TEAM_CHAT)
+    ? [
+        '',
+        '### Team chat (`tools team`)',
+        '',
+        '- Message colleagues in the organization chat — the same channels and DMs as the messaging UI. Prefer `tools team` over inventing a Slack/email workaround when the user wants to ping someone internally.',
+        '- Discover people and rooms first: `"$OD_NODE_BIN" "$OD_BIN" tools team members`, then `tools team channels`. Member ids are required to open a DM; channel ids or slugs (like `#general`) work for posting.',
+        '- Open or reuse a DM: `"$OD_NODE_BIN" "$OD_BIN" tools team dm --member <member-id>[,<member-id>]`. Then post with `--channel` set to the returned channel id.',
+        '- Read recent messages: `tools team messages --channel <id-or-slug>`. Post: `tools team post --channel <id-or-slug> --body "..."`.',
+        '- See `tools team --help` for payload shapes. Do not print `OD_TOOL_TOKEN`.',
+      ].join('\n')
+    : '';
+
+  const mailBlock = allow(INTERNAL_MAIL)
+    ? [
+        '',
+        '### Mail (`tools mail`)',
+        '',
+        '- Read and send the organization mailbox (same Gmail connection as the Mail UI). Prefer `tools mail` when the user asks to check email, send a note, or reply to a thread.',
+        '- List: `"$OD_NODE_BIN" "$OD_BIN" tools mail list` (optional `--query`, `--label`, `--max`). Open a thread: `tools mail get --thread <thread-id>`.',
+        '- Send: `tools mail send --to a@example.com --subject "..." --body "..."`. Reply: `tools mail reply --thread <thread-id> --body "..."`.',
+        '- Gmail must already be connected under Integrations. See `tools mail --help`. Do not print `OD_TOOL_TOKEN`.',
       ].join('\n')
     : '';
 
@@ -1287,6 +1326,9 @@ export function createAgentRuntimeToolPrompt(
     tokenLine,
     '- Prefer project wrapper commands through `OD_NODE_BIN` + `OD_BIN` over raw HTTP. The wrappers read these environment values automatically.',
     workspaceDataBlock,
+    pagesBlock,
+    teamChatBlock,
+    mailBlock,
   ].filter(Boolean).join('\n');
 }
 
@@ -4818,7 +4860,12 @@ export async function startServer({
       typeof projectId === 'string' && projectId
         ? getProject(db, projectId)
         : null;
-    const runContextPrompt = renderRunContextPrompt(context, projectRecord?.metadata);
+    const appConfigForRun = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
+    const runContext = applyToolAccess(
+      normalizeRunContextSelection(context),
+      appConfigForRun.disabledTools,
+    );
+    const runContextPrompt = renderRunContextPrompt(runContext, projectRecord?.metadata);
     const linkedDirs = (() => {
       if (!Array.isArray(projectRecord?.metadata?.linkedDirs)) return [];
       const v = validateLinkedDirs(projectRecord.metadata.linkedDirs);
@@ -4848,12 +4895,18 @@ export async function startServer({
         };
       }
     }
+    const toolSurface = filterChatToolSurface(
+      CHAT_TOOL_ENDPOINTS,
+      CHAT_TOOL_OPERATIONS,
+      appConfigForRun.disabledTools,
+      runContext.toolIds,
+    );
     const toolTokenGrant = cwd && typeof projectId === 'string' && projectId
       ? toolTokenRegistry.mint({
           runId,
           projectId,
-          allowedEndpoints: CHAT_TOOL_ENDPOINTS,
-          allowedOperations: CHAT_TOOL_OPERATIONS,
+          allowedEndpoints: toolSurface.endpoints,
+          allowedOperations: toolSurface.operations,
           ...(pluginGrantContext ?? {}),
         })
       : null;
@@ -4878,7 +4931,10 @@ export async function startServer({
         activeChatRunHandles.delete(sinkRunId);
       };
     }
-    const runtimeToolPrompt = createAgentRuntimeToolPrompt(daemonUrl, toolTokenGrant);
+    const runtimeToolPrompt = createAgentRuntimeToolPrompt(daemonUrl, toolTokenGrant, {
+      disabledTools: appConfigForRun.disabledTools,
+      grantedToolIds: runContext.toolIds,
+    });
     const commentHint = renderCommentAttachmentHint(safeCommentAttachments);
 
     // Resolve external MCP config + stored OAuth tokens up-front so the
@@ -4902,13 +4958,17 @@ export async function startServer({
       ? run.toolBundle.mcpServers
       : [];
     const {
-      enabledServers: enabledExternalMcp,
+      enabledServers: enabledExternalMcpRaw,
       persistedTokenServerIds,
     } = resolveExternalMcpServersForRun({
       persistedServers: externalMcpConfig.servers,
       runScopedServers: runScopedMcpServers,
       sandboxMode: SANDBOX_RUNTIME.enabled,
     });
+    const mcpDisabledTools = (await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}))).disabledTools;
+    const enabledExternalMcp = enabledExternalMcpRaw.filter((server) =>
+      isToolEnabled(mcpToolId(server.id), mcpDisabledTools),
+    );
     const oauthTokensForSpawn = {};
     if (persistedTokenServerIds.size > 0) {
       try {
@@ -5261,11 +5321,8 @@ export async function startServer({
     // the upstream session's own configured default; omitted models may still
     // resolve to an available fallback below.
     let configuredAgentEnv = {};
-    let appConfigForRun = null;
     try {
-      const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
-      appConfigForRun = appConfig;
-      configuredAgentEnv = agentCliEnvForAgent(appConfig.agentCliEnv, def.id);
+      configuredAgentEnv = agentCliEnvForAgent(appConfigForRun.agentCliEnv, def.id);
     } catch {
       configuredAgentEnv = {};
     }
@@ -8954,7 +9011,10 @@ export async function startServer({
     }
 
     const now = startedAt;
-    const routineContext = normalizeRunContextSelection(routine.context);
+    const routineContext = applyToolAccess(
+      normalizeRunContextSelection(routine.context),
+      appConfig.disabledTools,
+    );
     const routineSkillId = routine.skillId ?? routineContext.skillIds?.[0] ?? null;
     const contextMetadata = {
       ...(routineContext.pluginIds?.length

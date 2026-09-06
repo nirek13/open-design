@@ -1,29 +1,26 @@
-// The company hub: Ask, Needs you, Data sources, Recent.
+// The company hub: a full-viewport search/ask box.
 //
-// Ask is the way work starts. Approvals that nobody looks at are the same as
-// no approvals, so they come next. Recent work is the trail back. Search stays
-// as a field on this page — not a second hero, not a dock destination.
-// Create (new invoice, build a table) lives behind one control.
+// Typing in the box searches records you already have. Enter / Ask changes
+// the company or starts visual work. Magic import lives in the page header,
+// and dropping a spreadsheet anywhere on the hub opens it.
 //
 // Everything here is org-scoped. With no organization resolved the page shows
 // its empty shape rather than failing, because the shell mounts this view
 // whether or not the org layer answered yet.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Button, EmptyState, Input, Skeleton } from '@open-design/components';
-import type { HubStatus, Proposal, WorkspaceRecord, WorkspaceTable } from '@open-design/contracts';
+import { createPortal } from 'react-dom';
+import { Badge, Button } from '@open-design/components';
+import type { HubStatus, Proposal, WorkspaceTable } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
   decideProposal,
   fetchHubStatus,
   fetchProposals,
-  fetchRecentRecords,
   fetchWorkspaceTables,
-  queryWorkspaceRecords,
   searchWorkspace,
   setUpHub,
-  type SearchHit,
   type SearchResultGroup,
 } from '../../providers/registry';
 import { navigate } from '../../router';
@@ -33,8 +30,8 @@ import type { Recommendation } from '../../onboarding/recommendation';
 import type { OnboardingEntry } from '../../onboarding/onboarding-entry';
 import type { ProjectMetadata } from '../../types';
 import { WorkspacePage, WorkspaceSection } from '../workspace/WorkspacePage';
-import { RecordGallery } from '../workspace/RecordGallery';
 import { relativeTime, singularize } from '../workspace/format';
+import { Icon } from '../Icon';
 import { HubAskComposer } from './HubAskComposer';
 import { RecordEditor } from './RecordEditor';
 import { ToolBuilder } from './ToolBuilder';
@@ -66,6 +63,17 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function isFileDrag(dataTransfer: DataTransfer | null | undefined): boolean {
+  if (!dataTransfer) return false;
+  if (dataTransfer.files && dataTransfer.files.length > 0) return true;
+  return Array.from(dataTransfer.types).includes('Files');
+}
+
+function firstDroppedFile(dataTransfer: DataTransfer | null | undefined): File | null {
+  const file = dataTransfer?.files?.[0];
+  return file ?? null;
+}
+
 export function WorkspaceHome({
   active,
   defaultDesignSystemId,
@@ -79,59 +87,42 @@ export function WorkspaceHome({
   // The entry shell mounts this view, so it must survive rendering without a
   // provider above it — every load path below already treats a null org as
   // "nothing to show yet", which is the right thing to fall back to.
-  const { activeOrgId, activeOrg } = useOptionalOrg() ?? NO_ORG_CONTEXT;
+  const { activeOrgId, activeOrg, auth } = useOptionalOrg() ?? NO_ORG_CONTEXT;
+  const greetingName = auth?.viewer?.displayName?.trim().split(/\s+/)[0] ?? '';
 
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialPrompt ?? '');
   const [groups, setGroups] = useState<SearchResultGroup[]>([]);
   const [searching, setSearching] = useState(false);
-  const [recent, setRecent] = useState<SearchHit[]>([]);
   const [tables, setTables] = useState<WorkspaceTable[]>([]);
   const [hub, setHub] = useState<HubStatus | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [loaded, setLoaded] = useState(false);
 
   const [editing, setEditing] = useState<{ tableRef: string; recordId?: string } | null>(null);
   const [buildingTool, setBuildingTool] = useState(false);
   const [builderMode, setBuilderMode] = useState<'choose' | 'import'>('choose');
   const [importSeedUrl, setImportSeedUrl] = useState<string | null>(null);
+  const [importSeedFile, setImportSeedFile] = useState<File | null>(null);
+  const [dropping, setDropping] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [sourcePreviews, setSourcePreviews] = useState<Array<{ table: WorkspaceTable; records: WorkspaceRecord[] }>>([]);
-  const searchRef = useRef<HTMLInputElement | null>(null);
   const createMenuRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     if (!activeOrgId) return;
     try {
-      const [nextTables, nextHub, nextRecent, nextProposals] = await Promise.all([
+      const [nextTables, nextHub, nextProposals] = await Promise.all([
         fetchWorkspaceTables(activeOrgId),
         fetchHubStatus(activeOrgId),
-        fetchRecentRecords(activeOrgId),
         fetchProposals(activeOrgId, 'pending'),
       ]);
       setTables(nextTables);
       setHub(nextHub);
-      setRecent(nextRecent);
       setProposals(nextProposals);
-      const custom = nextTables.filter((table) => !HUB_TABLES.includes(table.name)).slice(0, 4);
-      const previews = await Promise.all(
-        custom.map(async (table) => {
-          try {
-            const queried = await queryWorkspaceRecords(activeOrgId, table.name, { limit: 6 });
-            return { table, records: queried.records };
-          } catch {
-            return { table, records: [] };
-          }
-        }),
-      );
-      setSourcePreviews(previews.filter((item) => item.records.length > 0));
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
-    } finally {
-      setLoaded(true);
     }
   }, [activeOrgId]);
 
@@ -139,6 +130,10 @@ export function WorkspaceHome({
     if (!active) return;
     void load();
   }, [active, load]);
+
+  useEffect(() => {
+    if (initialPrompt) setQuery(initialPrompt);
+  }, [initialPrompt]);
 
   // Search as you type, but not on every keystroke — a short pause keeps the
   // request count sane without ever feeling like a submit button.
@@ -181,6 +176,50 @@ export function WorkspaceHome({
     };
   }, [createOpen]);
 
+  useEffect(() => {
+    if (!active || uploading) {
+      setDropping(false);
+      return;
+    }
+    const onDragOver = (event: DragEvent) => {
+      if (!isFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      setDropping(true);
+    };
+    const onDrop = (event: DragEvent) => {
+      const file = firstDroppedFile(event.dataTransfer);
+      if (!file) {
+        setDropping(false);
+        return;
+      }
+      event.preventDefault();
+      setDropping(false);
+      setImportSeedUrl(null);
+      setImportSeedFile(file);
+      setBuilderMode('import');
+      setBuildingTool(true);
+    };
+    const onDragLeave = (event: DragEvent) => {
+      if (
+        event.clientX <= 0
+        || event.clientY <= 0
+        || event.clientX >= window.innerWidth
+        || event.clientY >= window.innerHeight
+      ) {
+        setDropping(false);
+      }
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    window.addEventListener('dragleave', onDragLeave);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+      window.removeEventListener('dragleave', onDragLeave);
+    };
+  }, [active, uploading]);
+
   const documentTables = useMemo(
     () => DOCUMENT_TABLES.map((name) => tables.find((table) => table.name === name)).filter(Boolean) as WorkspaceTable[],
     [tables],
@@ -215,7 +254,9 @@ export function WorkspaceHome({
 
   const hasResults = groups.length > 0;
   const showingSearch = query.trim().length > 0;
-  const showSkeletons = !loaded && !error;
+  // Short queries are lookups. A sentence is an ask — don't scold that nothing matched.
+  const showSearchEmpty = showingSearch && !searching && !hasResults
+    && query.trim().split(/\s+/).length <= 4;
 
   function openCreate(action: () => void) {
     setCreateOpen(false);
@@ -246,16 +287,6 @@ export function WorkspaceHome({
       }),
     },
     {
-      key: 'import',
-      testId: 'workspace-magic-import',
-      label: t('workspace.magicImport'),
-      onClick: () => openCreate(() => {
-        setImportSeedUrl(null);
-        setBuilderMode('import');
-        setBuildingTool(true);
-      }),
-    },
-    {
       key: 'upload',
       testId: 'workspace-upload-assets',
       label: t('workspace.uploadAssets'),
@@ -263,14 +294,33 @@ export function WorkspaceHome({
     },
   ];
 
+  function openMagicImport() {
+    setImportSeedUrl(null);
+    setImportSeedFile(null);
+    setBuilderMode('import');
+    setBuildingTool(true);
+  }
+
   return (
-    <WorkspacePage
+    <>
+      <WorkspacePage
       testId="workspace-home"
+      fill
       eyebrow={activeOrg?.name}
       title={t('workspace.title')}
       lead={t('workspace.subtitle')}
       actions={
-        <div className={styles.createMenuWrap} ref={createMenuRef}>
+        <div className={styles.headActions}>
+          <Button
+            className={styles.importBtn}
+            data-testid="workspace-magic-import"
+            title={t('workspace.magicImportHint')}
+            onClick={openMagicImport}
+          >
+            <Icon name="sparkles" size={16} />
+            {t('workspace.magicImport')}
+          </Button>
+          <div className={styles.createMenuWrap} ref={createMenuRef}>
           <Button
             variant="ghost"
             onClick={() => setCreateOpen((open) => !open)}
@@ -296,6 +346,7 @@ export function WorkspaceHome({
               ))}
             </div>
           ) : null}
+          </div>
         </div>
       }
     >
@@ -305,54 +356,58 @@ export function WorkspaceHome({
         </div>
       ) : null}
 
-      <div className={styles.intro}>
-        {onAskProject ? (
-          <HubAskComposer
-            orgId={activeOrgId}
-            defaultDesignSystemId={defaultDesignSystemId}
-            initialPrompt={initialPrompt}
-            onAskProject={onAskProject}
-            onProposalCreated={load}
-            onImportUrl={(url) => {
-              setImportSeedUrl(url);
-              setBuilderMode('import');
-              setBuildingTool(true);
-            }}
-          />
-        ) : null}
+      {hub && !hub.ready ? (
+        <section className={styles.setupCard} data-testid="workspace-hub-setup">
+          <div className={styles.setupText}>
+            <h2 className={styles.setupTitle}>{t('workspace.setUpTitle')}</h2>
+            <p className={styles.setupBody}>{t('workspace.setUpBody')}</p>
+          </div>
+          <Button variant="primary" onClick={handleSetUpHub} disabled={busy}>
+            {busy ? t('workspace.settingUp') : t('workspace.setUpAction')}
+          </Button>
+        </section>
+      ) : null}
 
-        <div className={styles.searchWrap}>
-        <span className={styles.searchIcon} aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </span>
-        <Input
-          ref={searchRef}
-          type="search"
-          className={styles.search}
-          value={query}
-          placeholder={t('workspace.searchPlaceholder')}
-          onChange={(event) => setQuery(event.target.value)}
-          aria-label={t('workspace.searchPlaceholder')}
-          data-testid="workspace-search"
-        />
-        {query ? (
-          <button
-            type="button"
-            className={styles.searchClear}
-            onClick={() => {
-              setQuery('');
-              searchRef.current?.focus();
-            }}
-            aria-label={t('workspace.clearSearch')}
-          >
-            ✕
-          </button>
-        ) : null}
-        </div>
-      </div>
+      {proposals.length > 0 ? (
+        <WorkspaceSection
+          title={t('workspace.needsYou')}
+          action={<Badge tone="warning">{proposals.length}</Badge>}
+          testId="workspace-proposals"
+        >
+          <ul className={styles.proposalList}>
+            {proposals.map((proposal) => (
+              <li key={proposal.id} className={styles.proposal}>
+                <div className={styles.proposalBody}>
+                  <span className={styles.proposalIntent}>{proposal.intent}</span>
+                  {/* The preview is the point: approving is a decision about a
+                      described outcome, never a leap of faith. */}
+                  <ul className={styles.proposalLines}>
+                    {proposal.preview.lines.slice(0, 3).map((line, index) => (
+                      <li key={index} className={styles.proposalLine}>
+                        {line.summary}
+                        {line.detail ? <em className={styles.proposalDetail}> — {line.detail}</em> : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {proposal.preview.warnings.length > 0 ? (
+                    <span className={styles.proposalWarning}>
+                      {proposal.preview.warnings[0]}
+                    </span>
+                  ) : null}
+                </div>
+                <div className={styles.proposalActions}>
+                  <Button variant="primary" onClick={() => handleDecide(proposal, 'approve')}>
+                    {t('workspace.approve')}
+                  </Button>
+                  <Button variant="ghost" onClick={() => handleDecide(proposal, 'reject')}>
+                    {t('workspace.reject')}
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </WorkspaceSection>
+      ) : null}
 
       {recommendation && onRecommendationStart && onRecommendationDismiss ? (
         <RecommendedStartRegion
@@ -362,20 +417,31 @@ export function WorkspaceHome({
         />
       ) : null}
 
-      {showingSearch ? (
+      <div className={`${styles.stage}${showingSearch ? ` ${styles.stageSearching}` : ''}`}>
+        <HubAskComposer
+          orgId={activeOrgId}
+          value={query}
+          onChange={setQuery}
+          greetingName={greetingName}
+          defaultDesignSystemId={defaultDesignSystemId}
+          {...(onAskProject ? { onAskProject } : {})}
+          onProposalCreated={load}
+          onImportUrl={(url) => {
+            setImportSeedFile(null);
+            setImportSeedUrl(url);
+            setBuilderMode('import');
+            setBuildingTool(true);
+          }}
+        />
+        {showSearchEmpty ? (
+          <p className={styles.searchQuiet} data-testid="workspace-search-empty">
+            {t('workspace.noResults', { query: query.trim() })}
+          </p>
+        ) : null}
+      </div>
+
+      {hasResults ? (
         <div data-testid="workspace-search-results" className={styles.searchResults}>
-          {searching && !hasResults ? (
-            <div className={styles.skeletonList}>
-              <Skeleton height={54} shape="block" />
-              <Skeleton height={54} shape="block" />
-            </div>
-          ) : null}
-          {!searching && !hasResults ? (
-            <EmptyState
-              title={t('workspace.noResults', { query: query.trim() })}
-              description={t('workspace.noResultsHint')}
-            />
-          ) : null}
           {groups.map((group) => (
             <WorkspaceSection
               key={group.tableId}
@@ -404,125 +470,7 @@ export function WorkspaceHome({
             </WorkspaceSection>
           ))}
         </div>
-      ) : (
-        <>
-          {hub && !hub.ready ? (
-            <section className={styles.setupCard} data-testid="workspace-hub-setup">
-              <div className={styles.setupText}>
-                <h2 className={styles.setupTitle}>{t('workspace.setUpTitle')}</h2>
-                <p className={styles.setupBody}>{t('workspace.setUpBody')}</p>
-              </div>
-              <Button variant="primary" onClick={handleSetUpHub} disabled={busy}>
-                {busy ? t('workspace.settingUp') : t('workspace.setUpAction')}
-              </Button>
-            </section>
-          ) : null}
-
-          {proposals.length > 0 ? (
-            <WorkspaceSection
-              title={t('workspace.needsYou')}
-              action={<Badge tone="warning">{proposals.length}</Badge>}
-              testId="workspace-proposals"
-            >
-              <ul className={styles.proposalList}>
-                {proposals.map((proposal) => (
-                  <li key={proposal.id} className={styles.proposal}>
-                    <div className={styles.proposalBody}>
-                      <span className={styles.proposalIntent}>{proposal.intent}</span>
-                      {/* The preview is the point: approving is a decision about a
-                          described outcome, never a leap of faith. */}
-                      <ul className={styles.proposalLines}>
-                        {proposal.preview.lines.slice(0, 3).map((line, index) => (
-                          <li key={index} className={styles.proposalLine}>
-                            {line.summary}
-                            {line.detail ? <em className={styles.proposalDetail}> — {line.detail}</em> : null}
-                          </li>
-                        ))}
-                      </ul>
-                      {proposal.preview.warnings.length > 0 ? (
-                        <span className={styles.proposalWarning}>
-                          {proposal.preview.warnings[0]}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className={styles.proposalActions}>
-                      <Button variant="primary" onClick={() => handleDecide(proposal, 'approve')}>
-                        {t('workspace.approve')}
-                      </Button>
-                      <Button variant="ghost" onClick={() => handleDecide(proposal, 'reject')}>
-                        {t('workspace.reject')}
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </WorkspaceSection>
-          ) : null}
-
-          {sourcePreviews.length > 0 ? (
-            <WorkspaceSection title={t('workspace.dataSources')} testId="workspace-data-sources">
-              <div className={styles.sources}>
-                {sourcePreviews.map(({ table, records }) => (
-                  <section key={table.id} className={styles.source} data-testid={`workspace-source-${table.name}`}>
-                    <header className={styles.sourceHead}>
-                      <h3 className={styles.sourceTitle}>{table.displayName}</h3>
-                      <Button
-                        variant="ghost"
-                        onClick={() => navigate({ kind: 'home', view: 'tables', tableName: table.name })}
-                      >
-                        {t('workspace.openTable')}
-                      </Button>
-                    </header>
-                    <RecordGallery
-                      fields={table.fields}
-                      records={records}
-                      testId={`source-gallery-${table.name}`}
-                      onOpen={(recordId) => setEditing({ tableRef: table.name, recordId })}
-                    />
-                  </section>
-                ))}
-              </div>
-            </WorkspaceSection>
-          ) : null}
-
-          <WorkspaceSection title={t('workspace.recent')}>
-            {showSkeletons ? (
-              <div className={styles.skeletonList}>
-                <Skeleton height={44} shape="block" />
-                <Skeleton height={44} shape="block" />
-                <Skeleton height={44} shape="block" />
-              </div>
-            ) : recent.length === 0 ? (
-              <EmptyState
-                size="compact"
-                title={t('workspace.noRecent')}
-                description={t('workspace.noRecentHint')}
-              />
-            ) : (
-              <ul className={styles.resultList}>
-                {recent.map((hit) => (
-                  <li key={hit.recordId}>
-                    <button
-                      type="button"
-                      className={styles.result}
-                      onClick={() => setEditing({ tableRef: hit.tableName, recordId: hit.recordId })}
-                    >
-                      <span className={styles.resultMain}>
-                        <span className={styles.resultLabel}>{hit.label}</span>
-                        <span className={styles.resultSecondary}>
-                          {hit.tableDisplayName}
-                          {hit.secondary ? ` · ${hit.secondary}` : ''}
-                        </span>
-                      </span>
-                      <span className={styles.resultMeta}>{relativeTime(hit.updatedAt, t)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </WorkspaceSection>
-        </>
-      )}
+      ) : null}
 
       {editing ? (
         <RecordEditor
@@ -540,13 +488,16 @@ export function WorkspaceHome({
         <ToolBuilder
           initialMode={builderMode}
           {...(importSeedUrl ? { initialUrl: importSeedUrl } : {})}
+          {...(importSeedFile ? { initialFile: importSeedFile } : {})}
           onClose={() => {
             setBuildingTool(false);
             setImportSeedUrl(null);
+            setImportSeedFile(null);
           }}
           onCreated={async () => {
             setBuildingTool(false);
             setImportSeedUrl(null);
+            setImportSeedFile(null);
             await load();
           }}
           onReload={load}
@@ -564,6 +515,18 @@ export function WorkspaceHome({
           }}
         />
       ) : null}
-    </WorkspacePage>
+      </WorkspacePage>
+      {dropping
+        ? createPortal(
+            <div className={styles.dropOverlay} data-testid="workspace-import-drop" aria-hidden>
+              <span className={styles.dropOverlayCard}>
+                <Icon name="sparkles" size={22} />
+                {t('workspace.dropToImport')}
+              </span>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }

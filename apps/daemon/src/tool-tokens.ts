@@ -19,6 +19,7 @@ export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/data/query',
   '/api/tools/data/insert',
   '/api/tools/data/update',
+  '/api/tools/data/import-url',
   '/api/tools/erp/propose',
   '/api/tools/erp/preview',
   '/api/tools/erp/ask',
@@ -34,6 +35,15 @@ export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/pages/duplicate',
   '/api/tools/pages/scaffold',
   '/api/tools/pages/embed',
+  '/api/tools/team/channels',
+  '/api/tools/team/members',
+  '/api/tools/team/messages',
+  '/api/tools/team/dm',
+  '/api/tools/team/post',
+  '/api/tools/mail/list',
+  '/api/tools/mail/get',
+  '/api/tools/mail/send',
+  '/api/tools/mail/reply',
 ] as const;
 
 export const CHAT_TOOL_OPERATIONS = [
@@ -53,6 +63,7 @@ export const CHAT_TOOL_OPERATIONS = [
   'data:query',
   'data:insert',
   'data:update',
+  'data:import-url',
   'erp:propose',
   'erp:preview',
   'erp:ask',
@@ -68,6 +79,15 @@ export const CHAT_TOOL_OPERATIONS = [
   'pages:duplicate',
   'pages:scaffold',
   'pages:embed',
+  'team:channels',
+  'team:members',
+  'team:messages',
+  'team:dm',
+  'team:post',
+  'mail:list',
+  'mail:get',
+  'mail:send',
+  'mail:reply',
 ] as const;
 
 export type ToolEndpoint = (typeof CHAT_TOOL_ENDPOINTS)[number] | (string & {});

@@ -1,6 +1,8 @@
 // Turn messy public HTML into a CSV-shaped table when the page has any
 // repeating structure: <table>, definition lists, cards, JSON-LD, Next.js
-// payloads, markdown grids, ARIA grids, or a list of similar items.
+// payloads, window JSON, Inertia data-page dumps, markdown grids, ARIA grids,
+// or a list of similar items. JS-rendered directories that load from Algolia
+// are followed separately in `discover-page-data.ts`.
 //
 // Magic import should not require the source to already be a spreadsheet.
 // Callers pick the strongest candidate; nothing here writes.
@@ -10,11 +12,11 @@ function csvEscape(value: string): string {
   return value;
 }
 
-function rowsToCsv(rows: string[][]): string {
+export function rowsToCsv(rows: string[][]): string {
   return rows.map((row) => row.map((cell) => csvEscape(cell)).join(',')).join('\n');
 }
 
-function objectsToRows(rows: unknown[]): string[][] | null {
+export function objectsToRows(rows: unknown[]): string[][] | null {
   if (rows.length === 0) return null;
   const objects = rows.filter((row) => row && typeof row === 'object' && !Array.isArray(row)) as Array<
     Record<string, unknown>
@@ -40,6 +42,9 @@ function objectsToRows(rows: unknown[]): string[][] | null {
   if (keys.length === 0) return null;
   const cell = (value: unknown): string => {
     if (value == null) return '';
+    if (Array.isArray(value) && value.every((item) => item == null || typeof item !== 'object')) {
+      return value.map((item) => (item == null ? '' : String(item))).filter(Boolean).join(', ');
+    }
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
   };
@@ -79,6 +84,7 @@ function findTabularArray(value: unknown, depth = 0): unknown[] | null {
     'content',
     'list',
     'collection',
+    'companies',
     'products',
     'users',
     'orders',
@@ -251,15 +257,87 @@ function jsonLdTables(html: string): string[][] | null {
   return pickBest(candidates);
 }
 
+function decodeAttr(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function extractBalancedJson(source: string, start: number): string | null {
+  const open = source[start];
+  if (open !== '{' && open !== '[') return null;
+  const close = open === '{' ? '}' : ']';
+  let depth = 0;
+  let quote: '"' | "'" | null = null;
+  let escape = false;
+  const limit = Math.min(source.length, start + 500_000);
+  for (let i = start; i < limit; i += 1) {
+    const ch = source[i]!;
+    if (quote) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === open) depth += 1;
+    else if (ch === close) {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function windowJsonChunks(html: string): string[] {
+  const chunks: string[] = [];
+  const assign = /(?:window|self|globalThis)\.[A-Za-z_$][\w$]*\s*=\s*(?=[{\[])/g;
+  let match: RegExpExecArray | null;
+  while ((match = assign.exec(html))) {
+    const extracted = extractBalancedJson(html, match.index + match[0].length);
+    if (extracted && extracted.length > 2) chunks.push(extracted);
+  }
+  return chunks;
+}
+
+function dataAttributeJson(html: string): string[] {
+  const chunks: string[] = [];
+  for (const match of html.matchAll(
+    /\bdata-(?:page|react-props|props|state|initial|payload)=["']([^"']+)["']/gi,
+  )) {
+    const raw = decodeAttr(match[1] ?? '').trim();
+    if (raw.startsWith('{') || raw.startsWith('[')) chunks.push(raw);
+  }
+  return chunks;
+}
+
 function embeddedJson(html: string): string[][] | null {
   const chunks: string[] = [];
   const next = /<script\b[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i.exec(html);
   if (next?.[1]) chunks.push(next[1]);
-  const nuxt = /<script\b[^>]*>[\s\S]*?window\.__NUXT__\s*=\s*({[\s\S]*?});[\s\S]*?<\/script>/i.exec(html);
-  if (nuxt?.[1]) chunks.push(nuxt[1]);
+  const nuxt = /<script\b[^>]*>[\s\S]*?window\.__NUXT__\s*=\s*(?=\{)/i.exec(html);
+  if (nuxt) {
+    const extracted = extractBalancedJson(html, nuxt.index + nuxt[0].length);
+    if (extracted) chunks.push(extracted);
+  }
   for (const script of html.matchAll(/<script\b[^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     if (script[1]) chunks.push(script[1]);
   }
+  chunks.push(...windowJsonChunks(html), ...dataAttributeJson(html));
   const candidates: string[][][] = [];
   for (const chunk of chunks) {
     const rows = jsonToRows(chunk);

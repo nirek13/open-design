@@ -228,7 +228,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     }),
   );
 
-  /** Open or create the notes page linked to an ERP record. */
+  /** Open or create the notes page linked to a table record. */
   app.post(
     '/api/orgs/:orgId/pages/for-record',
     handle(async (req, res) => {

@@ -1401,6 +1401,7 @@ export type TrackingSettingsArea =
   | 'design_review'
   | 'external_mcp'
   | 'connectors'
+  | 'tools'
   | 'orbit'
   | 'mcp_server'
   | 'language'
