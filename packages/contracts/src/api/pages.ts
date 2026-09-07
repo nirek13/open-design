@@ -9,6 +9,7 @@
 // kinds (`database`, `artifact`) bridge into org tables and design files.
 
 import type { JsonValue } from '../common.js';
+import { PAGE_TOOL_TYPES } from './page-tools.js';
 
 /** Block kinds the editor and agent may emit. Unknown kinds are rejected at
  * the write boundary so a typo cannot poison the tree. */
@@ -58,6 +59,8 @@ export const PAGE_BLOCK_TYPES = [
   'page',
   /** Live card for one ERP / workspace record. */
   'record',
+  /** Inline working tools (kanban, checklist, assigner, …). */
+  ...PAGE_TOOL_TYPES,
 ] as const;
 
 export type PageBlockType = (typeof PAGE_BLOCK_TYPES)[number];
@@ -200,6 +203,48 @@ export const PAGE_BLOCK_CATALOG: ReadonlyArray<{
   },
   { type: 'page', label: 'Sub-page', hint: 'Create or embed a nested page', keywords: ['page', 'subpage', 'wiki', 'child'] },
   { type: 'record', label: 'Record', hint: 'Embed one table row', keywords: ['record', 'row', 'invoice', 'deal'] },
+  {
+    type: 'board',
+    label: 'Board',
+    hint: 'Drag cards across columns',
+    keywords: ['kanban', 'board', 'drag', 'sprint', 'trello', 'columns'],
+  },
+  {
+    type: 'checklist',
+    label: 'To-do list',
+    hint: 'A checklist with progress',
+    keywords: ['todo', 'checklist', 'tasks', 'list', 'progress'],
+  },
+  {
+    type: 'assigner',
+    label: 'Task assigner',
+    hint: 'Give work an owner and a status',
+    keywords: ['assign', 'owner', 'who', 'task', 'people', 'assignee'],
+  },
+  {
+    type: 'poll',
+    label: 'Poll',
+    hint: 'Vote on options',
+    keywords: ['poll', 'vote', 'survey', 'choose'],
+  },
+  {
+    type: 'timeline',
+    label: 'Timeline',
+    hint: 'Milestones on a date line',
+    keywords: ['timeline', 'milestone', 'roadmap', 'schedule', 'dates'],
+  },
+  {
+    type: 'decision',
+    label: 'Decision',
+    hint: 'Capture a choice and why',
+    keywords: ['decision', 'choose', 'adr', 'options', 'pick'],
+  },
+  {
+    type: 'goals',
+    label: 'Goals',
+    hint: 'Track progress toward a target',
+    keywords: ['goal', 'okr', 'progress', 'kpi', 'target'],
+  },
 ];
 
 export interface WorkspacePage {

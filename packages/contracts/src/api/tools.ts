@@ -215,7 +215,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     kind: 'capability',
     group: 'workspace',
     title: 'Mail',
-    description: 'Read, send, and reply to organization email.',
+    description: 'Read, send, reply, and agentically sort organization email.',
   },
   {
     id: INTERNAL_PUBLISH,
@@ -247,7 +247,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     kind: 'connector',
     group: 'apps',
     title: 'Gmail',
-    description: 'Search, read, and send email.',
+    description: 'Search, read, send, and sort email.',
   },
   {
     id: connectorToolId('google_drive'),

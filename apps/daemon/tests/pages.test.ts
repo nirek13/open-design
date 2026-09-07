@@ -223,4 +223,61 @@ describe('organization pages', () => {
     const updated = await updatePage(db(), orgId, page.id, { style: { locked: true, font: 'mono' } });
     expect(updated.style).toEqual({ locked: true, font: 'mono' });
   });
+
+  it('persists inline page tools like a board and checklist', async () => {
+    const page = await createPage(db(), orgId, 'member-1', {
+      title: 'Sprint',
+      blocks: [
+        {
+          type: 'board',
+          content: {
+            kind: 'board',
+            columns: [
+              {
+                id: 'col-todo',
+                title: 'To do',
+                cards: [{ id: 'card-1', title: 'Write spec' }],
+              },
+              { id: 'col-doing', title: 'In progress', cards: [] },
+            ],
+          },
+        },
+        {
+          type: 'checklist',
+          content: {
+            kind: 'checklist',
+            items: [{ id: 'i1', text: 'Ship', checked: false }],
+          },
+        },
+        {
+          type: 'assigner',
+          content: {
+            kind: 'assigner',
+            tasks: [
+              {
+                id: 't1',
+                title: 'Review',
+                assigneeId: 'user-ada',
+                assigneeName: 'Ada',
+                status: 'doing',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(page.blocks.map((block) => block.type)).toEqual(['board', 'checklist', 'assigner']);
+    expect(page.blocks[0]!.content).toMatchObject({
+      kind: 'board',
+      columns: [{ title: 'To do', cards: [{ title: 'Write spec' }] }],
+    });
+    expect(page.blocks[1]!.content).toMatchObject({
+      kind: 'checklist',
+      items: [{ text: 'Ship', checked: false }],
+    });
+    expect(page.blocks[2]!.content).toMatchObject({
+      kind: 'assigner',
+      tasks: [{ title: 'Review', assigneeName: 'Ada', status: 'doing' }],
+    });
+  });
 });

@@ -6,7 +6,7 @@
 .recent-projects {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 .recent-projects__head {
   display: flex;
@@ -17,10 +17,10 @@
 .recent-projects__title {
   margin: 0;
   font-family: var(--serif);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--text-strong);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 .recent-projects__view-all {
   appearance: none;
@@ -28,29 +28,31 @@
   border: none;
   color: var(--text-muted);
   font-size: 12.5px;
+  font-weight: 550;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 4px;
-  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  border-radius: var(--radius-pill);
 }
 .recent-projects__view-all:hover {
-  color: var(--text);
+  color: var(--text-strong);
   background: var(--bg-subtle);
 }
 .recent-projects__empty {
   color: var(--text-muted);
   font-size: 13px;
-  padding: 20px 16px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  padding: 28px 16px;
+  border: 1px dashed color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-subtle) 55%, transparent);
   text-align: center;
 }
 .recent-projects__row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
+  gap: 14px;
 }
 .recent-projects__card {
   position: relative;
@@ -59,11 +61,12 @@
   gap: 8px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
   text-align: left;
   overflow: visible;
-  transition: border-color 120ms var(--ease-out), box-shadow 120ms var(--ease-out), transform 120ms var(--ease-out);
+  box-shadow: var(--shadow-xs);
+  transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out), transform 160ms var(--ease-out);
 }
 .recent-projects__card-main {
   appearance: none;
@@ -84,8 +87,8 @@
 }
 .recent-projects__card:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
 }
 .recent-projects__card.is-design-system-project {
   border-color: color-mix(in srgb, var(--red) 62%, var(--border));
@@ -186,13 +189,13 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 8px 10px 12px;
+  padding: 4px 12px 14px;
   min-width: 0;
 }
 .recent-projects__card-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-strong);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

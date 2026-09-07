@@ -178,6 +178,23 @@ describe('parseRoute / buildPath (issue #1505)', () => {
     expect(buildPath({ kind: 'home', view: 'tables' })).toBe('/tables');
   });
 
+  it('round-trips a public booking link', () => {
+    const route: Route = { kind: 'book', token: 'tok-1' };
+    expect(parseRoute('/book/tok-1')).toEqual(route);
+    expect(buildPath(route)).toBe('/book/tok-1');
+    expect(roundTrip(route)).toEqual(route);
+    expect(parseRoute('/books')).toEqual({ kind: 'home', view: 'tables' });
+  });
+
+  it('round-trips a calendar event deep-link', () => {
+    const route: Route = { kind: 'home', view: 'calendar', eventId: 'evt-1' };
+    expect(parseRoute('/calendar/evt-1')).toEqual(route);
+    expect(buildPath(route)).toBe('/calendar/evt-1');
+    expect(roundTrip(route)).toEqual(route);
+    expect(parseRoute('/calendar')).toEqual({ kind: 'home', view: 'calendar' });
+    expect(buildPath({ kind: 'home', view: 'calendar' })).toBe('/calendar');
+  });
+
   it('round-trips organization search', () => {
     const route: Route = { kind: 'home', view: 'search' };
     expect(parseRoute('/search')).toEqual(route);

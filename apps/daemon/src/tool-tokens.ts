@@ -44,6 +44,10 @@ export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/mail/get',
   '/api/tools/mail/send',
   '/api/tools/mail/reply',
+  '/api/tools/mail/modify',
+  '/api/tools/mail/triage',
+  '/api/tools/mail/summarize',
+  '/api/tools/mail/draft',
 ] as const;
 
 export const CHAT_TOOL_OPERATIONS = [
@@ -88,6 +92,10 @@ export const CHAT_TOOL_OPERATIONS = [
   'mail:get',
   'mail:send',
   'mail:reply',
+  'mail:modify',
+  'mail:triage',
+  'mail:summarize',
+  'mail:draft',
 ] as const;
 
 export type ToolEndpoint = (typeof CHAT_TOOL_ENDPOINTS)[number] | (string & {});

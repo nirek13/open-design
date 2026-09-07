@@ -2,6 +2,13 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../src/utils/local-cli-usage', () => ({
+  LOCAL_CLI_USAGE_ENABLED: true,
+  isLocalCliUsageEnabled: () => true,
+  effectiveExecutionMode: (mode: string) => mode,
+}));
+
 import { InlineModelSwitcher } from '../../src/components/InlineModelSwitcher';
 import {
   AMR_LOGIN_POLL_INTERVAL_MS,

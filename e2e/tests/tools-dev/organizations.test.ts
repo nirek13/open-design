@@ -46,6 +46,10 @@ describe('tools-dev organizations', () => {
       );
       expect(created.url).toContain(`/join/${created.token}`);
 
+      const landing = await fetch(`${webUrl}/join/${created.token}`);
+      expect(landing.status).toBe(200);
+      expect(await landing.text()).toMatch(/<html/i);
+
       // The landing page must work for someone with no session at all.
       const preview = await requestJson<{ valid: boolean; orgName: string; role: string }>(
         webUrl,

@@ -4,6 +4,12 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../../src/utils/local-cli-usage', () => ({
+  LOCAL_CLI_USAGE_ENABLED: true,
+  isLocalCliUsageEnabled: () => true,
+  effectiveExecutionMode: (mode: string) => mode,
+}));
+
 import { AvatarMenu } from '../../src/components/AvatarMenu';
 import type { AgentInfo, AppConfig, ExecMode } from '../../src/types';
 

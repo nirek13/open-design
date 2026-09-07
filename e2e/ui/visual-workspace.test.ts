@@ -61,7 +61,7 @@ test('[P2] captures the topbar execution switcher surface', async ({ page }) => 
   await page.getByTestId('inline-model-switcher-chip').click();
   const popover = page.getByTestId('inline-model-switcher-popover');
   await expect(popover).toBeVisible();
-  await expect(page.getByTestId('inline-model-switcher-mode-daemon')).toBeVisible();
+  await expect(page.getByTestId('inline-model-switcher-mode-daemon')).toHaveCount(0);
 
   await captureVisual(page, 'visual-topbar-execution-switcher');
   await captureVisualTarget(

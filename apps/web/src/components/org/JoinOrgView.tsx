@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@open-design/components';
 import type { OrgInvitePreview } from '@open-design/contracts';
 import { useT } from '../../i18n';
+import { clearPendingInvite, rememberPendingInvite } from '../../auth/pending-invite';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import { acceptInvite, fetchInvitePreview } from '../../providers/registry';
 import { navigate } from '../../router';
@@ -23,6 +24,7 @@ export function JoinOrgView({ token }: { token: string }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    rememberPendingInvite(token);
     let cancelled = false;
     void (async () => {
       try {
@@ -45,6 +47,7 @@ export function JoinOrgView({ token }: { token: string }) {
     setPhase('joining');
     try {
       const result = await acceptInvite(token);
+      clearPendingInvite();
       await refresh();
       setPhase('joined');
       // Landing straight in the organization they just joined is the point of
@@ -93,7 +96,12 @@ export function JoinOrgView({ token }: { token: string }) {
           <>
             <h1 className={styles.title}>{t('join.cannotJoin')}</h1>
             <p className={styles.body}>{error ?? t(reasonKey as never)}</p>
-            <Button onClick={() => navigate({ kind: 'home', view: 'workspace' })}>
+            <Button
+              onClick={() => {
+                clearPendingInvite();
+                navigate({ kind: 'home', view: 'workspace' });
+              }}
+            >
               {t('join.goHome')}
             </Button>
           </>

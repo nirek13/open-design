@@ -64,6 +64,7 @@ import {
   amrProfileBadgeLabel,
 } from '../runtime/amr-guidance';
 import { isVisibleLocalCliAgent } from '../utils/visibleAgents';
+import { effectiveExecutionMode, isLocalCliUsageEnabled } from '../utils/local-cli-usage';
 import { ExportDiagnosticsRow } from './ExportDiagnosticsButton';
 import { Icon } from './Icon';
 import { defaultAgentModelId, effectiveAgentModelChoice } from './agentModelSelection';
@@ -1504,10 +1505,16 @@ export function SettingsDialog({
     ...initial,
     baseUrl: resolveFixedOriginBaseUrl(initial.apiProtocol ?? 'anthropic', initial.baseUrl),
   };
-  const initialFormConfig = initial.mode === 'api'
-    ? restorePendingByokProviderDraft(normalizedInitialConfig)
-    : normalizedInitialConfig;
-  const [cfg, setCfg] = useState<AppConfig>(() => initialFormConfig);
+  const initialFormConfig = (
+    initial.mode === 'api'
+      ? restorePendingByokProviderDraft(normalizedInitialConfig)
+      : normalizedInitialConfig
+  );
+  const [cfg, setCfg] = useState<AppConfig>(() => (
+    isLocalCliUsageEnabled()
+      ? initialFormConfig
+      : { ...initialFormConfig, mode: 'api', agentId: null }
+  ));
   const [maxTokensInput, setMaxTokensInput] = useState(
     initialFormConfig.maxTokens == null ? '' : String(initialFormConfig.maxTokens),
   );
@@ -2132,8 +2139,10 @@ export function SettingsDialog({
     () => agents.filter((a) => a.available && isVisibleLocalCliAgent(a)).length,
     [agents],
   );
+  const executionMode = effectiveExecutionMode(cfg.mode);
 
   const setMode = (mode: ExecMode) => {
+    if (!isLocalCliUsageEnabled() && mode === 'daemon') return;
     setCfg((c) => {
       const modeBefore = executionModeToTracking(c.mode);
       const modeAfter = executionModeToTracking(mode);
@@ -4507,6 +4516,7 @@ export function SettingsDialog({
           <div className="settings-content" ref={settingsContentRef}>
           {activeSection === 'execution' ? (
             <>
+              {isLocalCliUsageEnabled() ? (
               <div
                 className="seg-control"
                 role="tablist"
@@ -4516,10 +4526,10 @@ export function SettingsDialog({
                 <button
                   type="button"
                   role="tab"
-                  aria-selected={cfg.mode === 'daemon'}
+                  aria-selected={executionMode === 'daemon'}
                   className={
                     'seg-btn seg-btn--inline' +
-                    (cfg.mode === 'daemon' ? ' active' : '')
+                    (executionMode === 'daemon' ? ' active' : '')
                   }
                   disabled={!daemonLive}
                   onClick={() => setMode('daemon')}
@@ -4539,10 +4549,10 @@ export function SettingsDialog({
                 <button
                   type="button"
                   role="tab"
-                  aria-selected={cfg.mode === 'api'}
+                  aria-selected={executionMode === 'api'}
                   className={
                     'seg-btn seg-btn--inline' +
-                    (cfg.mode === 'api' ? ' active' : '')
+                    (executionMode === 'api' ? ' active' : '')
                   }
                   onClick={() => setMode('api')}
                 >
@@ -4550,7 +4560,8 @@ export function SettingsDialog({
                   <span className="seg-meta">{t('settings.modeApi')}</span>
                 </button>
               </div>
-              {cfg.mode === 'api' ? (
+              ) : null}
+              {executionMode === 'api' ? (
                 <div
                   className="protocol-chips protocol-chips--providers"
                   role="tablist"
@@ -4602,7 +4613,7 @@ export function SettingsDialog({
                   </div>
                 </div>
               ) : null}
-          {cfg.mode === 'daemon' ? (
+          {executionMode === 'daemon' ? (
             <section className="settings-section">
               <div className="section-head">
                 <div>
@@ -5375,6 +5386,7 @@ export function SettingsDialog({
                 <div>
                   <div className="settings-byok-title">
                     <h3>{API_PROTOCOL_LABELS[apiProtocol]}</h3>
+                    {isLocalCliUsageEnabled() ? (
                     <span className="settings-byok-info-wrap">
                       <button
                         type="button"
@@ -5394,6 +5406,7 @@ export function SettingsDialog({
                         {t('settings.byokNoFileToolsNotice')}
                       </span>
                     </span>
+                    ) : null}
                   </div>
                 </div>
                 <ByokConnectionTestControl

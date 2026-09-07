@@ -66,11 +66,25 @@ export function splitMessageText(
 export function chatFileKind(mimeType?: string, fileName?: string): ChatFileKind {
   const mime = (mimeType ?? '').toLowerCase();
   const name = (fileName ?? '').toLowerCase();
-  if (mime.startsWith('image/') || /\.(avif|gif|jpe?g|png|webp|svg)$/i.test(name)) return 'image';
-  if (mime.startsWith('video/') || /\.(mp4|webm|ogv|mov)$/i.test(name)) return 'video';
-  if (mime.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(name)) return 'audio';
+  // Browsers cannot preview these image containers inline; treat them as files.
+  if (mime === 'image/heic' || mime === 'image/heif' || /\.(heic|heif)$/i.test(name)) return 'file';
+  if (mime.startsWith('image/') || /\.(avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i.test(name)) return 'image';
+  if (mime.startsWith('video/') || /\.(3gp|avi|m4v|mkv|mov|mp4|ogv|webm|wmv)$/i.test(name)) return 'video';
+  if (mime.startsWith('audio/') || /\.(aac|flac|m4a|mp3|oga|ogg|wav|wma)$/i.test(name)) return 'audio';
   if (mime === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
   return 'file';
+}
+
+/** Collect files from a drag, drop, or paste. Prefer `files` when the browser
+ * filled it; otherwise walk `items` so a screenshot paste still attaches. */
+export function filesFromTransfer(data: DataTransfer | null | undefined): File[] {
+  if (!data) return [];
+  const fromFiles = Array.from(data.files ?? []);
+  if (fromFiles.length > 0) return fromFiles;
+  return Array.from(data.items ?? [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
 }
 
 export function formatChatFileSize(bytes?: number): string {

@@ -1,0 +1,136 @@
+/* ============================================================
+   Home canvas atmosphere.
+
+   Full-bleed studio wash on the entry scroll surface while Home is
+   the active view. Layers are background-image only (no extra
+   stacking context, no z-index) so the composer can still lift
+   above recent projects and stay under the sticky topbar.
+   ============================================================ */
+
+.entry-main--scroll:has(:is([data-testid='entry-view-home'], [data-testid='entry-view-workspace'])[data-active='true']) {
+  --home-grain-fine: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.78'/%3E%3C/svg%3E");
+  --home-grain-soft: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 280 280'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.32' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  background-color: var(--bg);
+  background-image:
+    var(--home-grain-fine),
+    var(--home-grain-soft),
+    linear-gradient(
+      180deg,
+      transparent 0%,
+      transparent 48%,
+      color-mix(in srgb, var(--bg) 42%, transparent) 78%,
+      var(--bg) 100%
+    ),
+    radial-gradient(
+      ellipse 92% 72% at 50% -12%,
+      color-mix(in srgb, var(--accent-tint) 82%, transparent),
+      transparent 76%
+    ),
+    radial-gradient(
+      ellipse 52% 48% at 8% 22%,
+      color-mix(in srgb, var(--accent) 14%, transparent),
+      transparent 78%
+    ),
+    radial-gradient(
+      ellipse 48% 44% at 94% 16%,
+      color-mix(in srgb, var(--accent) 10%, transparent),
+      transparent 76%
+    ),
+    radial-gradient(
+      ellipse 80% 56% at 50% 110%,
+      color-mix(in srgb, var(--text) 4%, transparent),
+      transparent 72%
+    );
+  background-repeat: repeat, repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+  background-size:
+    128px 128px,
+    280px 280px,
+    auto,
+    auto,
+    auto,
+    auto,
+    auto;
+  background-position:
+    0 0,
+    0 0,
+    0 0,
+    50% 0,
+    0 0,
+    100% 0,
+    50% 100%;
+  background-blend-mode:
+    overlay,
+    soft-light,
+    normal,
+    normal,
+    normal,
+    normal,
+    normal;
+  animation: home-atmosphere-drift 48s linear infinite alternate;
+}
+
+@keyframes home-atmosphere-drift {
+  from {
+    background-position:
+      0 0,
+      0 0,
+      0 0,
+      50% 0,
+      0% 0,
+      100% 0,
+      50% 100%;
+  }
+  to {
+    background-position:
+      0 0,
+      0 0,
+      0 0,
+      52% 3%,
+      4% 4%,
+      96% 2%,
+      50% 100%;
+  }
+}
+
+[data-theme='dark'] .entry-main--scroll:has(:is([data-testid='entry-view-home'], [data-testid='entry-view-workspace'])[data-active='true']) {
+  background-blend-mode:
+    soft-light,
+    soft-light,
+    normal,
+    normal,
+    normal,
+    normal,
+    normal;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme='light']) .entry-main--scroll:has(:is([data-testid='entry-view-home'], [data-testid='entry-view-workspace'])[data-active='true']) {
+    background-blend-mode:
+      soft-light,
+      soft-light,
+      normal,
+      normal,
+      normal,
+      normal,
+      normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-main--scroll:has(:is([data-testid='entry-view-home'], [data-testid='entry-view-workspace'])[data-active='true']) {
+    animation: none;
+  }
+}
+
+/* Let the studio wash reach the top of the canvas. Keep a short veil so
+   scrolled tiles don't collide with the settings cluster. */
+.entry-main--scroll:has(:is([data-testid='entry-view-home'], [data-testid='entry-view-workspace'])[data-active='true']) .entry-main__topbar {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg) 58%, transparent),
+    transparent
+  );
+}
+.entry-main--scroll:has(:is([data-testid='entry-view-home'], [data-testid='entry-view-workspace'])[data-active='true']) .entry-main__topbar::before {
+  background: transparent;
+}

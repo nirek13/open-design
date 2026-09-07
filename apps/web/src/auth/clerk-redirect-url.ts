@@ -24,12 +24,38 @@ export function clerkHttpOrigin(appOrigin: string | undefined): string | null {
   }
 }
 
+/** Clerk handshake query keys must never become the post-sign-in destination.
+ * OAuth returns to `/?__clerk_handshake=…` (or the join path with those
+ * params). Feeding that back as `redirect_url` drops the invite and can loop. */
+export function locationForClerkRedirect(
+  location: Pick<Location, 'protocol' | 'pathname' | 'search'>,
+  pendingJoinPath?: string | null,
+): Pick<Location, 'protocol' | 'pathname' | 'search'> {
+  if (pendingJoinPath) {
+    return { protocol: location.protocol, pathname: pendingJoinPath, search: '' };
+  }
+  const params = new URLSearchParams(
+    location.search.startsWith('?') ? location.search.slice(1) : location.search,
+  );
+  for (const key of [...params.keys()]) {
+    if (key.startsWith('__clerk_') || key === 'rotating_token_nonce') params.delete(key);
+  }
+  const query = params.toString();
+  return {
+    protocol: location.protocol,
+    pathname: location.pathname || '/',
+    search: query ? `?${query}` : '',
+  };
+}
+
 export function clerkRedirectUrl(
   location: Pick<Location, 'protocol' | 'pathname' | 'search'>,
   appOrigin?: string,
+  pendingJoinPath?: string | null,
 ): string {
-  const path = `${location.pathname}${location.search}` || '/';
-  if (isHttpLocation(location)) return path;
+  const clean = locationForClerkRedirect(location, pendingJoinPath);
+  const path = `${clean.pathname}${clean.search}` || '/';
+  if (isHttpLocation(clean)) return path;
   const origin = clerkHttpOrigin(appOrigin) ?? 'http://127.0.0.1';
   return `${origin}${path.startsWith('/') ? path : `/${path}`}`;
 }

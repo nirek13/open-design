@@ -77,6 +77,12 @@ describe('isPublicApiPath', () => {
     expect(isPublicApiPath('/api/analytics/mcp/event')).toBe(false);
   });
 
+  it('lets a guest open a public booking link without a session', () => {
+    expect(isPublicApiPath('/api/book/abc123')).toBe(true);
+    expect(isPublicApiPath('/api/book/abc123/slots')).toBe(true);
+    expect(isPublicApiPath('/api/books')).toBe(false);
+  });
+
   it('lets a brand-new person redeem an invite', () => {
     expect(isPublicApiPath('/api/invites/abc123/accept')).toBe(true);
   });

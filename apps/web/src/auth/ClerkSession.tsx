@@ -17,13 +17,21 @@ import {
   useAuth,
   useClerk,
 } from '@clerk/clerk-react';
+import type { OrgInvitePreview } from '@open-design/contracts';
 import { useT } from '../i18n';
+import { navigate } from '../router';
 import { AuthActionsProvider } from './AuthActions';
 import {
   clerkRedirectUrl,
   isHttpLocation,
   stayOnPackagedApp,
 } from './clerk-redirect-url';
+import {
+  capturePendingInvite,
+  joinPathForToken,
+  joinTokenFromPath,
+  readPendingInvite,
+} from './pending-invite';
 import { installSessionFetch, plantSessionCookie, setSessionTokenProvider } from './session';
 import styles from './AuthGate.module.css';
 
@@ -57,7 +65,35 @@ export function isClerkOAuthReturn(search: string): boolean {
 
 function stayOnThisPage(appOrigin?: string): string {
   if (typeof window === 'undefined') return '/';
-  return clerkRedirectUrl(window.location, appOrigin);
+  const pending = capturePendingInvite(window.location.pathname);
+  return clerkRedirectUrl(
+    window.location,
+    appOrigin,
+    pending ? joinPathForToken(pending) : null,
+  );
+}
+
+async function loadInvitePreview(token: string): Promise<OrgInvitePreview | null> {
+  try {
+    const resp = await fetch(`/api/invites/${encodeURIComponent(token)}`);
+    if (!resp.ok) return null;
+    const body = (await resp.json()) as OrgInvitePreview;
+    return body.valid ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+/** After OAuth, Clerk often dumps the visitor on `/`. Put them back on the
+ * invite they actually opened so the link still works. */
+function RestorePendingInvite({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    const token = readPendingInvite();
+    if (!token) return;
+    if (joinTokenFromPath(window.location.pathname) === token) return;
+    navigate({ kind: 'join', token }, { replace: true });
+  }, []);
+  return <>{children}</>;
 }
 
 /** Registers Clerk's token getter with the fetch wrapper. Must render inside
@@ -129,12 +165,31 @@ function SignInScreen({
 }) {
   const t = useT();
   const oauthReturn = typeof window !== 'undefined' && isClerkOAuthReturn(window.location.search);
+  const pendingToken =
+    typeof window !== 'undefined'
+      ? (joinTokenFromPath(window.location.pathname) ?? readPendingInvite())
+      : null;
+  const [preview, setPreview] = useState<OrgInvitePreview | null>(null);
+
+  useEffect(() => {
+    if (!pendingToken) return;
+    let cancelled = false;
+    void loadInvitePreview(pendingToken).then((result) => {
+      if (!cancelled) setPreview(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingToken]);
 
   if (oauthReturn) {
     return (
       <div className={styles.loading} data-testid="clerk-sso-callback">
         Signing in…
-        <AuthenticateWithRedirectCallback />
+        <AuthenticateWithRedirectCallback
+          signInForceRedirectUrl={redirect}
+          signUpForceRedirectUrl={redirect}
+        />
       </div>
     );
   }
@@ -143,13 +198,29 @@ function SignInScreen({
     <div className={styles.screen} data-testid="clerk-sign-in">
       <div className={styles.signIn}>
         <div className={styles.signInIntro}>
-          <h1 className={styles.title}>{t('account.signInTitle')}</h1>
-          <p className={styles.body}>{t('account.signInLead')}</p>
+          {preview ? (
+            <>
+              <p className={styles.body} data-testid="clerk-join-eyebrow">
+                {t('join.eyebrow')}
+              </p>
+              <h1 className={styles.title}>{preview.orgName}</h1>
+              <p className={styles.body}>{t('account.signInLead')}</p>
+            </>
+          ) : (
+            <>
+              <span className={`${styles.brandMark} od-brand-glyph`} aria-hidden />
+              <h1 className={styles.brandName}>{t('app.brand')}</h1>
+              <p className={styles.tagline}>{t('homeHero.subtitlePrefix')}</p>
+              <p className={styles.body}>{t('account.signInLead')}</p>
+            </>
+          )}
         </div>
         <SignIn
           routing="virtual"
           withSignUp
           oauthFlow={oauthFlow}
+          forceRedirectUrl={redirect}
+          signUpForceRedirectUrl={redirect}
           fallbackRedirectUrl={redirect}
           signUpFallbackRedirectUrl={redirect}
           fallback={<p className={styles.body}>Loading sign-in…</p>}
@@ -176,7 +247,9 @@ export default function ClerkSession({
         <SignInScreen oauthFlow={customScheme ? 'popup' : 'auto'} redirect={redirect} />
       </SignedOut>
       <SignedIn>
-        <SessionBridge redirectUrl={redirect}>{children}</SessionBridge>
+        <SessionBridge redirectUrl={redirect}>
+          <RestorePendingInvite>{children}</RestorePendingInvite>
+        </SessionBridge>
       </SignedIn>
     </>
   );
@@ -188,6 +261,8 @@ export default function ClerkSession({
         publishableKey={publishableKey}
         appearance={CLERK_APPEARANCE}
         afterSignOutUrl={redirect}
+        signInForceRedirectUrl={redirect}
+        signUpForceRedirectUrl={redirect}
         signInFallbackRedirectUrl={redirect}
         signUpFallbackRedirectUrl={redirect}
         allowedRedirectProtocols={['http', 'https', 'od']}
@@ -204,6 +279,8 @@ export default function ClerkSession({
       publishableKey={publishableKey}
       appearance={CLERK_APPEARANCE}
       afterSignOutUrl={redirect}
+      signInForceRedirectUrl={redirect}
+      signUpForceRedirectUrl={redirect}
       signInFallbackRedirectUrl={redirect}
       signUpFallbackRedirectUrl={redirect}
     >

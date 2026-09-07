@@ -37,7 +37,13 @@ Block types:
   numbered_list_item, to_do, toggle, callout, quote, code, divider,
   bookmark, embed, image, video, audio, file, pdf, equation,
   table_of_contents, breadcrumb, column_list, column, table,
-  database, artifact, page, record.
+  database, artifact, page, record,
+  board, checklist, assigner, poll, timeline, decision, goals.
+
+Page tools store their working state in the block content object, e.g.
+  {"type":"board","content":{"kind":"board","columns":[{"id":"c1","title":"To do","cards":[]}]}}
+  {"type":"checklist","content":{"kind":"checklist","items":[{"id":"i1","text":"Ship","checked":false}]}}
+  {"type":"assigner","content":{"kind":"assigner","tasks":[{"id":"t1","title":"Write brief","assigneeId":null,"assigneeName":null,"status":"todo"}]}}
 
 Embeds:
   page       props.pageId     — nested page / wiki link

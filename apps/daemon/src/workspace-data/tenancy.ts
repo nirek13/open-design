@@ -269,20 +269,23 @@ export async function upsertExternalUser(
         ? seededUsername
         : existing.username;
     const displayName = chooseDisplayName(existing.displayName, input.displayName);
+    // Clerk session JWTs often omit email. Never blank a stored address — that
+    // is how targeted email invites decide who may redeem the link.
+    const email = input.email ?? existing.email;
     if (
       existing.displayName !== displayName ||
-      (existing.email ?? null) !== input.email ||
+      (existing.email ?? null) !== (email ?? null) ||
       (existing.username ?? null) !== (username ?? null)
     ) {
       await directory.run(
         'UPDATE od_users SET display_name = ?, email = ?, username = ?, updated_at = ? WHERE id = ?',
-        [displayName, input.email, username, now, existing.id],
+        [displayName, email, username, now, existing.id],
       );
     }
     return {
       id: existing.id,
       displayName,
-      email: input.email,
+      email,
       username,
       bio: existing.bio,
       avatarMime: existing.avatarMime,

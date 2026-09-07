@@ -39,6 +39,8 @@ import { composePagesWikiPrompt, draftBlocksPlainText } from './wiki-prompt';
 import { pageMakeAction, type PageMakeKind } from '../../runtime/page-make';
 import { PageContextChip } from './PageContextChip';
 import { PagesAgentBuilder, type PagesAgentSession } from './PagesAgentBuilder';
+import { SendToChatPicker } from '../apps/SendToChatPicker';
+import { sendPageToChat } from '../apps/sendToChat';
 import styles from './PagesView.module.css';
 
 interface Props {
@@ -286,6 +288,7 @@ export function PagesView({
   const [iconOpen, setIconOpen] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -957,6 +960,16 @@ export function PagesView({
                     </button>
                     <button
                       type="button"
+                      data-testid="pages-send"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        setSendOpen(true);
+                      }}
+                    >
+                      {t('pages.send')}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => {
                         void navigator.clipboard?.writeText(window.location.href);
                         setCopied(true);
@@ -1250,6 +1263,35 @@ export function PagesView({
           ) : null}
         </section>
       </div>
+      {sendOpen && activeOrgId && currentId ? (
+        <div
+          className={styles.sendScrim}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setSendOpen(false);
+          }}
+        >
+          <div className={styles.sendCard} data-testid="pages-send-panel">
+            <SendToChatPicker
+              orgId={activeOrgId}
+              name={title.trim() || t('pages.untitled')}
+              lead={t('pages.send.lead')}
+              exceptHint={t('pages.send.exceptHint')}
+              testIdPrefix="send-page"
+              onSkip={() => setSendOpen(false)}
+              onSent={() => setSendOpen(false)}
+              onSend={(destinations, body, except) =>
+                sendPageToChat(
+                  activeOrgId,
+                  { id: currentId, title: title.trim() || t('pages.untitled') },
+                  destinations,
+                  body,
+                  except,
+                )
+              }
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

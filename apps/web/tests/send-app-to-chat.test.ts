@@ -77,7 +77,9 @@ const EMPTY_ACCESS = { grants: [], teamGrants: [], denials: [] };
 describe('sendAppToChat', () => {
   beforeEach(() => {
     vi.spyOn(registry, 'openChatDirectMessage').mockResolvedValue(DM);
-    vi.spyOn(registry, 'postChatMessage').mockResolvedValue(POSTED);
+    vi.spyOn(registry, 'postChatMessage').mockResolvedValue({
+      message: POSTED,
+    });
     vi.spyOn(registry, 'fetchAppAccess').mockResolvedValue(EMPTY_ACCESS);
     vi.spyOn(registry, 'setAppAccess').mockResolvedValue(EMPTY_ACCESS);
     vi.spyOn(registry, 'fetchOrgTeams').mockResolvedValue([

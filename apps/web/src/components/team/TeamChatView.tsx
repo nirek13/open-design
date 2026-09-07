@@ -85,11 +85,12 @@ import {
   chatAccentCssVars,
   chatFileKind,
   DEFAULT_CHAT_ACCENT,
+  filesFromTransfer,
   formatChatFileSize,
   parseChatAccent,
   type ChatAccent,
 } from '../../runtime/chat-media';
-import { chatWhen, parseRemindWhen, parseSlashCommand, SLASH_HELP, wrapSelection } from '../../runtime/chat-format';
+import { chatWhen, parseRemindWhen, parseSlashCommand, SLASH_HELP } from '../../runtime/chat-format';
 import { CHAT_EMOJI_GROUPS, QUICK_REACTIONS } from '../../runtime/chat-emoji';
 import { Icon } from '../Icon';
 import { WorkspacePage } from '../workspace/WorkspacePage';
@@ -217,7 +218,7 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   const [pane, setPane] = useState<ChatPane>('channel');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsTab, setDetailsTab] = useState<'about' | 'members' | 'files' | 'pins'>('about');
-  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState<'main' | 'thread' | false>(false);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [statusDraft, setStatusDraft] = useState('');
   const [statusOpen, setStatusOpen] = useState(false);
@@ -241,13 +242,11 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   const [alsoSend, setAlsoSend] = useState(false);
   const [shareId, setShareId] = useState<string | null>(null);
   const [remindMenu, setRemindMenu] = useState<string | null>(null);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [hideStarred, setHideStarred] = useState(false);
   const [hideChannels, setHideChannels] = useState(false);
   const [hideDms, setHideDms] = useState(false);
-  const [scheduledOk, setScheduledOk] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mainComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const threadComposerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -261,8 +260,16 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     [people, viewerUserId],
   );
 
-  const openAppAttachment = useCallback(
+  const openAttachment = useCallback(
     async (attachment: TeamChatAttachment) => {
+      if (attachment.kind === 'page') {
+        navigate({ kind: 'home', view: 'pages', pageId: attachment.id });
+        return;
+      }
+      if (attachment.kind === 'event') {
+        navigate({ kind: 'home', view: 'calendar', eventId: attachment.id });
+        return;
+      }
       if (attachment.kind !== 'app' || !activeOrgId || !runningApp) return;
       try {
         const apps = await fetchOrgApps(activeOrgId);
@@ -527,7 +534,6 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
         setStatusOpen(false);
         setShortcutsOpen(false);
         setRemindMenu(null);
-        setScheduleOpen(false);
         setShareId(null);
         setProfileId(null);
       }
@@ -724,6 +730,8 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
       }
     }
     setSending(true);
+    setEmojiOpen(false);
+    setMentionOpen(false);
     try {
       const attachments: TeamChatAttachment[] = [];
       for (const file of files) {
@@ -768,6 +776,11 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   }
 
   function onComposerKey(event: KeyboardEvent<HTMLTextAreaElement>, parentMessageId?: string) {
+    if (event.key === 'Escape' && emojiOpen) {
+      event.preventDefault();
+      setEmojiOpen(false);
+      return;
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void send(parentMessageId);
@@ -776,13 +789,32 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
 
   function queueFiles(list: FileList | File[] | null) {
     if (!list) return;
-    const incoming = Array.from(list);
+    const incoming = Array.from(list).filter((file) => file.size > 0 || file.name);
+    if (incoming.length === 0) return;
     if (incoming.some((file) => file.size > CHAT_FILE_MAX_BYTES)) {
       setError(t('team.fileTooLarge'));
       return;
     }
     setPendingFiles((prev) => [...prev, ...incoming].slice(0, 8));
     setError(null);
+  }
+
+  function insertAtCursor(
+    text: string,
+    insertion: string,
+    setText: (value: string) => void,
+    parentMessageId?: string,
+  ) {
+    const node = parentMessageId ? threadComposerRef.current : mainComposerRef.current;
+    const start = node?.selectionStart ?? text.length;
+    const end = node?.selectionEnd ?? text.length;
+    const next = `${text.slice(0, start)}${insertion}${text.slice(end)}`;
+    setText(next);
+    const pos = start + insertion.length;
+    requestAnimationFrame(() => {
+      node?.focus();
+      node?.setSelectionRange(pos, pos);
+    });
   }
 
   function onComposerDragOver(event: DragEvent) {
@@ -799,42 +831,14 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   function onComposerDrop(event: DragEvent) {
     event.preventDefault();
     setDropping(false);
-    queueFiles(event.dataTransfer.files);
+    queueFiles(filesFromTransfer(event.dataTransfer));
   }
 
   function onComposerPaste(event: ClipboardEvent) {
-    const files = Array.from(event.clipboardData?.files ?? []);
+    const files = filesFromTransfer(event.clipboardData);
     if (files.length === 0) return;
     event.preventDefault();
     queueFiles(files);
-  }
-
-  function applyMark(mark: string, text: string, setText: (value: string) => void, parentMessageId?: string) {
-    const node = parentMessageId ? threadComposerRef.current : mainComposerRef.current;
-    if (!node) {
-      setText(wrapSelection(text, text.length, text.length, mark));
-      return;
-    }
-    const start = node.selectionStart ?? text.length;
-    const end = node.selectionEnd ?? text.length;
-    setText(wrapSelection(text, start, end, mark));
-  }
-
-  async function sendLater(kind: '20m' | '1h' | 'tomorrow') {
-    if (!activeOrgId || !currentSlug || !draft.trim()) return;
-    try {
-      await postChatMessage(activeOrgId, currentSlug, {
-        body: draft.trim(),
-        sendAt: chatWhen(kind),
-      });
-      setDraft('');
-      setScheduleOpen(false);
-      setScheduledOk(true);
-      window.setTimeout(() => setScheduledOk(false), 2000);
-      setError(null);
-    } catch (err) {
-      setError(errorMessage(err));
-    }
   }
 
   function composerForm(
@@ -844,6 +848,7 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     placeholder: string,
     testId?: string,
   ) {
+    const pickerKey = parentMessageId ? 'thread' : 'main';
     return (
       <form
         className={`${styles.composer}${dropping ? ` ${styles.composerHot}` : ''}`}
@@ -856,134 +861,78 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
         onDrop={onComposerDrop}
         onPaste={onComposerPaste}
       >
-        {pendingFiles.length > 0 ? (
-          <ul className={styles.pending}>
-            {pendingFiles.map((file, index) => (
-              <li key={`${file.name}-${index}`} className={styles.pendingChip}>
-                {chatFileKind(file.type, file.name) === 'image' ? (
-                  <PendingThumb file={file} />
-                ) : (
-                  <span className={styles.pendingGlyph} aria-hidden>
-                    {file.name.split('.').pop()?.slice(0, 4).toUpperCase() ?? 'FILE'}
+        <div className={styles.composerBox} data-testid={testId ? 'team-composer-box' : undefined}>
+          {pendingFiles.length > 0 ? (
+            <ul className={styles.pending}>
+              {pendingFiles.map((file, index) => (
+                <li key={`${file.name}-${index}`} className={styles.pendingChip}>
+                  {chatFileKind(file.type, file.name) === 'image' ? (
+                    <PendingThumb file={file} />
+                  ) : (
+                    <span className={styles.pendingGlyph} aria-hidden>
+                      {file.name.split('.').pop()?.slice(0, 4).toUpperCase() ?? 'FILE'}
+                    </span>
+                  )}
+                  <span className={styles.pendingCopy}>
+                    <strong>{file.name}</strong>
+                    <em>{formatChatFileSize(file.size)}</em>
                   </span>
-                )}
-                <span className={styles.pendingCopy}>
-                  <strong>{file.name}</strong>
-                  <em>{formatChatFileSize(file.size)}</em>
-                </span>
-                <button
-                  type="button"
-                  className={styles.pendingRemove}
-                  aria-label={t('team.removeAttachment')}
-                  onClick={() => setPendingFiles((prev) => prev.filter((_, i) => i !== index))}
-                >
-                  ×
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {dropping ? <p className={styles.dropHint}>{t('team.dropToAttach')}</p> : null}
-        <div className={styles.composerTools}>
-          <button type="button" className={styles.toolBtn} onClick={() => applyMark('*', text, setText, parentMessageId)} aria-label={t('team.bold')}>
-            B
-          </button>
-          <button type="button" className={styles.toolBtn} onClick={() => applyMark('_', text, setText, parentMessageId)} aria-label={t('team.italic')}>
-            I
-          </button>
-          <button type="button" className={styles.toolBtn} onClick={() => applyMark('~', text, setText, parentMessageId)} aria-label={t('team.strike')}>
-            S
-          </button>
-          <button type="button" className={styles.toolBtn} onClick={() => applyMark('`', text, setText, parentMessageId)} aria-label={t('team.code')}>
-            {'</>'}
-          </button>
-          <button
-            type="button"
-            className={styles.toolBtn}
-            aria-label={t('team.emoji')}
-            onClick={() => setEmojiOpen((prev) => !prev)}
-          >
-            😊
-          </button>
-          <button
-            type="button"
-            className={styles.toolBtn}
-            aria-label={t('team.mention')}
-            onClick={() => setMentionOpen((prev) => !prev)}
-          >
-            @
-          </button>
-          {!parentMessageId ? (
-            <button
-              type="button"
-              className={styles.toolBtn}
-              aria-label={t('team.schedule')}
-              onClick={() => setScheduleOpen((prev) => !prev)}
-            >
-              {t('team.schedule')}
-            </button>
+                  <button
+                    type="button"
+                    className={styles.pendingRemove}
+                    aria-label={t('team.removeAttachment')}
+                    onClick={() => setPendingFiles((prev) => prev.filter((_, i) => i !== index))}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
           ) : null}
-        </div>
-        {scheduleOpen && !parentMessageId ? (
-          <div className={styles.menuPop}>
-            <button type="button" className={styles.mentionBtn} onClick={() => void sendLater('20m')}>{t('team.schedule20m')}</button>
-            <button type="button" className={styles.mentionBtn} onClick={() => void sendLater('1h')}>{t('team.schedule1h')}</button>
-            <button type="button" className={styles.mentionBtn} onClick={() => void sendLater('tomorrow')}>{t('team.scheduleTomorrow')}</button>
-          </div>
-        ) : null}
-        {text.startsWith('/') && !parentMessageId ? <p className={styles.slashHint}>{t('team.slashHint')}</p> : null}
-        {emojiOpen ? (
-          <div className={styles.emojiPicker} data-testid="team-emoji-picker">
-            {CHAT_EMOJI_GROUPS.map((group) => (
-              <div key={group.label}>
-                <p className={styles.emojiLabel}>{group.label}</p>
-                <div className={styles.emojiGrid}>
-                  {group.emoji.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      className={styles.emojiBtn}
-                      onClick={() => {
-                        setText(`${text}${emoji}`);
-                        setEmojiOpen(false);
-                      }}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
+          {dropping ? <p className={styles.dropHint}>{t('team.dropToAttach')}</p> : null}
+          {text.startsWith('/') && !parentMessageId ? <p className={styles.slashHint}>{t('team.slashHint')}</p> : null}
+          {mentionOpen ? (
+            <ul className={styles.mentionList}>
+              {['@channel', '@here', '@everyone', ...others.map((person) => `@${person.username || person.displayName}`)].map((item) => (
+                <li key={item}>
+                  <button
+                    type="button"
+                    className={styles.mentionBtn}
+                    onClick={() => {
+                      insertAtCursor(text, `${text.endsWith(' ') || !text ? '' : ' '}${item} `, setText, parentMessageId);
+                      setMentionOpen(false);
+                    }}
+                  >
+                    {item}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {emojiOpen === pickerKey ? (
+            <div className={styles.emojiPicker} data-testid="team-emoji-picker">
+              {CHAT_EMOJI_GROUPS.map((group) => (
+                <div key={group.label}>
+                  <p className={styles.emojiLabel}>{group.label}</p>
+                  <div className={styles.emojiGrid}>
+                    {group.emoji.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className={styles.emojiBtn}
+                        onClick={() => {
+                          insertAtCursor(text, emoji, setText, parentMessageId);
+                          setEmojiOpen(false);
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {mentionOpen ? (
-          <ul className={styles.mentionList}>
-            {['@channel', '@here', '@everyone', ...others.map((person) => `@${person.username || person.displayName}`)].map((item) => (
-              <li key={item}>
-                <button
-                  type="button"
-                  className={styles.mentionBtn}
-                  onClick={() => {
-                    setText(`${text}${text.endsWith(' ') || !text ? '' : ' '}${item} `);
-                    setMentionOpen(false);
-                  }}
-                >
-                  {item}
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        <div className={styles.composerBox}>
-          <button
-            type="button"
-            className={styles.attachBtn}
-            aria-label={t('team.attachFile')}
-            data-testid={testId ? 'team-attach' : undefined}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Icon name="attach" size={16} />
-          </button>
+              ))}
+            </div>
+          ) : null}
           <Textarea
             ref={parentMessageId ? threadComposerRef : mainComposerRef}
             value={text}
@@ -999,14 +948,35 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             rows={2}
             data-testid={testId}
           />
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={sending || (!text.trim() && pendingFiles.length === 0)}
-            data-testid={testId ? 'team-send' : undefined}
-          >
-            {sending ? t('team.sending') : t('team.send')}
-          </Button>
+          <div className={styles.composerBar}>
+            <button
+              type="button"
+              className={styles.attachBtn}
+              aria-label={t('team.attachFile')}
+              data-testid={testId ? 'team-attach' : undefined}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Icon name="attach" size={16} />
+            </button>
+            <button
+              type="button"
+              className={styles.attachBtn}
+              aria-label={t('team.emoji')}
+              data-testid={testId ? 'team-emoji' : undefined}
+              onClick={() => setEmojiOpen((prev) => (prev === pickerKey ? false : pickerKey))}
+            >
+              😊
+            </button>
+            <Button
+              type="submit"
+              variant="primary"
+              className={styles.sendBtn}
+              disabled={sending || (!text.trim() && pendingFiles.length === 0)}
+              data-testid={testId ? 'team-send' : undefined}
+            >
+              {sending ? t('team.sending') : t('team.send')}
+            </Button>
+          </div>
         </div>
         {parentMessageId ? (
           <label className={styles.privateToggle}>
@@ -1319,7 +1289,7 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             <ChatMessageBody
               body={message.body}
               attachments={message.attachments}
-              onOpenApp={openAppAttachment}
+              onOpenAttachment={openAttachment}
             />
           )}
           {message.reactions.length > 0 ? (
@@ -1742,7 +1712,6 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           </div>
         ) : null}
         {copied ? <p className={styles.copied}>{t('team.linkCopied')}</p> : null}
-        {scheduledOk ? <p className={styles.copied}>{t('team.scheduledOk')}</p> : null}
         {shortcutsOpen ? (
           <div className={styles.jump} data-testid="team-shortcuts">
             <h2 className={styles.channelTitle}>{t('team.shortcuts')}</h2>

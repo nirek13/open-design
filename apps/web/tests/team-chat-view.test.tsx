@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TeamChatView } from '../src/components/team/TeamChatView';
@@ -258,6 +258,30 @@ describe('TeamChatView', () => {
     expect(chip.textContent).toContain('Expense form');
   });
 
+  it('renders page and event attachments as buttons so the transcript can open them', async () => {
+    vi.spyOn(registry, 'fetchChatChannels').mockResolvedValue({
+      channels: [CHANNEL],
+      totalUnread: 0,
+    });
+    vi.spyOn(registry, 'fetchChatMessages').mockResolvedValue({
+      messages: [
+        {
+          ...MESSAGE,
+          attachments: [
+            { kind: 'page', id: 'page-1', label: 'Handbook' },
+            { kind: 'event', id: 'evt-1', label: 'Design review' },
+          ],
+        },
+      ],
+      nextBefore: null,
+    });
+    vi.spyOn(registry, 'markChatChannelRead').mockResolvedValue(CHANNEL);
+
+    renderChat();
+    expect((await screen.findByTestId('team-page-attachment-page-1')).textContent).toContain('Handbook');
+    expect(screen.getByTestId('team-event-attachment-evt-1').textContent).toContain('Design review');
+  });
+
   it('renders an image file and unfurls a pasted link', async () => {
     vi.spyOn(registry, 'fetchChatChannels').mockResolvedValue({
       channels: [CHANNEL],
@@ -289,6 +313,50 @@ describe('TeamChatView', () => {
     expect(await screen.findByTestId('team-file-file-1')).toBeTruthy();
     expect(await screen.findByTestId('team-link-embed')).toBeTruthy();
     expect(screen.getByTestId('team-attach')).toBeTruthy();
+  });
+
+  it('puts the emoji picker in the composer and accepts any file type', async () => {
+    vi.spyOn(registry, 'fetchChatChannels').mockResolvedValue({
+      channels: [CHANNEL],
+      totalUnread: 0,
+    });
+    vi.spyOn(registry, 'fetchChatMessages').mockResolvedValue({
+      messages: [MESSAGE],
+      nextBefore: null,
+    });
+    vi.spyOn(registry, 'markChatChannelRead').mockResolvedValue(CHANNEL);
+
+    renderChat();
+    const composer = await screen.findByTestId('team-composer');
+    const box = screen.getByTestId('team-composer-box');
+    const emojiBtn = screen.getByTestId('team-emoji');
+    expect(box.contains(composer)).toBe(true);
+    expect(box.contains(emojiBtn)).toBe(true);
+    expect(box.contains(screen.getByTestId('team-attach'))).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Bold' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Schedule' })).toBeNull();
+
+    fireEvent.click(emojiBtn);
+    const picker = await screen.findByTestId('team-emoji-picker');
+    expect(box.contains(picker)).toBe(true);
+    fireEvent.click(within(picker).getByRole('button', { name: '😀' }));
+    expect((screen.getByTestId('team-composer') as HTMLTextAreaElement).value).toContain('😀');
+    expect(screen.queryByTestId('team-emoji-picker')).toBeNull();
+
+    const input = screen.getByTestId('team-file-input') as HTMLInputElement;
+    expect(input.getAttribute('accept')).toBeNull();
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['pk'], 'pack.zip', { type: 'application/zip' }),
+          new File(['%PDF'], 'brief.pdf', { type: 'application/pdf' }),
+          new File(['mp4'], 'clip.mp4', { type: 'video/mp4' }),
+        ],
+      },
+    });
+    expect(await screen.findByText('pack.zip')).toBeTruthy();
+    expect(screen.getByText('brief.pdf')).toBeTruthy();
+    expect(screen.getByText('clip.mp4')).toBeTruthy();
   });
 
   it('opens the activity inbox from the Slack sidebar', async () => {

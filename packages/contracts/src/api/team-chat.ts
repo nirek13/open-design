@@ -81,6 +81,8 @@ export interface ChatChannelMember {
 export const TEAM_CHAT_ATTACHMENT_KINDS = [
   'record',
   'app',
+  'page',
+  'event',
   'proposal',
   'journal-entry',
   'file',
@@ -94,11 +96,11 @@ export type TeamChatAttachmentKind = (typeof TEAM_CHAT_ATTACHMENT_KINDS)[number]
 export const CHAT_FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 /** A reference from a message to something in the organization's data, a
- * uploaded file, or a pasted link. Record/app/proposal/journal-entry keep
- * chat inside the ERP; file/link are the media people actually send. */
+ * uploaded file, or a pasted link. Record/app/page/event/proposal/journal-entry
+ * keep chat inside the org; file/link are the media people actually send. */
 export interface TeamChatAttachment {
   kind: TeamChatAttachmentKind;
-  /** Record/app/proposal/journal-entry/file id, or the URL for a link. */
+  /** Record/app/page/event/proposal/journal-entry/file id, or the URL for a link. */
   id: string;
   /** Which table the record belongs to. Only set for `kind: 'record'`. */
   tableName?: string;

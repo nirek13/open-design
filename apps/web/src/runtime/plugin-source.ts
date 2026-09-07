@@ -125,7 +125,7 @@ export function derivePluginSourceLinks(
   const officialBundled = record.sourceKind === 'bundled';
 
   const authorName = typeof author.name === 'string' && author.name.trim().length > 0
-    ? author.name.trim().replaceAll('Open Design', 'Substrate')
+    ? author.name.trim().replaceAll('Open Design', 'Plyxl').replaceAll('Substrate', 'Plyxl')
     : null;
   const authorProfileUrl = officialBundled ? OPEN_DESIGN_REPO_URL : safeHttpUrl(author.url);
   const homepageUrl = officialBundled ? OPEN_DESIGN_REPO_URL : safeHttpUrl(homepageRaw);

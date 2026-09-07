@@ -2,6 +2,7 @@ import { Button, Select } from '@open-design/components';
 import { useT } from '../i18n';
 import type { AgentInfo, ExecMode } from '../types';
 import { isVisibleLocalCliAgent } from '../utils/visibleAgents';
+import { isLocalCliUsageEnabled } from '../utils/local-cli-usage';
 
 interface Props {
   mode: ExecMode;
@@ -26,10 +27,12 @@ export function AgentPicker({
   const visibleAgents = agents.filter(isVisibleLocalCliAgent);
   const available = visibleAgents.filter((a) => a.available);
   const currentAgent = agents.find((a) => a.id === agentId);
+  const localCliUsageEnabled = isLocalCliUsageEnabled();
 
   return (
     <div className="picker agent-picker">
       <span className="picker-label">{t('agentPicker.label')}</span>
+      {localCliUsageEnabled ? (
       <Select
         value={mode}
         onChange={(e) => onModeChange(e.target.value as ExecMode)}
@@ -40,7 +43,8 @@ export function AgentPicker({
         </option>
         <option value="api">{t('agentPicker.byok')}</option>
       </Select>
-      {mode === 'daemon' ? (
+      ) : null}
+      {localCliUsageEnabled && mode === 'daemon' ? (
         <>
           <Select
             value={agentId ?? ''}

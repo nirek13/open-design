@@ -61,6 +61,8 @@ export type Route =
       threadId?: string;
       /** Deep-link into a Slack channel (`/slack/:channelId`). */
       channelId?: string;
+      /** Deep-link into a calendar event (`/calendar/:eventId`). */
+      eventId?: string;
       /** Deep-link into a GitHub repo (`/dev/:owner/:repo`). */
       owner?: string;
       repo?: string;
@@ -86,7 +88,9 @@ export type Route =
   | { kind: 'marketplace-detail'; pluginId: string }
   /** Invite landing page. Renders outside the app shell: whoever follows the
    * link may not be a member of anything yet. */
-  | { kind: 'join'; token: string };
+  | { kind: 'join'; token: string }
+  /** Public booking page. Guests pick a slot without signing in. */
+  | { kind: 'book'; token: string };
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
@@ -191,7 +195,10 @@ export function parseRoute(pathname: string): Route {
     }
     return { kind: 'home', view: 'pages' };
   }
-  if (parts[0] === 'calendar' && !parts[1]) {
+  if (parts[0] === 'calendar') {
+    if (parts[1]) {
+      return { kind: 'home', view: 'calendar', eventId: decodeURIComponent(parts[1]) };
+    }
     return { kind: 'home', view: 'calendar' };
   }
   if (parts[0] === 'mail') {
@@ -238,6 +245,9 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'join' && parts[1]) {
     return { kind: 'join', token: decodeURIComponent(parts[1]) };
   }
+  if (parts[0] === 'book' && parts[1]) {
+    return { kind: 'book', token: decodeURIComponent(parts[1]) };
+  }
   // Phase 2B / spec §11.6 — marketplace deep UI routes. Two paths:
   //   /marketplace            → catalog grid (MarketplaceView)
   //   /marketplace/<pluginId> → detail page (PluginDetailView)
@@ -277,7 +287,9 @@ export function buildPath(route: Route): string {
     if (route.view === 'pages') {
       return route.pageId ? `/pages/${encodeURIComponent(route.pageId)}` : '/pages';
     }
-    if (route.view === 'calendar') return '/calendar';
+    if (route.view === 'calendar') {
+      return route.eventId ? `/calendar/${encodeURIComponent(route.eventId)}` : '/calendar';
+    }
     if (route.view === 'mail') {
       return route.threadId ? `/mail/${encodeURIComponent(route.threadId)}` : '/mail';
     }
@@ -302,6 +314,7 @@ export function buildPath(route: Route): string {
     return '/';
   }
   if (route.kind === 'join') return `/join/${encodeURIComponent(route.token)}`;
+  if (route.kind === 'book') return `/book/${encodeURIComponent(route.token)}`;
   if (route.kind === 'marketplace') return '/marketplace';
   if (route.kind === 'marketplace-detail') return `/marketplace/${encodeURIComponent(route.pluginId)}`;
   if (route.kind === 'design-system-create') return '/design-systems/create';

@@ -194,6 +194,18 @@ const DIRECTORY_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
         WHERE reports_to IS NOT NULL;
     `);
   },
+  // v8 — public Calendly-style booking links. Token lookup lives in the
+  // directory so `/book/:token` can find the org without scanning tenants.
+  (db) => {
+    db.exec(`
+      CREATE TABLE od_booking_routes (
+        token_hash TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        booking_type_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+  },
 ];
 
 const WORKSPACE_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
@@ -838,6 +850,101 @@ const WORKSPACE_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
   // v18 — Notion page appearance (font, width, lock).
   (db) => {
     db.exec(`ALTER TABLE od_pages ADD COLUMN style_json TEXT NOT NULL DEFAULT '{}';`);
+  },
+
+  // v19 — named calendars + Notion/Apple import fields on events.
+  (db) => {
+    db.exec(`
+      CREATE TABLE od_calendars (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'local',
+        visible INTEGER NOT NULL DEFAULT 1,
+        external_id TEXT,
+        ics_url TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX odx_calendars_ws ON od_calendars(workspace_id);
+      CREATE UNIQUE INDEX odx_calendars_external
+        ON od_calendars(workspace_id, source, external_id)
+        WHERE external_id IS NOT NULL;
+      ALTER TABLE od_calendar_events ADD COLUMN calendar_id TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN color TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN recurrence TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN timezone TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN attendees TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN external_uid TEXT;
+      CREATE INDEX odx_calendar_events_cal ON od_calendar_events(workspace_id, calendar_id);
+      CREATE UNIQUE INDEX odx_calendar_events_external
+        ON od_calendar_events(workspace_id, source, external_uid)
+        WHERE external_uid IS NOT NULL;
+    `);
+  },
+
+  // v20 — team / personal calendars and event guests (people or teams).
+  (db) => {
+    db.exec(`
+      ALTER TABLE od_calendars ADD COLUMN kind TEXT NOT NULL DEFAULT 'shared';
+      ALTER TABLE od_calendars ADD COLUMN owner_user_id TEXT;
+      ALTER TABLE od_calendars ADD COLUMN team_id TEXT;
+      CREATE UNIQUE INDEX odx_calendars_personal
+        ON od_calendars(workspace_id, owner_user_id)
+        WHERE kind = 'personal' AND owner_user_id IS NOT NULL;
+      CREATE INDEX odx_calendars_team ON od_calendars(workspace_id, team_id);
+      CREATE TABLE od_calendar_event_guests (
+        event_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (event_id, kind, subject_id)
+      );
+      CREATE INDEX odx_calendar_event_guests_subject
+        ON od_calendar_event_guests(workspace_id, kind, subject_id);
+    `);
+  },
+
+  // v21 — booking types (shareable availability) and confirmed bookings.
+  (db) => {
+    db.exec(`
+      CREATE TABLE od_calendar_booking_types (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL,
+        calendar_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        location TEXT,
+        duration_minutes INTEGER NOT NULL,
+        timezone TEXT NOT NULL,
+        weekdays TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        url TEXT NOT NULL,
+        revoked_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX odx_booking_types_ws
+        ON od_calendar_booking_types(workspace_id, owner_user_id);
+      CREATE TABLE od_calendar_bookings (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        booking_type_id TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        guest_name TEXT NOT NULL,
+        guest_email TEXT NOT NULL,
+        starts_at TEXT NOT NULL,
+        ends_at TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX odx_calendar_bookings_slot
+        ON od_calendar_bookings(booking_type_id, starts_at);
+    `);
   },
 ];
 

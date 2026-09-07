@@ -472,14 +472,26 @@
 }
 
 .composerBox {
+  position: relative;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
-  padding: 8px 10px 8px 8px;
+  padding: 10px 10px 8px;
   border: 1px solid var(--border, rgba(127, 127, 127, 0.28));
   border-radius: 14px;
   background: var(--bg, #fff);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--chat-accent, #1164a3) 12%, transparent);
+}
+
+.composerBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sendBtn {
+  margin-left: auto;
 }
 
 .attachBtn {
@@ -506,6 +518,7 @@
 .composerBox :global(textarea) {
   flex: 1;
   min-width: 0;
+  width: 100%;
   border: none;
   background: transparent;
   box-shadow: none;
@@ -565,13 +578,6 @@
   opacity: 0.65;
 }
 
-.composerTools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.toolBtn,
 .emojiBtn,
 .mentionBtn,
 .jumpItem,
@@ -587,15 +593,6 @@
   cursor: pointer;
 }
 
-.toolBtn {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.toolBtn:hover,
 .emojiBtn:hover,
 .mentionBtn:hover,
 .jumpItem:hover,
@@ -612,6 +609,11 @@
   border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
   border-radius: 10px;
   background: var(--bg, #fff);
+}
+
+.composerBox .emojiPicker {
+  max-height: 220px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
 }
 
 .emojiLabel {

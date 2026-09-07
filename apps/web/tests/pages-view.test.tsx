@@ -111,6 +111,8 @@ describe('composePagesWikiPrompt', () => {
     expect(prompt).toContain('page-1');
     expect(prompt).toContain('Handbook');
     expect(prompt).toContain('type embed');
+    expect(prompt).toContain('board');
+    expect(prompt).toContain('assigner');
   });
 
   it('tells the agent to create a unique file and embed it when making from a page', () => {
@@ -189,6 +191,18 @@ describe('PagesView', () => {
     expect(screen.getByText('Full width')).toBeTruthy();
   });
 
+  it('opens a send picker so the page can go to a teammate', async () => {
+    vi.spyOn(registry, 'fetchOrgMembers').mockResolvedValue([]);
+    vi.spyOn(registry, 'fetchOrgTeams').mockResolvedValue([]);
+    vi.spyOn(registry, 'fetchChatChannels').mockResolvedValue({ channels: [], totalUnread: 0 });
+    renderPages();
+    expect(await screen.findByTestId('pages-title')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByTestId('pages-send'));
+    expect(await screen.findByTestId('pages-send-panel')).toBeTruthy();
+    expect(screen.getByTestId('send-page-picker')).toBeTruthy();
+  });
+
   it('launches the agent from the sidebar with the open page as context', async () => {
     const create = vi.spyOn(projects, 'createProject').mockResolvedValue({
       project: {
@@ -256,6 +270,13 @@ describe('BlockEditor', () => {
     expect(screen.getByText('Table of contents')).toBeTruthy();
     expect(screen.getByText('2 columns')).toBeTruthy();
     expect(screen.getByText('Toggle heading 1')).toBeTruthy();
+    expect(screen.getByText('Board')).toBeTruthy();
+    expect(screen.getByText('To-do list')).toBeTruthy();
+    expect(screen.getByText('Task assigner')).toBeTruthy();
+    expect(screen.getByText('Poll')).toBeTruthy();
+    expect(screen.getByText('Timeline')).toBeTruthy();
+    expect(screen.getByText('Decision')).toBeTruthy();
+    expect(screen.getByText('Goals')).toBeTruthy();
   });
 
   it('turns a pasted URL on an empty paragraph into a live embed', () => {
@@ -371,5 +392,70 @@ describe('BlockEditor', () => {
     fireEvent.mouseDown(screen.getByRole('option', { name: /2 columns/ }));
     expect(document.querySelector('[data-type="column_list"]')).toBeTruthy();
     expect(document.querySelectorAll('[data-type="column"]').length).toBe(2);
+  });
+
+  it('inserts a drag-and-drop board from the slash menu', () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([emptyBlock()]);
+      return <BlockEditor blocks={blocks} onChange={setBlocks} />;
+    }
+    render(<Harness />);
+    const textbox = screen.getByRole('textbox');
+    fireEvent.focus(textbox);
+    fireEvent.input(textbox, { target: { textContent: '/kanban' } });
+    fireEvent.mouseDown(screen.getByRole('option', { name: /Board/ }));
+    expect(screen.getByTestId('pages-tool-board')).toBeTruthy();
+    expect(screen.getByDisplayValue('To do')).toBeTruthy();
+    expect(screen.getByDisplayValue('In progress')).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button', { name: '+ Card' })[0]!);
+    expect(screen.getByLabelText('Card title')).toBeTruthy();
+  });
+
+  it('inserts a to-do list and checks an item off', () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([emptyBlock()]);
+      return <BlockEditor blocks={blocks} onChange={setBlocks} />;
+    }
+    render(<Harness />);
+    const textbox = screen.getByRole('textbox');
+    fireEvent.focus(textbox);
+    fireEvent.input(textbox, { target: { textContent: '/checklist' } });
+    fireEvent.mouseDown(screen.getByRole('option', { name: /To-do list/ }));
+    expect(screen.getByTestId('pages-tool-checklist')).toBeTruthy();
+    const items = screen.getAllByLabelText('To-do text');
+    fireEvent.change(items[0]!, { target: { value: 'Ship the board' } });
+    fireEvent.click(screen.getByLabelText('Ship the board'));
+    expect((screen.getByLabelText('Ship the board') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('assigns a task to a teammate', async () => {
+    vi.spyOn(registry, 'fetchOrgMembers').mockResolvedValue([
+      {
+        id: 'm1',
+        orgId: 'org-1',
+        userId: 'user-ada',
+        displayName: 'Ada Lovelace',
+        email: 'ada@example.com',
+        username: 'ada',
+        bio: null,
+        avatarUrl: null,
+        role: 'member',
+        status: 'active',
+        reportsTo: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([emptyBlock('assigner')]);
+      return <BlockEditor orgId="org-1" blocks={blocks} onChange={setBlocks} />;
+    }
+    render(<Harness />);
+    expect(screen.getByTestId('pages-tool-assigner')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Write brief' } });
+    expect(await screen.findByRole('option', { name: 'Ada Lovelace' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Assignee'), { target: { value: 'user-ada' } });
+    expect((screen.getByLabelText('Assignee') as HTMLSelectElement).value).toBe('user-ada');
+    expect((screen.getByLabelText('Status') as HTMLSelectElement).value).toBe('todo');
   });
 });

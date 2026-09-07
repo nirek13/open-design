@@ -1,0 +1,357 @@
+.shell {
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: var(--radius, 8px);
+  background: var(--bg-elevated, #fff);
+  overflow: hidden;
+}
+
+.board {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  overflow-x: auto;
+  align-items: stretch;
+}
+
+.column {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--bg-subtle, #f4f5f7);
+  min-height: 160px;
+}
+
+.column[data-over='true'] {
+  outline: 2px solid var(--text, #1a1916);
+}
+
+.columnHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-elevated, #fff);
+  border: 1px solid var(--border, #e1e5eb);
+  cursor: grab;
+}
+
+.card[data-over='true'] {
+  outline: 2px solid var(--text, #1a1916);
+}
+
+.cardInput,
+.titleInput,
+.grow,
+.question,
+.notes,
+.date,
+.unit,
+.select {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  min-width: 0;
+  width: 100%;
+}
+
+.titleInput {
+  font-weight: 650;
+  font-size: 0.85rem;
+}
+
+.cardInput {
+  font-size: 0.85rem;
+}
+
+.question {
+  font-weight: 650;
+  padding: 10px 12px 4px;
+}
+
+.notes {
+  display: block;
+  padding: 8px 12px 12px;
+  resize: vertical;
+  min-height: 52px;
+}
+
+.list,
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.row,
+.assignRow,
+.pollRow,
+.milestone,
+.goal {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+}
+
+.row {
+  grid-template-columns: 18px minmax(0, 1fr) 22px;
+}
+
+.assignRow {
+  grid-template-columns: minmax(0, 1fr) 140px 108px 22px;
+}
+
+.pollRow {
+  grid-template-columns: 64px minmax(0, 1fr) auto 22px;
+}
+
+.milestone {
+  grid-template-columns: 18px 110px minmax(0, 1fr) 22px;
+}
+
+.goal {
+  grid-template-columns: minmax(0, 1fr) 88px 88px 64px 22px;
+}
+
+.goal .track {
+  grid-column: 1 / span 4;
+}
+
+.goal .count {
+  grid-column: 5;
+  justify-self: end;
+}
+
+.pollBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.check {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid var(--text-muted, #74716b);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.check:checked {
+  background: var(--text, #1a1916);
+  border-color: var(--text, #1a1916);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='none' stroke='white' stroke-width='2' d='M3.5 8.5l3 3 6-6'/></svg>");
+  background-size: 12px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.done {
+  text-decoration: line-through;
+  color: var(--text-muted, #74716b);
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 0;
+  font-size: 0.78rem;
+  color: var(--text-muted, #74716b);
+}
+
+.track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-fill-secondary, rgba(0, 0, 0, 0.08));
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  background: var(--text, #1a1916);
+  border-radius: inherit;
+  transition: width 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.count {
+  font-size: 0.75rem;
+  color: var(--text-muted, #74716b);
+  white-space: nowrap;
+}
+
+.add,
+.addColumn,
+.ghost,
+.vote,
+.pick {
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #74716b);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.add {
+  margin: 0 8px 8px;
+}
+
+.addColumn {
+  flex: 0 0 160px;
+  align-self: stretch;
+  border: 1px dashed var(--border, #e1e5eb);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.ghost {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.add:hover,
+.addColumn:hover,
+.ghost:hover,
+.vote:hover,
+.pick:hover {
+  background: var(--bg-fill-secondary, rgba(0, 0, 0, 0.06));
+  color: var(--text, #1a1916);
+}
+
+.vote,
+.pick {
+  border: 1px solid var(--border, #e1e5eb);
+  text-align: center;
+  min-width: 64px;
+}
+
+.vote[data-on='true'],
+.pick[data-on='true'],
+.choice[data-on='true'] {
+  background: var(--text, #1a1916);
+  color: var(--bg-elevated, #fff);
+  border-color: transparent;
+}
+
+.choice[data-on='true'] .grow,
+.choice[data-on='true'] .ghost,
+.choice[data-on='true'] .pick {
+  color: inherit;
+}
+
+.select {
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: var(--bg-elevated, #fff);
+}
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 10px;
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 22px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e1e5eb);
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.68rem;
+  color: var(--text-muted, #74716b);
+}
+
+.metric input {
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font: inherit;
+  color: inherit;
+  background: var(--bg-elevated, #fff);
+  width: 100%;
+}
+
+.unit {
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.date {
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 720px) {
+  .assignRow {
+    grid-template-columns: minmax(0, 1fr) 22px;
+  }
+
+  .assignRow .select {
+    grid-column: 1;
+  }
+
+  .pollRow,
+  .milestone {
+    grid-template-columns: 18px minmax(0, 1fr) 22px;
+  }
+
+  .goal {
+    grid-template-columns: minmax(0, 1fr) 22px;
+  }
+
+  .goal .track,
+  .goal .count,
+  .goal .metric,
+  .goal .unit {
+    grid-column: 1 / -1;
+  }
+}

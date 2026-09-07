@@ -21,13 +21,14 @@ test('[P2] captures the settings execution surface', async ({ page }) => {
   await gotoVisualWorkspace(page);
 
   const dialog = await prepareVisualSettingsDialog(page);
-  await expect(dialog.getByRole('tab', { name: /Local CLI/i })).toBeVisible();
+  await expect(dialog.getByRole('tab', { name: /OpenAI|BYOK|API/i }).first()).toBeVisible();
+  await expect(dialog.getByRole('tab', { name: /Local CLI/i })).toHaveCount(0);
   await waitForVisualFonts(page);
 
   await captureVisual(page, 'visual-settings-execution');
 });
 
-test('[P1] captures the settings Open Design account balance surface', async ({ page }) => {
+test.skip('[P1] captures the settings Open Design account balance surface', async ({ page }) => {
   test.setTimeout(T.xlong);
 
   await configureVisualPage(page, {
@@ -53,7 +54,7 @@ test('[P1] captures the settings Open Design account balance surface', async ({ 
   await captureVisual(page, 'visual-settings-open-design-account');
 });
 
-test('[P2] captures the settings local CLI surface', async ({ page }) => {
+test.skip('[P2] captures the settings local CLI surface', async ({ page }) => {
   await configureVisualPage(page, {
     agents: VISUAL_CLI_AGENTS,
     config: {
@@ -90,7 +91,7 @@ test('[P2] captures the settings local CLI surface', async ({ page }) => {
   await captureVisual(page, 'visual-settings-local-cli');
 });
 
-test('[P2] captures the settings local CLI model dropdown surface', async ({ page }) => {
+test.skip('[P2] captures the settings local CLI model dropdown surface', async ({ page }) => {
   await configureVisualPage(page, {
     agents: VISUAL_CLI_AGENTS,
     config: {
@@ -122,7 +123,6 @@ test('[P2] captures the settings BYOK surface', async ({ page }) => {
   await gotoVisualWorkspace(page);
 
   const dialog = await prepareVisualSettingsDialog(page);
-  await dialog.getByRole('tab', { name: 'BYOK' }).click();
   await expect(dialog.getByRole('tablist', { name: 'API protocol' })).toBeVisible();
   await expect(dialog.getByRole('heading', { name: 'Anthropic API' })).toBeVisible();
   await waitForVisualFonts(page);

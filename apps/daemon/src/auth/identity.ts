@@ -149,8 +149,11 @@ function displayNameFromClaims(claims: Record<string, unknown>, fallback: string
 }
 
 function emailFromClaims(claims: Record<string, unknown>): string | null {
-  const email = claims.email ?? claims.primary_email_address;
-  return typeof email === 'string' && email.trim() ? email.trim() : null;
+  const candidates = [claims.email, claims.primary_email_address, claims.email_address];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return null;
 }
 
 function usernameFromClaims(claims: Record<string, unknown>): string | null {

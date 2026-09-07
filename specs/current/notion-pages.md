@@ -47,6 +47,13 @@ Aligned with Notion’s public vocabulary where possible, plus Substrate bridges
 - `artifact` — link a project design file
 - `page` — link another Substrate page
 - `record` — live ERP / workspace record card
+- `board` — drag-and-drop kanban (columns + cards)
+- `checklist` — multi-item to-do list with progress
+- `assigner` — tasks with an owner and status
+- `poll` — vote on options
+- `timeline` — dated milestones
+- `decision` — capture a choice and why
+- `goals` — numeric progress toward a target
 
 Slash extras (same persistence as headings/columns):
 

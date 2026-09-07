@@ -56,6 +56,7 @@ import {
 import type { AgentInfo, ApiProtocol, AppConfig, ExecMode } from '../types';
 import { apiProtocolLabel } from '../utils/apiProtocol';
 import { isVisibleLocalCliAgent } from '../utils/visibleAgents';
+import { effectiveExecutionMode, isLocalCliUsageEnabled } from '../utils/local-cli-usage';
 import { AgentIcon } from './AgentIcon';
 import { Icon } from './Icon';
 import { PlanBadge } from './PlanBadge';
@@ -173,6 +174,8 @@ export function InlineModelSwitcher({
 }: Props) {
   const t = useT();
   const analytics = useAnalytics();
+  const executionMode = effectiveExecutionMode(config.mode);
+  const localCliUsageEnabled = isLocalCliUsageEnabled();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const chipRef = useRef<HTMLButtonElement | null>(null);
@@ -842,17 +845,17 @@ export function InlineModelSwitcher({
   // Chip text — keep it tight so the pill doesn't wrap on small viewports.
   // CLI: "Claude · Sonnet 4.5"; BYOK: "Anthropic · sonnet-4.5".
   const chipMode =
-    config.mode === 'daemon'
+    executionMode === 'daemon'
       ? t('inlineSwitcher.chipCli')
       : t('inlineSwitcher.chipByok');
   const chipPrimary =
-    config.mode === 'daemon'
+    executionMode === 'daemon'
       ? currentAgent
         ? displayAgentChipName(currentAgent)
         : t('inlineSwitcher.noAgent')
       : apiProtocolLabel(apiProtocol);
   const chipModel =
-    config.mode === 'daemon'
+    executionMode === 'daemon'
       ? currentModelLabel && currentModelId !== 'default'
         ? currentModelLabel
         : t('inlineSwitcher.modelDefault')
@@ -905,7 +908,7 @@ export function InlineModelSwitcher({
           />
         ) : null}
         <span className="inline-switcher__chip-icon" aria-hidden="true">
-          {config.mode === 'daemon' && currentAgent ? (
+          {executionMode === 'daemon' && currentAgent ? (
             <AgentIcon id={currentAgent.id} size={18} />
           ) : (
             <span className="inline-switcher__byok-glyph">
@@ -937,6 +940,7 @@ export function InlineModelSwitcher({
           role="menu"
           data-testid="inline-model-switcher-popover"
         >
+          {localCliUsageEnabled ? (
           <div className="inline-switcher__row">
             <span className="inline-switcher__label">
               {t('inlineSwitcher.modeLabel')}
@@ -945,13 +949,13 @@ export function InlineModelSwitcher({
               <button
                 type="button"
                 role="tab"
-                aria-selected={config.mode === 'daemon'}
+                aria-selected={executionMode === 'daemon'}
                 className={
                   'inline-switcher__seg-btn' +
-                  (config.mode === 'daemon' ? ' is-active' : '')
+                  (executionMode === 'daemon' ? ' is-active' : '')
                 }
                 data-testid="inline-model-switcher-mode-daemon"
-                disabled={!daemonLive && config.mode !== 'daemon'}
+                disabled={!daemonLive && executionMode !== 'daemon'}
                 onClick={() => {
                   trackExecutionSettingsPopoverClick(analytics.track, {
                     page_name: 'home',
@@ -979,10 +983,10 @@ export function InlineModelSwitcher({
               <button
                 type="button"
                 role="tab"
-                aria-selected={config.mode === 'api'}
+                aria-selected={executionMode === 'api'}
                 className={
                   'inline-switcher__seg-btn' +
-                  (config.mode === 'api' ? ' is-active' : '')
+                  (executionMode === 'api' ? ' is-active' : '')
                 }
                 data-testid="inline-model-switcher-mode-api"
                 onClick={() => {
@@ -999,8 +1003,9 @@ export function InlineModelSwitcher({
               </button>
             </div>
           </div>
+          ) : null}
 
-          {config.mode === 'daemon' ? (
+          {executionMode === 'daemon' ? (
             <>
               <div className="inline-switcher__row">
                 <span className="inline-switcher__label">

@@ -88,4 +88,26 @@ describe('OrgSwitcher', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(create).toHaveBeenCalledWith('Acme'));
   });
+
+  it('renames the active organization', async () => {
+    vi.spyOn(registry, 'fetchAuthContext')
+      .mockResolvedValueOnce({
+        mode: 'local-owner',
+        viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
+        organizations: [NORTHWIND],
+      })
+      .mockResolvedValue({
+        mode: 'local-owner',
+        viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null },
+        organizations: [{ ...NORTHWIND, name: 'Acme' }],
+      });
+    const rename = vi.spyOn(registry, 'renameOrganization').mockResolvedValue();
+
+    renderSwitcher();
+    fireEvent.click(await screen.findByTestId('org-switcher-trigger'));
+    fireEvent.click(screen.getByTestId('org-rename-open'));
+    fireEvent.change(screen.getByTestId('org-rename-name'), { target: { value: 'Acme' } });
+    fireEvent.click(screen.getByTestId('org-rename-submit'));
+    await waitFor(() => expect(rename).toHaveBeenCalledWith('ws-1', 'Acme'));
+  });
 });

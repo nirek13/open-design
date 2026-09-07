@@ -155,12 +155,12 @@ describe('derivePluginSourceLinks · author + contribute', () => {
         } as InstalledPluginRecord['manifest'],
       }),
     );
-    expect(out.authorName).toBe('Substrate');
+    expect(out.authorName).toBe('Plyxl');
     expect(out.authorProfileUrl).toBe('https://github.com/nexu-io');
     expect(out.authorAvatarUrl).toBe('https://github.com/nexu-io.png?size=80');
   });
 
-  it('shows bundled Open Design authors as Substrate', () => {
+  it('shows bundled Open Design authors as Plyxl', () => {
     const out = derivePluginSourceLinks(
       makeRecord({
         manifest: {
@@ -170,7 +170,7 @@ describe('derivePluginSourceLinks · author + contribute', () => {
         } as InstalledPluginRecord['manifest'],
       }),
     );
-    expect(out.authorName).toBe('Substrate');
+    expect(out.authorName).toBe('Plyxl');
   });
 
   it('extracts github avatar from a repo URL by using the owner', () => {

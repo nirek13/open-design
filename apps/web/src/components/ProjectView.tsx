@@ -93,6 +93,7 @@ import { navigate } from '../router';
 import { consumeAppEditWorkspaceFocus } from './apps/RunningAppContext';
 import { agentDisplayName, agentModelDisplayName } from '../utils/agentLabels';
 import { isMacPlatform } from '../utils/platform';
+import { isLocalCliUsageEnabled } from '../utils/local-cli-usage';
 import {
   canAutoRenameProjectFromPrompt,
   summarizeProjectNameFromPrompt,
@@ -8653,6 +8654,7 @@ export function ProjectView({
               config={config}
               onOpenSettings={onOpenSettings}
               showByokRecoveryAction={
+                isLocalCliUsageEnabled() &&
                 config.mode === 'api' &&
                 daemonLive &&
                 (
@@ -8661,10 +8663,10 @@ export function ProjectView({
                   !config.model.trim()
                 )
               }
-              onSwitchToLocalCli={() => {
+              onSwitchToLocalCli={isLocalCliUsageEnabled() ? () => {
                 setError(null);
                 onModeChange('daemon');
-              }}
+              } : undefined}
               onOpenAmrSettings={onOpenAmrSettings}
               onSwitchToAmrAndRetry={handleSwitchToAmrAndRetry}
               onLaunchAntigravityOauth={handleLaunchAntigravityOauth}

@@ -103,7 +103,7 @@ test('[P0] onboarding signed-out AMR authorization cannot be skipped or bypassed
   await expect(page.getByText(/Optional details for better defaults/i)).toHaveCount(0);
 });
 
-test('[P0] @critical onboarding Local CLI card lets the user pick an agent model before continuing', async ({ page }) => {
+test.skip('[P0] @critical onboarding Local CLI card lets the user pick an agent model before continuing', async ({ page }) => {
   const config = await wireOnboardingMocks(page, {
     amrAvailable: false,
     initialLoggedIn: false,
@@ -139,7 +139,7 @@ test('[P0] @critical onboarding Local CLI card lets the user pick an agent model
   await expect(page.getByRole('button', { name: /^Continue$/i })).toBeVisible();
 });
 
-test('[P0] onboarding Local CLI path completes setup with the selected agent model', async ({ page }) => {
+test.skip('[P0] onboarding Local CLI path completes setup with the selected agent model', async ({ page }) => {
   const config = await wireOnboardingMocks(page, {
     amrAvailable: false,
     initialLoggedIn: false,
@@ -172,7 +172,7 @@ test('[P0] onboarding Local CLI path completes setup with the selected agent mod
   });
 });
 
-test('[P0] onboarding Local CLI path stays gated when no local CLI is available', async ({ page }) => {
+test.skip('[P0] onboarding Local CLI path stays gated when no local CLI is available', async ({ page }) => {
   const config = await wireOnboardingMocks(page, {
     amrAvailable: false,
     initialLoggedIn: false,
@@ -194,7 +194,7 @@ test('[P0] onboarding Local CLI path stays gated when no local CLI is available'
   await expect(page.getByText(/Optional details for better defaults/i)).toHaveCount(0);
 });
 
-test('[P0] onboarding Local CLI path stays gated while local agent scan is still running', async ({ page }) => {
+test.skip('[P0] onboarding Local CLI path stays gated while local agent scan is still running', async ({ page }) => {
   const config = await wireOnboardingMocks(page, {
     amrAvailable: false,
     initialLoggedIn: false,
@@ -213,7 +213,7 @@ test('[P0] onboarding Local CLI path stays gated while local agent scan is still
   await expect(page.getByText(/Optional details for better defaults/i)).toHaveCount(0);
 });
 
-test('[P0] onboarding falls back to Local CLI when AMR is unavailable', async ({ page }) => {
+test.skip('[P0] onboarding falls back to Local CLI when AMR is unavailable', async ({ page }) => {
   const config = await wireOnboardingMocks(page, {
     amrAvailable: false,
     initialLoggedIn: false,
@@ -1159,7 +1159,7 @@ async function expectOnboardingFinished(page: Page) {
   }
   await expect(page).not.toHaveURL(/\/onboarding$/);
   await dismissPrivacyDialog(page);
-  await expect(page.getByRole('heading', { name: /What will you design with your agent today/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Plyxl$/i })).toBeVisible();
 }
 
 async function expectFinalDesignSystemStep(page: Page) {

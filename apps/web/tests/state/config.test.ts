@@ -1865,7 +1865,7 @@ describe('secure BYOK profiles', () => {
     });
   });
 
-  it('does not auto-complete onboarding when an OpenAI env profile is present', () => {
+  it('binds a host OpenAI env profile during onboarding when Local CLI is hidden', () => {
     const merged = mergeByokCredentialProfiles({
       ...DEFAULT_CONFIG,
       onboardingCompleted: false,
@@ -1887,7 +1887,12 @@ describe('secure BYOK profiles', () => {
     });
 
     expect(merged.onboardingCompleted).toBe(false);
-    expect(merged.byokProfileId).toBeUndefined();
+    expect(merged).toMatchObject({
+      mode: 'api',
+      byokProfileId: 'byok-env-openai',
+      byokCredentialConfigured: true,
+      apiProtocol: 'openai',
+    });
   });
 
   it('auto-binds an OpenAI env profile after onboarding when no CLI agent is selected', () => {
@@ -1920,7 +1925,7 @@ describe('secure BYOK profiles', () => {
     });
   });
 
-  it('does not steal a selected local CLI session for the env OpenAI profile', () => {
+  it('replaces a selected local CLI session with the env OpenAI profile when Local CLI is hidden', () => {
     const merged = mergeByokCredentialProfiles({
       ...DEFAULT_CONFIG,
       mode: 'daemon',
@@ -1942,8 +1947,11 @@ describe('secure BYOK profiles', () => {
       }],
     });
 
-    expect(merged.mode).toBe('daemon');
-    expect(merged.agentId).toBe('claude');
-    expect(merged.byokProfileId).toBeUndefined();
+    expect(merged).toMatchObject({
+      mode: 'api',
+      agentId: null,
+      byokProfileId: 'byok-env-openai',
+      apiProtocol: 'openai',
+    });
   });
 });

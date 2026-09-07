@@ -104,6 +104,12 @@ vi.mock('../../src/analytics/provider', () => ({
   }),
 }));
 
+vi.mock('../../src/utils/local-cli-usage', () => ({
+  LOCAL_CLI_USAGE_ENABLED: true,
+  isLocalCliUsageEnabled: () => true,
+  effectiveExecutionMode: (mode: string) => mode,
+}));
+
 import { SettingsDialog } from '../../src/components/SettingsDialog';
 import { IntegrationsView } from '../../src/components/IntegrationsView';
 import type { AgentRefreshOptions, SettingsSection } from '../../src/components/SettingsDialog';

@@ -1,5 +1,12 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from 'vitest';
-import { isToggleSearchHotkey } from '../../src/components/search/search-hotkey';
+import {
+  isToggleSearchHotkey,
+  requestToggleSearch,
+  searchShortcutLabel,
+  TOGGLE_SEARCH_EVENT,
+} from '../../src/components/search/search-hotkey';
 
 function chord(init: Partial<KeyboardEvent> & Pick<KeyboardEvent, 'key'>): KeyboardEvent {
   return {
@@ -31,5 +38,21 @@ describe('isToggleSearchHotkey', () => {
     expect(isToggleSearchHotkey(chord({ key: ' ', ...primary, isComposing: true }))).toBe(false);
     expect(isToggleSearchHotkey(chord({ key: 'k', ...primary }))).toBe(false);
     expect(isToggleSearchHotkey(chord({ key: '2', ...primary }))).toBe(false);
+  });
+});
+
+describe('requestToggleSearch', () => {
+  it('dispatches the same event the Command+1 shortcut listens for', () => {
+    const seen: Event[] = [];
+    const onToggle = (event: Event) => seen.push(event);
+    window.addEventListener(TOGGLE_SEARCH_EVENT, onToggle);
+    requestToggleSearch();
+    expect(seen).toHaveLength(1);
+    window.removeEventListener(TOGGLE_SEARCH_EVENT, onToggle);
+  });
+
+  it('names the chrome shortcut for the current platform', () => {
+    const mac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+    expect(searchShortcutLabel()).toBe(mac ? '⌘1' : 'Ctrl+1');
   });
 });

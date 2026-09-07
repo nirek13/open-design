@@ -32,6 +32,7 @@ import {
 } from '../runtime/amr-guidance';
 import { isMacPlatform } from '../utils/platform';
 import { isVisibleLocalCliAgent } from '../utils/visibleAgents';
+import { effectiveExecutionMode, isLocalCliUsageEnabled } from '../utils/local-cli-usage';
 
 interface Props {
   config: AppConfig;
@@ -78,6 +79,8 @@ export function AvatarMenu({
 }: Props) {
   const t = useT();
   const analytics = useAnalytics();
+  const executionMode = effectiveExecutionMode(config.mode);
+  const localCliUsageEnabled = isLocalCliUsageEnabled();
   const [open, setOpen] = useState(false);
   // Toggle that reports the closed→open transition (for analytics) without
   // firing on close.
@@ -339,7 +342,7 @@ export function AvatarMenu({
         title={t('avatar.title')}
         aria-label={t('avatar.title')}
       >
-        {config.mode === 'daemon' && currentAgent ? (
+        {executionMode === 'daemon' && currentAgent ? (
           <AgentIcon id={currentAgent.id} size={20} />
         ) : (
           <RemixIcon name="link" size={20} />
@@ -356,12 +359,12 @@ export function AvatarMenu({
         >
           <div className="avatar-popover-head">
             <span className="who">
-              {config.mode === 'daemon'
+              {executionMode === 'daemon'
                 ? t('avatar.localCli')
                 : apiProtocolLabel(config.apiProtocol)}
             </span>
             <span className="where">
-              {config.mode === 'api'
+              {executionMode === 'api'
                 ? safeHost(config.baseUrl)
                 : currentAgent
                   ? `${displayAgentName(currentAgent)}${
@@ -376,12 +379,13 @@ export function AvatarMenu({
                   : t('avatar.noAgentSelected')}
             </span>
           </div>
+          {localCliUsageEnabled ? (
           <button
             type="button"
-            className={`avatar-item avatar-item--mode${config.mode === 'daemon' ? ' active' : ''}`}
-            aria-current={config.mode === 'daemon' ? 'true' : undefined}
+            className={`avatar-item avatar-item--mode${executionMode === 'daemon' ? ' active' : ''}`}
+            aria-current={executionMode === 'daemon' ? 'true' : undefined}
             onClick={() => {
-              if (config.mode === 'daemon') {
+              if (executionMode === 'daemon') {
                 setOpen(false);
                 if (!daemonLive) {
                   onOpenSettings('execution');
@@ -396,7 +400,7 @@ export function AvatarMenu({
                 onOpenSettings('execution');
               }
             }}
-            disabled={!daemonLive && config.mode !== 'daemon'}
+            disabled={!daemonLive && executionMode !== 'daemon'}
           >
             <span className="avatar-item-icon" aria-hidden>
               <RemixIcon name="file-code-line" size={15} />
@@ -405,30 +409,33 @@ export function AvatarMenu({
             {!daemonLive ? (
               <span className="avatar-item-meta">{t('avatar.metaOffline')}</span>
             ) : null}
-            {config.mode === 'daemon' ? (
+            {executionMode === 'daemon' ? (
               <span className="avatar-item__check" aria-hidden>
                 <RemixIcon name="check-line" size={15} />
               </span>
             ) : null}
           </button>
+          ) : null}
+          {localCliUsageEnabled ? (
           <button
             type="button"
-            className={`avatar-item avatar-item--mode${config.mode === 'api' ? ' active' : ''}`}
-            aria-current={config.mode === 'api' ? 'true' : undefined}
+            className={`avatar-item avatar-item--mode${executionMode === 'api' ? ' active' : ''}`}
+            aria-current={executionMode === 'api' ? 'true' : undefined}
             onClick={() => onModeChange('api')}
           >
             <span className="avatar-item-icon" aria-hidden>
               <RemixIcon name="link" size={15} />
             </span>
             <span>{t('avatar.useApi')}</span>
-            {config.mode === 'api' ? (
+            {executionMode === 'api' ? (
               <span className="avatar-item__check" aria-hidden>
                 <RemixIcon name="check-line" size={15} />
               </span>
             ) : null}
           </button>
+          ) : null}
 
-          {config.mode === 'daemon' && installedAgents.length > 0 ? (
+          {executionMode === 'daemon' && installedAgents.length > 0 ? (
             <>
               <div className="avatar-section-label">{t('avatar.codeAgent')}</div>
               {installedAgents.map((a) => {
@@ -655,7 +662,7 @@ export function AvatarMenu({
             </>
           ) : null}
 
-          {config.mode === 'api' ? (
+          {executionMode === 'api' ? (
             <div className="avatar-model-section">
               <label className="avatar-select-row">
                 <span className="avatar-select-label">

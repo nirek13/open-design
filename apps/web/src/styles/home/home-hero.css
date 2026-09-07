@@ -4,7 +4,7 @@
 .home-view {
   display: flex;
   flex-direction: column;
-  gap: 36px;
+  gap: 44px;
 }
 /* The hero block self-constrains to a readable column even though
    its parent now stretches to ~1440px so the plugin gallery can
@@ -15,55 +15,150 @@
   max-width: 960px;
 }
 
-/* Hero — large centered prompt input */
+/* Hero — large centered prompt input.
+   Local light is a transparent wash so the page-level studio canvas
+   (home-atmosphere.css) shows through. No stacking context. */
 .home-hero {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 32px 0 8px;
+  gap: 16px;
+  padding: 56px 0 28px;
+  background: transparent;
+}
+.home-hero__atmosphere {
+  position: absolute;
+  inset: -32px -22% 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+.home-hero__orb,
+.home-hero__ring,
+.home-hero__grain {
+  position: absolute;
+  pointer-events: none;
+}
+.home-hero__orb--lamp {
+  left: 50%;
+  top: -16%;
+  width: min(92vw, 1080px);
+  height: min(60vw, 640px);
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--accent-tint) 88%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 16%, transparent) 38%,
+    transparent 78%
+  );
+  animation: home-hero-orb-drift 36s linear infinite alternate;
+}
+.home-hero__orb--left {
+  left: -12%;
+  top: 16%;
+  width: min(50vw, 500px);
+  height: min(50vw, 500px);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 12%, transparent),
+    transparent 78%
+  );
+  animation: home-hero-orb-drift 42s linear infinite alternate-reverse;
+}
+.home-hero__orb--right {
+  right: -14%;
+  top: 2%;
+  width: min(46vw, 460px);
+  height: min(46vw, 460px);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent-soft) 52%, transparent),
+    transparent 76%
+  );
+  animation: home-hero-orb-drift 40s linear infinite alternate;
+}
+.home-hero__ring {
+  left: 50%;
+  top: 30%;
+  width: min(620px, 76vw);
+  height: min(620px, 76vw);
+  transform: translate(-50%, -42%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    transparent 42%,
+    color-mix(in srgb, var(--accent) 8%, transparent) 62%,
+    transparent 78%
+  );
+}
+.home-hero__grain {
+  inset: 0;
+  opacity: 0.32;
+  mix-blend-mode: overlay;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.78'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 280 280'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.32' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  background-size: 128px 128px, 280px 280px;
+}
+@keyframes home-hero-orb-drift {
+  from { translate: 0 0; }
+  to { translate: 16px 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-hero__orb--lamp,
+  .home-hero__orb--left,
+  .home-hero__orb--right {
+    animation: none;
+  }
+}
+.home-hero > :not(.home-hero__atmosphere) {
+  position: relative;
+  z-index: 1;
+}
+.home-hero > .home-hero__input-card {
+  z-index: 2;
 }
 .home-hero__brand {
   position: relative;
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 10px;
   color: var(--text-muted);
-  font-size: 13px;
 }
-/* The brand glyph is a self-shaped superellipse tile (rendered through
-   .od-brand-glyph), so it needs no panel disc behind it. */
+/* The brand glyph is the Plyxl P mark (rendered through .od-brand-glyph),
+   so it needs no panel disc behind it. */
 .home-hero__brand-mark {
-  position: absolute;
-  top: 50%;
-  right: calc(100% + 8px);
-  transform: translateY(-50%);
-  width: 26px;
-  height: 26px;
-}
-.home-hero__brand-name {
-  font-family: var(--serif);
-  font-weight: 600;
-  font-size: 16px;
-  color: var(--text-strong);
+  position: static;
+  width: 48px;
+  height: 48px;
 }
 .home-hero__title {
   margin: 0;
-  font-family: var(--serif);
-  font-weight: 600;
-  font-size: 40px;
-  letter-spacing: -0.02em;
+  max-width: 15em;
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 44px;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
   color: var(--text-strong);
   text-align: center;
 }
 .home-hero__subtitle {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13.5px;
+  margin: 0 0 8px;
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   text-align: center;
   max-width: 540px;
-  line-height: 1.55;
+  line-height: 1.45;
 }
 .home-hero__subtitle kbd {
   font: inherit;
@@ -406,11 +501,11 @@
   z-index: 2;
   width: 100%;
   max-width: 720px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: none;
-  padding: 14px 14px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: calc(var(--radius-lg) + var(--radius-xs));
+  box-shadow: var(--shadow-md);
+  padding: 16px 16px 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -440,7 +535,9 @@
 }
 .home-hero__input-card:focus-within {
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  box-shadow: none;
+  box-shadow:
+    var(--shadow-md),
+    0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .home-hero__input-card.is-drag-active {
   border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
@@ -614,17 +711,20 @@
   min-width: 0;
 }
 .home-hero__lexical .composer-input-editor {
-  min-height: 64px;
+  min-height: 72px;
   max-height: var(--home-hero-prompt-max-height, 180px);
 }
 .home-hero__lexical .composer-editable {
-  min-height: 64px;
-  padding: 8px 4px;
+  min-height: 72px;
+  padding: 10px 6px;
+  font-size: 15px;
+  line-height: 1.55;
 }
 .home-hero__lexical .composer-input-placeholder {
-  top: 8px;
-  left: 4px;
+  top: 10px;
+  left: 6px;
   color: var(--text-soft);
+  font-size: 15px;
 }
 /* Typewriter placeholder carousel — a pointer-events-none overlay aligned to
    the editor's first text line (matches .composer-input-placeholder metrics).
@@ -632,15 +732,15 @@
    blanked behind it. See home-hero/PlaceholderCarousel.tsx. */
 .home-hero__lexical .home-hero__carousel {
   position: absolute;
-  top: 8px;
-  left: 4px;
+  top: 10px;
+  left: 6px;
   right: 8px;
   display: flex;
   align-items: center;
   pointer-events: none;
   user-select: none;
-  font-size: 13.5px;
-  line-height: 1.6;
+  font-size: 15px;
+  line-height: 1.55;
   color: var(--text-soft);
   overflow: hidden;
 }
@@ -2120,14 +2220,16 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-width: 64px;
+  min-width: 68px;
   height: 32px;
   padding: 0 16px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--accent);
   background: var(--accent);
   color: white;
-  box-shadow: var(--shadow-xs);
+  box-shadow:
+    var(--shadow-xs),
+    0 6px 16px color-mix(in srgb, var(--accent) 22%, transparent);
   cursor: pointer;
   font: inherit;
   font-size: 12.5px;
@@ -2143,7 +2245,9 @@
 .home-hero__submit:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  box-shadow: var(--shadow-sm);
+  box-shadow:
+    var(--shadow-sm),
+    0 8px 20px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 .home-hero__submit:active:not(:disabled) { transform: translateY(1px); box-shadow: var(--shadow-xs); }
 .home-hero__submit:disabled {
@@ -2236,10 +2340,12 @@
 }
 .home-hero__prompt-examples-title {
   padding: 0 2px;
-  color: var(--text-strong);
-  font-size: 13px;
-  font-weight: 700;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
   line-height: 1.3;
+  text-transform: uppercase;
 }
 .home-hero__prompt-examples-grid {
   display: grid;
@@ -2254,8 +2360,8 @@
   align-items: flex-start;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
   color: var(--text);
   font: inherit;
   font-size: 12.5px;
@@ -2375,7 +2481,7 @@
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-panel);
+  background: var(--bg-elevated);
   color: var(--text);
   font: inherit;
   text-align: left;
@@ -2752,7 +2858,7 @@
 
 @media (max-width: 900px) {
   .home-hero__title {
-    font-size: 30px;
+    font-size: 32px;
   }
   .home-hero__prompt-examples-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2838,10 +2944,12 @@
 .home-hero__template-heading {
   padding: 0 2px;
   color: var(--text-muted);
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
   line-height: 1.3;
   text-align: center;
+  text-transform: uppercase;
 }
 .home-hero__blank-project {
   appearance: none;
@@ -2952,7 +3060,7 @@
 }
 
 .home-hero__scenario-card.home-hero__type-tab {
-  flex: 0 0 156px;
+  flex: 0 0 168px;
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
@@ -2960,14 +3068,15 @@
   min-height: 0;
   padding: 0;
   border-radius: var(--radius-lg);
-  background: var(--bg-panel);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-xs);
   text-align: left;
   overflow: hidden;
 }
 .home-hero__scenario-card.home-hero__type-tab:hover:not(:disabled) {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
-  background: var(--bg-panel);
+  background: var(--bg-elevated);
   box-shadow: var(--shadow-sm);
 }
 .home-hero__scenario-card.home-hero__type-tab.is-active {
@@ -2978,7 +3087,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 74px;
+  height: 86px;
   color: var(--accent);
   background: radial-gradient(
     120% 120% at 30% 20%,
@@ -2998,8 +3107,8 @@
 .home-hero__scenario-card-body {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 9px 11px 11px;
+  gap: 3px;
+  padding: 11px 12px 13px;
 }
 .home-hero__scenario-card-title {
   color: var(--text-strong);

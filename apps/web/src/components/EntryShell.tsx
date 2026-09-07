@@ -190,6 +190,7 @@ import { smoothScrollToTop } from '../utils/smoothScrollToTop';
 import { summarizeProjectNameFromPrompt } from '../utils/projectName';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
 import { DATABASE_UI_VISIBLE } from '../features/databaseUi';
+import { isLocalCliUsageEnabled } from '../utils/local-cli-usage';
 import {
   providerModelsCacheKey,
   type ProviderModelsCache,
@@ -1144,7 +1145,10 @@ export function EntryShell({
               />
             </div>
             <div data-testid="entry-view-calendar" data-active={view === 'calendar' ? 'true' : 'false'} {...inactiveViewProps(view === 'calendar')}>
-              <CalendarView active={view === 'calendar'} />
+              <CalendarView
+                active={view === 'calendar'}
+                initialEventId={route.kind === 'home' && route.view === 'calendar' ? route.eventId : undefined}
+              />
             </div>
             <div data-testid="entry-view-mail" data-active={view === 'mail' ? 'true' : 'false'} {...inactiveViewProps(view === 'mail')}>
               <MailView
@@ -2883,6 +2887,8 @@ function OnboardingView({
             </button>
           ) : (
             <div className="onboarding-cloud__alts">
+              {isLocalCliUsageEnabled() ? (
+              <>
               <button
                 type="button"
                 className="onboarding-cloud__secondary"
@@ -2901,6 +2907,8 @@ function OnboardingView({
               <span className="onboarding-cloud__alts-or">
                 {t('settings.onboardingCloudOr')}
               </span>
+              </>
+              ) : null}
               <button
                 type="button"
                 className="onboarding-cloud__secondary"

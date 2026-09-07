@@ -1,0 +1,129 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-linear-tracker",
+  "title": "Linear Tracker",
+  "title_i18n": {
+    "zh-CN": "Linear 研发看板",
+    "zh-TW": "Linear 研發看板",
+    "ja": "Linear トラッカー",
+    "ko": "Linear 트래커",
+    "de": "Linear Tracker",
+    "fr": "Tracker Linear",
+    "ru": "Трекер Linear",
+    "es": "Tracker de Linear",
+    "pt-BR": "Tracker Linear",
+    "it": "Tracker Linear",
+    "vi": "Trình theo dõi Linear",
+    "pl": "Tracker Linear",
+    "id": "Pelacak Linear",
+    "nl": "Linear-tracker",
+    "ar": "متتبع Linear",
+    "tr": "Linear Takipçi",
+    "uk": "Трекер Linear",
+    "en": "Linear Tracker"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-06T20:00:00Z",
+  "description": "Linear-style issue tracker for shipping software — dense left rail, cycle progress, list and board views, issue detail, keyboard shortcuts, and create/edit. Use when the brief asks for a Linear clone, issue tracker, production board, cycle board, or software project management UI — not a Trello kanban, not an Orbit Linear digest.",
+  "description_i18n": {
+    "zh-CN": "Linear 风格的研发问题追踪器：左侧导航、周期进度、列表/看板、详情面板、快捷键与创建编辑。用于 Linear 克隆、问题追踪、生产看板；不是 Trello 看板，也不是 Orbit Linear 日报。",
+    "zh-TW": "Linear 風格的研發問題追蹤器：左側導航、週期進度、列表/看板、詳情面板、快捷鍵與建立編輯。用於 Linear 克隆、問題追蹤、生產看板；不是 Trello 看板，也不是 Orbit Linear 日報。",
+    "ja": "ソフトウェア出荷用の Linear 風イシュートラッカー。左レール、サイクル進捗、リスト/ボード、詳細、ショートカット、作成/編集。Linear クローンや本番ボード向け。Trello かんばんや Orbit Linear ダイジェストではない。",
+    "ko": "소프트웨어 출시용 Linear 스타일 이슈 트래커. 왼쪽 레일, 사이클 진행률, 리스트/보드, 상세, 단축키, 생성/편집. Linear 클론이나 프로덕션 보드용이며 Trello 칸반이나 Orbit Linear 다이제스트가 아닙니다.",
+    "de": "Issue-Tracker im Linear-Stil für die Software-Auslieferung: dichte linke Leiste, Cycle-Fortschritt, Listen- und Board-Ansicht, Issue-Detail, Tastenkürzel, Erstellen/Bearbeiten. Für Linear-Klone und Production Boards — kein Trello-Kanban, kein Orbit-Linear-Digest.",
+    "fr": "Tracker d’issues façon Linear pour livrer un logiciel : rail gauche dense, progression de cycle, vues liste et board, détail d’issue, raccourcis, création/édition. Pour un clone Linear ou un board de production — pas un kanban Trello, pas un digest Orbit Linear.",
+    "ru": "Трекер задач в стиле Linear для поставки ПО: плотная левая панель, прогресс цикла, список и доска, карточка задачи, горячие клавиши, создание и правка. Для клона Linear и продакшен-борда — не канбан Trello и не дайджест Orbit Linear.",
+    "es": "Tracker de issues al estilo Linear para entregar software: rail izquierdo denso, progreso de ciclo, vistas de lista y tablero, detalle, atajos y crear/editar. Para un clon de Linear o un tablero de producción — no un kanban de Trello ni un digest de Orbit Linear.",
+    "pt-BR": "Tracker de issues no estilo Linear para entregar software: trilho esquerdo denso, progresso do ciclo, visões de lista e board, detalhe, atalhos e criar/editar. Para um clone Linear ou board de produção — não é um kanban Trello nem um digest Orbit Linear.",
+    "it": "Tracker di issue in stile Linear per rilasciare software: rail sinistro denso, avanzamento del ciclo, viste lista e board, dettaglio, scorciatoie e crea/modifica. Per un clone Linear o una board di produzione — non un kanban Trello né un digest Orbit Linear.",
+    "vi": "Trình theo dõi issue kiểu Linear để ship phần mềm: rail trái dày, tiến độ cycle, list/board, chi tiết, phím tắt, tạo/sửa. Dùng cho bản clone Linear hoặc bảng sản xuất — không phải kanban Trello hay digest Orbit Linear.",
+    "pl": "Tracker zgłoszeń w stylu Linear do dowożenia oprogramowania: gęsta lewa szyna, postęp cyklu, widok listy i tablicy, szczegóły, skróty, tworzenie/edycja. Do klona Linear lub tablicy produkcyjnej — nie kanban Trello ani digest Orbit Linear.",
+    "id": "Pelacak issue bergaya Linear untuk merilis perangkat lunak: rail kiri rapat, progres siklus, tampilan list dan board, detail, pintasan, buat/ubah. Untuk klon Linear atau papan produksi — bukan kanban Trello atau digest Orbit Linear.",
+    "nl": "Issuetracker in Linear-stijl voor software-delivery: dichte linkerrail, cycle-voortgang, lijst- en boardweergave, detail, sneltoetsen, aanmaken/bewerken. Voor een Linear-kloon of productiebord — geen Trello-kanban, geen Orbit Linear-digest.",
+    "ar": "متتبع مسائل بأسلوب Linear لتسليم البرمجيات: شريط أيسر كثيف، تقدم الدورة، قائمتان ولوحة، تفاصيل، اختصارات، إنشاء/تعديل. لنسخة Linear أو لوحة إنتاج — وليس كانبان Trello ولا ملخص Orbit Linear.",
+    "tr": "Yazılım teslimi için Linear tarzı iş takipçisi: sık sol ray, döngü ilerlemesi, liste ve pano, ayrıntı, kısayollar, oluştur/düzenle. Linear klonu veya üretim panosu için — Trello kanbanı veya Orbit Linear özeti değil.",
+    "uk": "Трекер задач у стилі Linear для поставки ПЗ: щільна ліва панель, прогрес циклу, список і дошка, деталі, скорочення, створення/редагування. Для клону Linear чи продакшен-борду — не канбан Trello і не дайджест Orbit Linear.",
+    "en": "Linear-style issue tracker for shipping software — dense left rail, cycle progress, list and board views, issue detail, keyboard shortcuts, and create/edit. Use when the brief asks for a Linear clone, issue tracker, production board, cycle board, or software project management UI — not a Trello kanban, not an Orbit Linear digest."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Open Design",
+    "url": "https://github.com/nexu-io"
+  },
+  "homepage": "https://github.com/nexu-io/open-design/tree/main/plugins/_official/examples/linear-tracker",
+  "tags": [
+    "example",
+    "first-party",
+    "prototype",
+    "operations",
+    "web",
+    "desktop",
+    "linear-clone",
+    "issue-tracker",
+    "production-tracker",
+    "cycle-board",
+    "software-issues"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "platform": "desktop",
+    "scenario": "operations",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html",
+      "motion": "static"
+    },
+    "useCase": {
+      "query": {
+        "en": "Build a Linear-style issue tracker for our product team this cycle — Inbox, Active, Backlog, list and board views, issue detail, and production work across packaged, web, daemon, and hosting.",
+        "zh-CN": "使用这个插件完成以下任务：Build a Linear-style issue tracker for our product team this cycle — Inbox, Active, Backlog, list and board views, issue detail, and production work across packaged, web, daemon, and hosting."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "Linear Tracker"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "assets": [
+        "./example.html"
+      ],
+      "craft": [
+        "state-coverage",
+        "laws-of-ux"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

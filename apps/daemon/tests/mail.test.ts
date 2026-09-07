@@ -11,6 +11,7 @@ import {
   normalizeMailMessage,
   parseAddressList,
   sendMail,
+  triageMailMessages,
   type GmailExecutor,
 } from '../src/workspace-data/mail.js';
 
@@ -156,5 +157,29 @@ describe('mail payload parsing', () => {
     expect(mail.body).toContain('<strong>Northwind</strong>');
     expect(mail.body).toContain('https://example.com/join?token=abc');
     expect(mail.body).not.toContain('<script');
+  });
+
+  it('applies triage marks through the Gmail executor', async () => {
+    const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const exec: GmailExecutor = {
+      async execute(toolName, input) {
+        calls.push({ tool: toolName, input });
+        return {};
+      },
+    };
+    const preview = await triageMailMessages(exec, [normalizeMailMessage(SAMPLE_MESSAGE)], false);
+    expect(preview.appliedCount).toBe(0);
+    expect(preview.decisions[0]?.bucket).toBe('needs_reply');
+    expect(calls).toEqual([]);
+
+    const applied = await triageMailMessages(exec, [normalizeMailMessage(SAMPLE_MESSAGE)], true);
+    expect(applied.appliedCount).toBe(1);
+    expect(calls[0]).toMatchObject({
+      tool: 'GMAIL_ADD_LABEL_TO_EMAIL',
+      input: {
+        message_id: SAMPLE_MESSAGE.messageId,
+        add_label_ids: ['STARRED', 'IMPORTANT'],
+      },
+    });
   });
 });

@@ -14,8 +14,13 @@ const MAIL_USAGE = `Usage:
   od tools mail get --thread <thread-id>
   od tools mail send --to <emails> --subject <text> --body <text>
   od tools mail reply --thread <thread-id> --body <text> [--to <emails>]
+  od tools mail modify --message <message-id> [--add <labels>] [--remove <labels>]
+  od tools mail triage [--apply] [--label <id>] [--query <text>] [--max <n>]
+  od tools mail summarize --thread <thread-id>
+  od tools mail draft --thread <thread-id> [--instruction <text>]
 
 Same mailbox as the Mail UI. Gmail must already be connected under Integrations.
+Triage stars mail that needs a reply, archives bulk, and marks FYI read.
 Do not print OD_TOOL_TOKEN.
 
 Environment:
@@ -63,6 +68,11 @@ interface Options {
   to?: string;
   subject?: string;
   body?: string;
+  message?: string;
+  add?: string;
+  remove?: string;
+  instruction?: string;
+  apply?: boolean;
   help?: boolean;
 }
 
@@ -105,6 +115,24 @@ function parseOptions(args: string[]): Options | { error: string } {
       const value = rest[++index];
       if (value === undefined) return { error: '--body requires text' };
       options.body = value;
+    } else if (arg === '--message') {
+      const value = rest[++index];
+      if (!value) return { error: '--message requires a message id' };
+      options.message = value;
+    } else if (arg === '--add') {
+      const value = rest[++index];
+      if (value === undefined) return { error: '--add requires label ids' };
+      options.add = value;
+    } else if (arg === '--remove') {
+      const value = rest[++index];
+      if (value === undefined) return { error: '--remove requires label ids' };
+      options.remove = value;
+    } else if (arg === '--instruction') {
+      const value = rest[++index];
+      if (value === undefined) return { error: '--instruction requires text' };
+      options.instruction = value;
+    } else if (arg === '--apply') {
+      options.apply = true;
     } else if (arg === '-h' || arg === '--help') {
       options.help = true;
     } else {
@@ -186,6 +214,33 @@ export async function runMailToolCli(args: string[]): Promise<ToolCliResult> {
           threadId: options.thread,
           body: options.body,
           ...(options.to ? { to: options.to } : {}),
+        });
+      }
+      case 'modify': {
+        if (!options.message) return fail('modify requires --message');
+        if (!options.add && !options.remove) return fail('modify requires --add or --remove');
+        return await post(baseUrl, token, '/api/tools/mail/modify', {
+          messageId: options.message,
+          ...(options.add ? { add: options.add } : {}),
+          ...(options.remove ? { remove: options.remove } : {}),
+        });
+      }
+      case 'triage':
+        return await post(baseUrl, token, '/api/tools/mail/triage', {
+          apply: options.apply === true,
+          ...(options.query ? { query: options.query } : {}),
+          ...(options.label ? { label: options.label } : {}),
+          ...(options.max === undefined ? {} : { maxResults: options.max }),
+        });
+      case 'summarize': {
+        if (!options.thread) return fail('summarize requires --thread');
+        return await post(baseUrl, token, '/api/tools/mail/summarize', { threadId: options.thread });
+      }
+      case 'draft': {
+        if (!options.thread) return fail('draft requires --thread');
+        return await post(baseUrl, token, '/api/tools/mail/draft', {
+          threadId: options.thread,
+          ...(options.instruction ? { instruction: options.instruction } : {}),
         });
       }
       default:

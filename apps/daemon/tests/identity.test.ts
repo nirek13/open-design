@@ -405,6 +405,35 @@ describe('IdentityService clerk mode', () => {
     expect(again?.displayName).toBe('Ada Lovelace');
   });
 
+  it('keeps a stored email when a later Clerk token omits it', async () => {
+    const withEmail = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_ivy',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        email: 'ivy@co.com',
+        name: 'Ivy',
+      },
+      privateKey,
+    );
+    const first = await identity.resolveViewer(reqWithBearer(withEmail), manager.directoryExecutor);
+    expect(first?.email).toBe('ivy@co.com');
+
+    const withoutEmail = signRs256(
+      { alg: 'RS256', typ: 'JWT', kid },
+      {
+        sub: 'user_ivy',
+        iss: ISSUER,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        name: 'Ivy',
+      },
+      privateKey,
+    );
+    const again = await identity.resolveViewer(reqWithBearer(withoutEmail), manager.directoryExecutor);
+    expect(again?.email).toBe('ivy@co.com');
+  });
+
   it('refuses a token from the wrong issuer', async () => {
     const token = signRs256(
       { alg: 'RS256', typ: 'JWT', kid },

@@ -1,4 +1,14 @@
-import type { PageBlock, PageBlockInput, PageBlockType } from '@open-design/contracts';
+import {
+  defaultPageTool,
+  isPageToolType,
+  parsePageTool,
+  PAGE_TOOL_TYPES,
+  type PageBlock,
+  type PageBlockInput,
+  type PageBlockType,
+  type PageToolPayload,
+  type PageToolType,
+} from '@open-design/contracts';
 import { MEDIA_BLOCK_TYPES } from '../../runtime/page-rich-text';
 
 export interface DraftBlock {
@@ -52,6 +62,7 @@ export function defaultProps(type: PageBlockType): Record<string, unknown> {
   if (type === 'callout') return { icon: '💡', color: 'default' };
   if (type === 'code') return { language: 'text' };
   if (type === 'column_list') return { columns: 2 };
+  if (isPageToolType(type)) return { tool: defaultPageTool(type) };
   return {};
 }
 
@@ -67,13 +78,19 @@ export function cloneBlock(block: DraftBlock): DraftBlock {
 export function blocksFromServer(blocks: PageBlock[]): DraftBlock[] {
   const walk = (list: PageBlock[]): DraftBlock[] =>
     list.map((block) => {
-      const props = { ...block.props };
+      const props: Record<string, unknown> = { ...block.props };
       let text = typeof block.content === 'string' ? block.content : '';
       if (block.type === 'table') {
         props.rows =
           typeof block.content === 'object' && block.content
             ? block.content
             : { rows: [['', ''], ['', '']] };
+      }
+      if (isPageToolType(block.type)) {
+        props.tool = parsePageTool(
+          block.type,
+          typeof block.content === 'object' && block.content ? block.content : block.props.tool,
+        );
       }
       if (MEDIA_BLOCK_TYPES.has(block.type) && !props.url && text.trim()) {
         props.url = text.trim();
@@ -118,6 +135,10 @@ export function blocksToServer(blocks: DraftBlock[]): PageBlockInput[] {
     if (block.type === 'table') {
       content = tablePayload(block);
       delete props.rows;
+    }
+    if (isPageToolType(block.type)) {
+      content = toolPayload(block);
+      delete props.tool;
     }
     if (MEDIA_BLOCK_TYPES.has(block.type) && !props.url && block.text.trim()) {
       props.url = block.text.trim();
@@ -174,6 +195,13 @@ export function tablePayload(block: DraftBlock): { rows: string[][] } {
 export function tableRows(block: DraftBlock): string[][] {
   return tablePayload(block).rows;
 }
+
+export function toolPayload(block: DraftBlock): PageToolPayload {
+  const type: PageToolType = isPageToolType(block.type) ? block.type : 'checklist';
+  return parsePageTool(type, block.props.tool);
+}
+
+export const TOOL_TYPES = new Set<PageBlockType>(PAGE_TOOL_TYPES);
 
 export function updateAt(list: DraftBlock[], key: string, patch: Partial<DraftBlock>): DraftBlock[] {
   return list.map((block) => {
@@ -427,9 +455,9 @@ export function pageTemplateBlocks(id: PageTemplateId): DraftBlock[] {
   if (id === 'tasks') {
     return [
       emptyBlockWith('heading_1', 'Tasks'),
-      emptyBlockWith('to_do', ''),
-      emptyBlockWith('to_do', ''),
-      emptyBlockWith('to_do', ''),
+      emptyBlock('checklist'),
+      emptyBlock('assigner'),
+      emptyBlock('board'),
     ];
   }
   return [emptyBlock('paragraph')];

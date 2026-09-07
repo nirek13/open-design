@@ -388,15 +388,22 @@ const TEAM_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'private', 'starred', '
 const PAGES_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'title', 'parent', 'icon', 'cover', 'data-file',
   'query', 'q', 'limit', 'type', 'target', 'table', 'record', 'path', 'url',
+  'channel', 'to', 'message', 'team', 'except',
 ]);
 const PAGES_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'tree', 'recursive']);
-const CALENDAR_STRING_FLAGS = new Set(['daemon-url', 'org', 'from', 'to']);
-const CALENDAR_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const CALENDAR_STRING_FLAGS = new Set([
+  'daemon-url', 'org', 'from', 'to', 'source', 'file', 'url', 'name', 'color',
+  'title', 'starts', 'ends', 'location', 'description', 'prompt-file', 'database-id',
+  'guests', 'teams', 'calendar', 'team', 'kind', 'user',
+  'channel', 'message', 'except',
+  'duration', 'timezone', 'weekdays', 'start-time', 'end-time', 'token', 'email',
+]);
+const CALENDAR_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'all-day']);
 const MAIL_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'label', 'query', 'q', 'to', 'cc', 'bcc', 'subject',
-  'body', 'prompt-file', 'page-token', 'max',
+  'body', 'prompt-file', 'page-token', 'max', 'instruction',
 ]);
-const MAIL_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'html']);
+const MAIL_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'html', 'apply']);
 const SLACK_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'channel', 'text', 'query', 'q', 'cursor', 'limit',
   'thread', 'emoji', 'prompt-file',
@@ -814,8 +821,12 @@ function printRootHelp() {
       Message colleagues in organization channels and DMs. Same store as the
       messaging UI.
 
-  od tools mail <list|get|send|reply>
-      Read and send organization email through the connected Gmail mailbox.
+  od tools mail <list|get|send|reply|modify|triage|summarize|draft>
+      Read, send, and agentically sort organization email through Gmail.
+
+  od calendar <list|create|calendars|add-calendar|schedule|sync|import|send|booking-types|booking-create|booking-revoke|book|invite>
+      Organization calendar with team calendars, guests, Google / Notion / Apple import,
+      and shareable booking links. Same store as the Calendar UI.
 
   od tools data <list-tables|describe-table|create-table|query|insert|update|import-url>
       Workspace tables for agents. Magic-import a public spreadsheet, JSON,
@@ -13047,25 +13058,75 @@ async function runTeam(args) {
   process.exit(2);
 }
 
-// od calendar — organization calendar + Google sync (same HTTP as the Calendar UI).
+// od calendar — organization calendar + Google / Notion / Apple import (same HTTP as the Calendar UI).
 
 function printCalendarHelp() {
   console.log(`Usage: od calendar <subcommand> [options]
 
 Subcommands:
-  list                         List events (--from / --to ISO dates)
-  sync                         Pull Google Calendar into the org calendar
+  list                         List events (--from / --to ISO dates, --user for a person's schedule)
+  create                       Create an event (--title --starts --ends)
+  calendars                    List named calendars
+  add-calendar                 Create a named calendar (--name, optional --kind team --team)
+  schedule                     Show one person's schedule (--user, --from, --to)
+  sync                         Pull a connected calendar (--source google|notion)
+  import                       Import Google, Notion, or an Apple/ICS calendar
+  send <event-id>              Invite people and drop the event in chat
+                               (--channel, --to <member-id>, --team, --message)
+  booking-types                List your shareable booking links
+  booking-create               Create a booking link (--title, optional --duration 15|30|45|60)
+  booking-revoke <id>          Turn a booking link off
+  book                         Book a public slot (--token --starts --name --email)
+  invite <event-id>            Print a calendar invite (.ics + Google URL)
 
 Options:
   --org <id>                   Organization (defaults to the first membership)
   --from <iso>                 Inclusive range start
   --to <iso>                   Inclusive range end
+  --user <user-id>             Person whose schedule to show
+  --source <google|notion|apple>
+  --file <path>                .ics file (Apple Calendar / iCloud export)
+  --url <webcal-or-https>      Public calendar feed URL
+  --name <text>                Calendar name for an import or add-calendar
+  --kind <shared|team>         Calendar kind for add-calendar
+  --team <id>                  Org team id (team calendar, or invite a team)
+  --calendar <id>              Calendar to put a new event on
+  --title <text>               Event title
+  --starts <iso>               Event start
+  --ends <iso>                 Event end
+  --location <text>            Event location
+  --description <text>         Event description
+  --guests <user-id,...>       People to invite (directory user ids)
+  --teams <team-id,...>        Teams to invite
+  --channel <slug>             Chat channel to send an event into
+  --to <member-id>             Person to DM (repeatable; send only)
+  --except <member-id>         Skip this person when sending to a team
+  --message <text>             Optional note with the send
+  --duration <minutes>         Booking length: 15, 30, 45, or 60
+  --timezone <iana>            Booking timezone (e.g. America/New_York)
+  --weekdays <0-6,...>         Days a booking link is open (0=Sun)
+  --start-time <HH:MM>         Daily availability start
+  --end-time <HH:MM>           Daily availability end
+  --token <token>              Public booking-link token
+  --email <addr>               Guest email for \`book\`
+  --prompt-file <path|->       Long-form ICS or description from a file / stdin
+  --database-id <id>           Notion database to import
+  --all-day                    All-day event
   --json                       Machine-readable output
   --daemon-url <url>           Daemon base URL
 
 Examples:
   od calendar list --json
-  od calendar sync
+  od calendar schedule --user user-ada --from 2026-09-08 --to 2026-09-09
+  od calendar add-calendar --name Design --kind team --team team-design
+  od calendar sync --source google
+  od calendar sync --source notion
+  od calendar import --source apple --file ~/Downloads/Work.ics
+  od calendar import --source apple --url webcal://p123-caldav.icloud.com/published/2/…
+  od calendar create --title "Design review" --starts 2026-09-08T15:00 --ends 2026-09-08T16:00 --guests user-ada --teams team-design
+  od calendar send evt-1 --to wsm-ada --message "can you make this?"
+  od calendar booking-create --title "Intro" --duration 30 --json
+  od calendar book --token <token> --starts 2026-09-10T15:00:00.000Z --name Ada --email ada@example.com
 `);
 }
 
@@ -13114,6 +13175,23 @@ async function runCalendar(args) {
     return first.id;
   }
 
+  if (sub === 'book') {
+    const token = flags.token;
+    if (!token || !flags.starts || !flags.name || !flags.email) {
+      console.error('usage: od calendar book --token <token> --starts <iso> --name <text> --email <addr>');
+      process.exit(2);
+    }
+    const data = await request('POST', `/api/book/${encodeURIComponent(token)}`, {
+      name: flags.name,
+      email: flags.email,
+      startsAt: flags.starts,
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`${data.startsAt}\t${data.title}\t${data.hostName}`);
+    console.log(data.googleUrl);
+    return;
+  }
+
   const orgId = await resolveOrgId();
   const scope = `/api/orgs/${encodeURIComponent(orgId)}/calendar`;
 
@@ -13121,19 +13199,232 @@ async function runCalendar(args) {
     const params = new URLSearchParams();
     if (flags.from) params.set('from', flags.from);
     if (flags.to) params.set('to', flags.to);
+    if (flags.user) params.set('user', flags.user);
     const qs = params.size > 0 ? `?${params.toString()}` : '';
     const data = await request('GET', `${scope}/events${qs}`);
     if (flags.json) return writeJsonOut(data);
     for (const event of data.events ?? []) {
-      console.log(`${event.startsAt}\t${event.endsAt}\t${event.title}\t${event.id}`);
+      console.log(`${event.startsAt}\t${event.endsAt}\t${event.title}\t${event.source}\t${event.id}`);
     }
     return;
   }
 
+  if (sub === 'schedule') {
+    const userId = flags.user;
+    if (!userId) {
+      console.error('schedule requires --user');
+      process.exit(2);
+    }
+    const params = new URLSearchParams();
+    params.set('user', userId);
+    if (flags.from) params.set('from', flags.from);
+    if (flags.to) params.set('to', flags.to);
+    const data = await request('GET', `${scope}/events?${params.toString()}`);
+    if (flags.json) return writeJsonOut(data);
+    for (const event of data.events ?? []) {
+      const guests = [
+        ...(event.guestUserIds ?? []),
+        ...(event.guestTeamIds ?? []),
+      ].join(',');
+      console.log(`${event.startsAt}\t${event.endsAt}\t${event.title}\t${guests || '-'}\t${event.id}`);
+    }
+    return;
+  }
+
+  if (sub === 'calendars') {
+    const data = await request('GET', `${scope}/calendars`);
+    if (flags.json) return writeJsonOut(data);
+    for (const calendar of data.calendars ?? []) {
+      console.log(`${calendar.kind}\t${calendar.source}\t${calendar.name}\t${calendar.teamId || '-'}\t${calendar.id}`);
+    }
+    return;
+  }
+
+  if (sub === 'add-calendar') {
+    const name = flags.name;
+    if (!name) {
+      console.error('add-calendar requires --name');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/calendars`, {
+      name,
+      color: flags.color,
+      kind: flags.kind || (flags.team ? 'team' : 'shared'),
+      teamId: flags.team || null,
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(data.calendar?.id ?? 'created');
+    return;
+  }
+
+  if (sub === 'create') {
+    const title = flags.title;
+    const startsAt = flags.starts;
+    const endsAt = flags.ends;
+    if (!title || !startsAt || !endsAt) {
+      console.error('create requires --title, --starts, and --ends');
+      process.exit(2);
+    }
+    const description = flags.description
+      ?? (flags['prompt-file'] ? readFileSync(flags['prompt-file'] === '-' ? 0 : flags['prompt-file'], 'utf8') : undefined);
+    const data = await request('POST', `${scope}/events`, {
+      title,
+      startsAt,
+      endsAt,
+      location: flags.location ?? null,
+      description: description ?? null,
+      allDay: Boolean(flags['all-day']),
+      calendarId: flags.calendar || null,
+      guestUserIds: flags.guests ? String(flags.guests).split(',').map((id) => id.trim()).filter(Boolean) : [],
+      guestTeamIds: flags.teams ? String(flags.teams).split(',').map((id) => id.trim()).filter(Boolean) : [],
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(data.event?.id ?? 'created');
+    return;
+  }
+
   if (sub === 'sync') {
-    const data = await request('POST', `${scope}/google/sync`);
+    const source = flags.source || 'google';
+    const route = source === 'notion' ? `${scope}/notion/sync` : `${scope}/google/sync`;
+    const data = await request('POST', route, source === 'notion' && flags['database-id']
+      ? { databaseId: flags['database-id'] }
+      : undefined);
     if (flags.json) return writeJsonOut(data);
     console.log(`imported ${data.imported} event(s)`);
+    return;
+  }
+
+  if (sub === 'import') {
+    const source = flags.source || (flags.file || flags.url || flags['prompt-file'] ? 'apple' : 'google');
+    let ics;
+    if (flags.file) ics = readFileSync(flags.file, 'utf8');
+    else if (flags['prompt-file'] && source === 'apple' && !flags.url) {
+      ics = readFileSync(flags['prompt-file'] === '-' ? 0 : flags['prompt-file'], 'utf8');
+    }
+    const data = await request('POST', `${scope}/import`, {
+      source,
+      ics,
+      icsUrl: flags.url,
+      name: flags.name,
+      color: flags.color,
+      databaseId: flags['database-id'],
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`imported ${data.imported} event(s)`);
+    return;
+  }
+
+  if (sub === 'send') {
+    const eventId = positionals[1];
+    if (!eventId) {
+      console.error('usage: od calendar send <event-id> --channel <slug> | --to <member-id> | --team <team-id>');
+      process.exit(2);
+    }
+    const destPeople = repeatedCliFlag(args, 'to');
+    const destTeams = repeatedCliFlag(args, 'team');
+    const destChannels = repeatedCliFlag(args, 'channel');
+    const exceptIds = repeatedCliFlag(args, 'except');
+    if (destPeople.length === 0 && destTeams.length === 0 && destChannels.length === 0 && exceptIds.length === 0) {
+      console.error('send requires --channel <slug>, --to <member-id>, or --team <team-id>');
+      process.exit(2);
+    }
+    const shown = await request('GET', `${scope}/events/${encodeURIComponent(eventId)}`);
+    const event = shown.event;
+    const members = await request('GET', `/api/orgs/${encodeURIComponent(orgId)}/members`);
+    const userByMember = new Map((members.members ?? []).map((row) => [row.id, row.userId]));
+    const result = await postOrgChatSends(request, orgId, {
+      people: destPeople,
+      teams: destTeams,
+      channels: destChannels,
+      except: exceptIds,
+      body: typeof flags.message === 'string' && flags.message.trim()
+        ? flags.message.trim()
+        : `Shared ${event.title}`,
+      attachments: [{ kind: 'event', id: event.id, label: event.title }],
+    });
+    const guestUsers = new Set(event.guestUserIds ?? []);
+    const guestTeams = new Set(event.guestTeamIds ?? []);
+    for (const memberId of result.memberIds) {
+      const userId = userByMember.get(memberId);
+      if (userId) guestUsers.add(userId);
+    }
+    for (const teamId of destTeams) guestTeams.add(teamId);
+    await request('PATCH', `${scope}/events/${encodeURIComponent(eventId)}`, {
+      title: event.title,
+      description: event.description,
+      location: event.location,
+      startsAt: event.startsAt,
+      endsAt: event.endsAt,
+      allDay: event.allDay,
+      calendarId: event.calendarId,
+      color: event.color,
+      recurrence: event.recurrence,
+      timezone: event.timezone,
+      attendees: event.attendees,
+      guestUserIds: [...guestUsers],
+      guestTeamIds: [...guestTeams],
+    });
+    if (flags.json) return writeJsonOut({ event, posted: result.posted, except: result.exceptIds });
+    for (const item of result.posted) {
+      console.log(`[calendar] sent ${event.id} to ${item.channel}`);
+    }
+    return;
+  }
+
+  if (sub === 'booking-types') {
+    const data = await request('GET', `${scope}/booking-types`);
+    if (flags.json) return writeJsonOut(data);
+    for (const type of data.bookingTypes ?? []) {
+      console.log(`${type.durationMinutes}m\t${type.title}\t${type.url}\t${type.id}`);
+    }
+    return;
+  }
+
+  if (sub === 'booking-create') {
+    if (!flags.title) {
+      console.error('booking-create requires --title');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/booking-types`, {
+      title: flags.title,
+      description: flags.description || null,
+      location: flags.location || null,
+      durationMinutes: flags.duration ? Number(flags.duration) : 30,
+      calendarId: flags.calendar || null,
+      timezone: flags.timezone || null,
+      weekdays: flags.weekdays
+        ? String(flags.weekdays).split(',').map((part) => Number(part.trim())).filter((n) => Number.isInteger(n))
+        : undefined,
+      startTime: flags['start-time'] || null,
+      endTime: flags['end-time'] || null,
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(data.bookingType?.url ?? data.token);
+    return;
+  }
+
+  if (sub === 'booking-revoke') {
+    const id = positionals[1];
+    if (!id) {
+      console.error('usage: od calendar booking-revoke <id>');
+      process.exit(2);
+    }
+    await request('DELETE', `${scope}/booking-types/${encodeURIComponent(id)}`);
+    if (flags.json) return writeJsonOut({ ok: true });
+    console.log('revoked');
+    return;
+  }
+
+  if (sub === 'invite') {
+    const eventId = positionals[1];
+    if (!eventId) {
+      console.error('usage: od calendar invite <event-id>');
+      process.exit(2);
+    }
+    const data = await request('GET', `${scope}/events/${encodeURIComponent(eventId)}/invite.ics?format=json`);
+    if (flags.json) return writeJsonOut(data);
+    process.stdout.write(data.ics ?? '');
+    if (data.googleUrl) console.log(data.googleUrl);
     return;
   }
 
@@ -13159,6 +13450,9 @@ Subcommands:
   read <message-id>            Mark as read
   unread <message-id>          Mark as unread
   trash <message-id>           Move to trash
+  triage                       Sort and mark the inbox (add --apply to write)
+  summarize <thread-id>        Fast-read a thread
+  draft <thread-id>            Draft a reply (--instruction or --prompt-file)
 
 Options:
   --org <id>                   Organization (defaults to the first membership)
@@ -13169,8 +13463,10 @@ Options:
   --bcc <emails>               Blind carbon copy
   --subject <text>             Subject line
   --body <text>                Message body
+  --instruction <text>         Steer an agentic draft
   --prompt-file <path|->       Long-form body from a file or stdin
   --html                       Treat body as HTML
+  --apply                      Write triage marks to Gmail
   --max <n>                    Page size (default 40)
   --page-token <token>         Pagination token from a previous list
   --json                       Machine-readable output
@@ -13178,6 +13474,8 @@ Options:
 
 Examples:
   od mail list --label INBOX --json
+  od mail triage --apply --json
+  od mail draft THREAD_ID --instruction "Yes, approved"
   od mail send --to teammate@example.com --subject "Hello" --body "Hi"
   od mail reply THREAD_ID --to teammate@example.com --prompt-file -
 `);
@@ -13354,6 +13652,58 @@ async function runMail(args) {
     const data = await request('POST', `${scope}/messages/${encodeURIComponent(messageId)}/trash`);
     if (flags.json) return writeJsonOut(data ?? { ok: true });
     console.log('trashed');
+    return;
+  }
+
+  if (sub === 'triage') {
+    const data = await request('POST', `${scope}/triage`, {
+      apply: flags.apply === true,
+      ...(flags.label ? { label: flags.label } : {}),
+      ...((flags.query || flags.q) ? { query: flags.query || flags.q } : {}),
+      ...(flags.max ? { maxResults: Number(flags.max) } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    if (!data.connected) {
+      console.log('Gmail is not connected.');
+      return;
+    }
+    const verb = data.applied ? `applied ${data.appliedCount}` : 'preview';
+    console.log(`${verb} · ${data.decisions?.length ?? 0} messages`);
+    for (const decision of data.decisions ?? []) {
+      console.log(`${decision.bucket}\t${decision.messageId}\t${decision.reason}`);
+    }
+    return;
+  }
+
+  if (sub === 'summarize') {
+    const threadId = positionals[1];
+    if (!threadId) {
+      console.error('usage: od mail summarize <thread-id>');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/threads/${encodeURIComponent(threadId)}/summarize`);
+    if (flags.json) return writeJsonOut(data);
+    const summary = data.summary ?? {};
+    console.log(summary.headline || '');
+    for (const bullet of summary.bullets ?? []) console.log(`- ${bullet}`);
+    return;
+  }
+
+  if (sub === 'draft') {
+    const threadId = positionals[1];
+    if (!threadId) {
+      console.error('usage: od mail draft <thread-id> [--instruction <text> | --prompt-file <path|->]');
+      process.exit(2);
+    }
+    const fromFile = await readMemoryPromptFile(flags);
+    const instruction = typeof fromFile === 'string' && fromFile.trim()
+      ? fromFile
+      : (typeof flags.instruction === 'string' ? flags.instruction : undefined);
+    const data = await request('POST', `${scope}/threads/${encodeURIComponent(threadId)}/draft`, {
+      ...(instruction ? { instruction } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    process.stdout.write(data.draft?.body || '');
     return;
   }
 
@@ -13980,6 +14330,53 @@ async function runGithub(args) {
   process.exit(2);
 }
 
+function repeatedCliFlag(args, flag) {
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === `--${flag}` && typeof args[i + 1] === 'string') {
+      const value = String(args[i + 1]).trim();
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      out.push(value);
+    }
+  }
+  return out;
+}
+
+async function postOrgChatSends(request, orgId, input) {
+  const exceptIds = new Set(input.except ?? []);
+  const memberIds = new Set(input.people ?? []);
+  for (const teamId of input.teams ?? []) {
+    const team = await request('GET', `/api/orgs/${encodeURIComponent(orgId)}/teams/${encodeURIComponent(teamId)}`);
+    for (const memberId of team.team?.memberIds ?? []) memberIds.add(memberId);
+  }
+  for (const id of exceptIds) memberIds.delete(id);
+  const posted = [];
+  for (const memberId of memberIds) {
+    const dm = await request('POST', `/api/orgs/${encodeURIComponent(orgId)}/chat/dms`, {
+      memberIds: [memberId],
+    });
+    const ref = dm.channel.slug;
+    const data = await request(
+      'POST',
+      `/api/orgs/${encodeURIComponent(orgId)}/chat/channels/${encodeURIComponent(ref)}/messages`,
+      { body: input.body, attachments: input.attachments },
+    );
+    posted.push({ channel: ref, message: data.message });
+  }
+  for (const channel of input.channels ?? []) {
+    const ref = String(channel).replace(/^#/, '');
+    const data = await request(
+      'POST',
+      `/api/orgs/${encodeURIComponent(orgId)}/chat/channels/${encodeURIComponent(ref)}/messages`,
+      { body: input.body, attachments: input.attachments },
+    );
+    posted.push({ channel: ref, message: data.message });
+  }
+  return { posted, memberIds: [...memberIds], exceptIds: [...exceptIds] };
+}
+
 // od pages — Notion-shaped organization notes (blocks + table embeds).
 // Same /api/orgs/:orgId/pages endpoints the Pages UI and agent tools use.
 
@@ -13998,6 +14395,8 @@ Subcommands:
   scaffold                     Create a nested wiki (--data-file tree JSON)
   duplicate <page-id>          Copy a page (--recursive for children)
   archive <page-id>            Soft-archive a page
+  send <page-id>               Post the page into a channel, a DM, or a team
+                               (--channel, --to <member-id>, --team, --message)
 
 Options:
   --org <id>            Organization (default: your first)
@@ -14013,6 +14412,11 @@ Options:
   --record <record-id>  Record to embed
   --path <file>         Design artifact path to embed
   --url <url>           Bookmark or live embed URL
+  --channel <slug>      Chat channel to send a page into
+  --to <member-id>      Person to DM (repeatable)
+  --team <id>           Team to send to (repeatable)
+  --except <member-id>  Skip this person when sending to a team
+  --message <text>      Optional note with the send
   --recursive           Duplicate nested children too
   --data-file <path|->  JSON body or { "blocks": [...] } from file/stdin
   --tree                Nested tree for list
@@ -14027,6 +14431,7 @@ Examples:
   JSON
   od pages embed PAGE_ID --type bookmark --url https://example.com --json
   od pages embed PAGE_ID --type embed --url https://www.youtube.com/watch?v=dQw4w9WgXcQ --json
+  od pages send PAGE_ID --to wsm-ada --message "please review"
   od pages set-blocks PAGE_ID --data-file - <<'JSON'
   {"blocks":[{"type":"heading_1","content":"Goals"},{"type":"bulleted_list_item","content":"Ship MVP"}]}
   JSON
@@ -14287,6 +14692,40 @@ async function runPages(args) {
     const data = await request('POST', `${scope}/${encodeURIComponent(id)}/archive`);
     if (flags.json) return writeJsonOut(data);
     console.log(`[pages] archived ${data.page.id}`);
+    return;
+  }
+
+  if (sub === 'send') {
+    const id = positionals[1];
+    if (!id) {
+      console.error('usage: od pages send <page-id> --channel <slug> | --to <member-id> | --team <team-id>');
+      process.exit(2);
+    }
+    const destPeople = repeatedCliFlag(args, 'to');
+    const destTeams = repeatedCliFlag(args, 'team');
+    const destChannels = repeatedCliFlag(args, 'channel');
+    const exceptIds = repeatedCliFlag(args, 'except');
+    if (destPeople.length === 0 && destTeams.length === 0 && destChannels.length === 0 && exceptIds.length === 0) {
+      console.error('send requires --channel <slug>, --to <member-id>, or --team <team-id>');
+      process.exit(2);
+    }
+    const shown = await request('GET', `${scope}/${encodeURIComponent(id)}`);
+    const page = shown.page;
+    const body = typeof flags.message === 'string' && flags.message.trim()
+      ? flags.message.trim()
+      : `Shared ${page.title || 'Untitled'}`;
+    const result = await postOrgChatSends(request, orgId, {
+      people: destPeople,
+      teams: destTeams,
+      channels: destChannels,
+      except: exceptIds,
+      body,
+      attachments: [{ kind: 'page', id: page.id, label: page.title || 'Untitled' }],
+    });
+    if (flags.json) return writeJsonOut({ page, posted: result.posted, except: result.exceptIds });
+    for (const item of result.posted) {
+      console.log(`[pages] sent ${page.id} to ${item.channel}`);
+    }
     return;
   }
 

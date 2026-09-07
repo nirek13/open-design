@@ -6,15 +6,19 @@ import {
 } from '../src/api/team-chat.js';
 
 describe('sanitizeTeamChatAttachments', () => {
-  it('keeps record and app links that chat already posted', () => {
+  it('keeps record, app, page, and event links that chat already posted', () => {
     expect(
       sanitizeTeamChatAttachments([
         { kind: 'record', id: 'rec-1', tableName: 'invoices', label: 'INV-1042' },
         { kind: 'app', id: 'app-1', label: 'Expense form' },
+        { kind: 'page', id: 'page-1', label: 'Handbook' },
+        { kind: 'event', id: 'evt-1', label: 'Design review' },
       ]),
     ).toEqual([
       { kind: 'record', id: 'rec-1', tableName: 'invoices', label: 'INV-1042' },
       { kind: 'app', id: 'app-1', label: 'Expense form' },
+      { kind: 'page', id: 'page-1', label: 'Handbook' },
+      { kind: 'event', id: 'evt-1', label: 'Design review' },
     ]);
   });
 

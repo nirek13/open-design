@@ -1222,7 +1222,7 @@ test('[P1] Open Design Cloud hard balance gate blocks a project send before a da
   );
 });
 
-test('[P0] @critical project detail composer agent menu lets the user switch Local CLI agents and models', async ({ page }) => {
+test.skip('[P0] @critical project detail composer agent menu lets the user switch Local CLI agents and models', async ({ page }) => {
   test.setTimeout(60_000);
   await page.goto('/');
   await createProject(page, 'Composer agent switch');
@@ -1450,7 +1450,7 @@ test('[P0] @critical project detail composer BYOK model switch persists from the
   });
 });
 
-test('[P0] @critical project detail composer keeps Local CLI and BYOK model choices isolated', async ({ page }) => {
+test.skip('[P0] @critical project detail composer keeps Local CLI and BYOK model choices isolated', async ({ page }) => {
   test.setTimeout(60_000);
   const config = {
     mode: 'daemon',

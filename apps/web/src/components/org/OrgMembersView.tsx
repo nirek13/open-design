@@ -162,12 +162,17 @@ export function OrgMembersView({ active }: { active: boolean }) {
   }
 
   async function handleRename() {
-    if (!activeOrgId || !orgName.trim()) return;
+    const next = orgName.trim();
+    if (!activeOrgId || !next || next === (activeOrg?.name ?? '')) return;
+    setBusy(true);
     try {
-      await renameOrganization(activeOrgId, orgName.trim());
+      await renameOrganization(activeOrgId, next);
       await refresh();
+      setError(null);
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -226,6 +231,32 @@ export function OrgMembersView({ active }: { active: boolean }) {
         <div className={styles.error} role="alert">
           {error}
         </div>
+      ) : null}
+
+      {isAdmin ? (
+        <section className={styles.panel} data-testid="org-settings">
+          <h2 className={styles.panelTitle}>{t('org.settings')}</h2>
+          <p className={styles.panelHint}>{t('org.organizationName')}</p>
+          <div className={styles.row}>
+            <Input
+              type="text"
+              value={orgName}
+              onChange={(event) => setOrgName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleRename();
+              }}
+              aria-label={t('org.organizationName')}
+              data-testid="org-name-input"
+            />
+            <Button
+              onClick={() => void handleRename()}
+              disabled={!orgName.trim() || orgName.trim() === (activeOrg?.name ?? '') || busy}
+              data-testid="org-rename"
+            >
+              {t('org.rename')}
+            </Button>
+          </div>
+        </section>
       ) : null}
 
       {isAdmin ? (
@@ -556,22 +587,6 @@ export function OrgMembersView({ active }: { active: boolean }) {
         </section>
       ) : null}
 
-      {isAdmin ? (
-        <section className={styles.panel}>
-          <h2 className={styles.panelTitle}>{t('org.settings')}</h2>
-          <div className={styles.row}>
-            <Input
-              type="text"
-              value={orgName}
-              onChange={(event) => setOrgName(event.target.value)}
-              aria-label={t('org.organizationName')}
-            />
-            <Button onClick={handleRename} disabled={!orgName.trim()}>
-              {t('org.rename')}
-            </Button>
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }

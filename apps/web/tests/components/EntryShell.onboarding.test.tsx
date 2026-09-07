@@ -4,6 +4,12 @@ import { useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../../src/utils/local-cli-usage', () => ({
+  LOCAL_CLI_USAGE_ENABLED: true,
+  isLocalCliUsageEnabled: () => true,
+  effectiveExecutionMode: (mode: string) => mode,
+}));
+
 import { EntryShell } from '../../src/components/EntryShell';
 import {
   AMR_LOGIN_POLL_INTERVAL_MS,

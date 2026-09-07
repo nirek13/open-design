@@ -102,6 +102,7 @@ describe('WorkspaceHome', () => {
     expect(screen.getByTestId('workspace-create')).toBeTruthy();
     expect(screen.queryByTestId('workspace-new-invoices')).toBeNull();
     expect(screen.queryByText('INV-1001')).toBeNull();
+    expect(screen.getByTestId('home-atmosphere')).toBeTruthy();
   });
 
   it('greets by name when they click into the box', async () => {

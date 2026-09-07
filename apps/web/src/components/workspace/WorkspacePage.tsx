@@ -30,6 +30,8 @@ interface Props {
   testId?: string;
   /** Fill the parent pane and skip the reading-column max-width. */
   fill?: boolean;
+  /** Studio wash for the company hub. Other workspace pages stay flat paper. */
+  studio?: boolean;
 }
 
 export function WorkspacePage({
@@ -44,9 +46,13 @@ export function WorkspacePage({
   children,
   testId,
   fill = false,
+  studio = false,
 }: Props) {
   return (
-    <div className={`${styles.root}${fill ? ` ${styles.rootFill}` : ''}`} data-testid={testId}>
+    <div
+      className={`${styles.root}${fill ? ` ${styles.rootFill}` : ''}${studio ? ` ${styles.studio}` : ''}`}
+      data-testid={testId}
+    >
       <div className={`${styles.column}${fill ? ` ${styles.columnFill}` : ''}`}>
         <header className={styles.head}>
           <div className={styles.headText}>

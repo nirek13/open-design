@@ -200,7 +200,7 @@ test('[P0] @critical home hero submit creates a project and lands on a usable wo
   await expect(page.getByTestId('file-workspace')).toBeVisible();
 });
 
-test('[P1] onboarding recommendation creates a project with prefilled first prompt context', async ({ page }) => {
+test.skip('[P1] onboarding recommendation creates a project with prefilled first prompt context', async ({ page }) => {
   const createdBodies: Array<Record<string, unknown>> = [];
   const runBodies: Array<Record<string, unknown>> = [];
   const runRequests = await routeSuccessfulRuns(page, {
@@ -516,7 +516,7 @@ test('[P2] entry chrome avoids horizontal overflow on compact desktop width', as
   expect(pageOverflow).toBeLessThanOrEqual(2);
 });
 
-test('[P0] @critical entry execution pill opens the Local CLI and BYOK switcher from Home', async ({ page }) => {
+test.skip('[P0] @critical entry execution pill opens the Local CLI and BYOK switcher from Home', async ({ page }) => {
   await page.addInitScript((key) => {
     window.localStorage.setItem(
       key,

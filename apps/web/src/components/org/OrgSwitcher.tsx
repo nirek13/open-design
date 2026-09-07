@@ -10,7 +10,7 @@ import { Button, Input } from '@open-design/components';
 import { workspaceLabel, type OrgPendingInvite } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { useOptionalOrg } from '../../org/OrgContext';
-import { acceptPendingInvite, fetchPendingInvites } from '../../providers/registry';
+import { acceptPendingInvite, fetchPendingInvites, renameOrganization } from '../../providers/registry';
 import styles from './OrgSwitcher.module.css';
 
 interface Props {
@@ -22,7 +22,9 @@ export function OrgSwitcher({ onManage }: Props) {
   const org = useOptionalOrg();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState('');
+  const [renameValue, setRenameValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<OrgPendingInvite[]>([]);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
@@ -60,10 +62,17 @@ export function OrgSwitcher({ onManage }: Props) {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (open) return;
+    setCreating(false);
+    setRenaming(false);
+  }, [open]);
+
   // Rendered outside a provider (an embedded shell, a narrow test harness):
   // show nothing rather than throwing and blanking everything around us.
   if (!org) return null;
-  const { organizations, activeOrg, setActiveOrg, createOrganization, loading, refresh } = org;
+  const { organizations, activeOrg, setActiveOrg, createOrganization, loading, refresh, can } = org;
+  const isAdmin = can('admin');
 
   async function handleCreate() {
     if (!name.trim() || busy) return;
@@ -73,6 +82,22 @@ export function OrgSwitcher({ onManage }: Props) {
       setName('');
       setCreating(false);
       setOpen(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRename() {
+    const next = renameValue.trim();
+    if (!activeOrg || !next || busy || next === activeOrg.name) return;
+    setBusy(true);
+    try {
+      await renameOrganization(activeOrg.id, next);
+      await refresh();
+      setRenaming(false);
+      setOpen(false);
+    } catch {
+      // Keep the menu open so the person can try a different name.
     } finally {
       setBusy(false);
     }
@@ -175,7 +200,30 @@ export function OrgSwitcher({ onManage }: Props) {
 
           <div className={styles.divider} role="separator" />
 
-          {creating ? (
+          {renaming && isAdmin ? (
+            <div className={styles.createRow}>
+              <Input
+                type="text"
+                autoFocus
+                value={renameValue}
+                placeholder={t('org.organizationName')}
+                onChange={(event) => setRenameValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void handleRename();
+                }}
+                aria-label={t('org.organizationName')}
+                data-testid="org-rename-name"
+              />
+              <Button
+                variant="primary"
+                onClick={() => void handleRename()}
+                disabled={!renameValue.trim() || renameValue.trim() === (activeOrg?.name ?? '') || busy}
+                data-testid="org-rename-submit"
+              >
+                {t('org.rename')}
+              </Button>
+            </div>
+          ) : creating ? (
             <div className={styles.createRow}>
               <Input
                 type="text"
@@ -193,15 +241,35 @@ export function OrgSwitcher({ onManage }: Props) {
               </Button>
             </div>
           ) : (
-            <button
-              type="button"
-              role="menuitem"
-              className={styles.item}
-              onClick={() => setCreating(true)}
-              data-testid="org-create-open"
-            >
-              {t('org.createOrganization')}
-            </button>
+            <>
+              {isAdmin && activeOrg ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={styles.item}
+                  onClick={() => {
+                    setCreating(false);
+                    setRenameValue(workspaceLabel(activeOrg.name, '') || '');
+                    setRenaming(true);
+                  }}
+                  data-testid="org-rename-open"
+                >
+                  {t('org.renameOrganization')}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.item}
+                onClick={() => {
+                  setRenaming(false);
+                  setCreating(true);
+                }}
+                data-testid="org-create-open"
+              >
+                {t('org.createOrganization')}
+              </button>
+            </>
           )}
 
           <button

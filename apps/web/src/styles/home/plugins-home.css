@@ -10,7 +10,7 @@
 .plugins-home {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 .plugins-home__head {
   display: flex;
@@ -26,17 +26,17 @@
 }
 .plugins-home__subtitle {
   margin: 0;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-muted);
   line-height: 1.4;
 }
 .plugins-home__title {
   margin: 0;
   font-family: var(--serif);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--text-strong);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   line-height: 1.25;
 }
 .plugins-home__count {
@@ -242,16 +242,19 @@
   appearance: none;
   background: none;
   border: 0;
-  padding: 0;
+  padding: 4px 8px;
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12.5px;
+  font-weight: 550;
   color: var(--text-muted);
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  text-decoration: none;
+  border-radius: var(--radius-pill);
+  transition: color 120ms var(--ease-out), background-color 120ms var(--ease-out);
 }
 .plugins-home__linkbtn:hover {
-  color: var(--text);
+  color: var(--text-strong);
+  background: var(--bg-subtle);
 }
 
 .plugins-home__facets {
@@ -267,6 +270,7 @@
   position: sticky;
   top: var(--entry-topbar-h, 56px);
   z-index: 5;
+  padding: 8px 0 10px;
   background: var(--bg);
 }
 .plugins-home__facet-row {
@@ -329,12 +333,13 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: var(--radius-pill);
-  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 12.5px;
+  font-weight: 550;
   cursor: pointer;
   transition: border-color 120ms var(--ease-out), background-color 120ms var(--ease-out), color 120ms var(--ease-out);
 }
@@ -451,10 +456,11 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
   overflow: hidden;
-  transition: border-color 120ms var(--ease-out), box-shadow 160ms var(--ease-out),
+  box-shadow: var(--shadow-xs);
+  transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out),
     transform 160ms var(--ease-out);
   isolation: isolate;
   content-visibility: auto;
@@ -482,7 +488,7 @@
    ============================================================ */
 .plugins-home__grid--gallery {
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: 16px;
+  gap: 18px;
 }
 @media (min-width: 1400px) {
   .plugins-home__grid--gallery {
@@ -503,10 +509,10 @@
 .plugins-home__gallery-bar {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-panel);
+  gap: 6px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  background: var(--bg-elevated);
   min-width: 0;
 }
 .plugins-home__gallery-bar-row {
@@ -547,8 +553,8 @@
   margin: 0;
   text-align: left;
   cursor: pointer;
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 650;
   color: var(--text-strong);
   white-space: nowrap;
   overflow: hidden;

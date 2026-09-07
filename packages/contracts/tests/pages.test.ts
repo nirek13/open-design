@@ -21,6 +21,13 @@ describe('page contracts', () => {
     expect(PAGE_BLOCK_TYPES).toContain('file');
     expect(PAGE_BLOCK_TYPES).toContain('pdf');
     expect(PAGE_BLOCK_TYPES).toContain('database');
+    expect(PAGE_BLOCK_TYPES).toContain('board');
+    expect(PAGE_BLOCK_TYPES).toContain('checklist');
+    expect(PAGE_BLOCK_TYPES).toContain('assigner');
+    expect(PAGE_BLOCK_TYPES).toContain('poll');
+    expect(PAGE_BLOCK_TYPES).toContain('timeline');
+    expect(PAGE_BLOCK_TYPES).toContain('decision');
+    expect(PAGE_BLOCK_TYPES).toContain('goals');
     expect(new Set(PAGE_BLOCK_TYPES).size).toBe(PAGE_BLOCK_TYPES.length);
   });
 

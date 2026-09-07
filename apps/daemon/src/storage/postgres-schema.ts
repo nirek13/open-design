@@ -739,6 +739,105 @@ const MIGRATIONS: readonly PostgresMigration[] = [
       ALTER TABLE od_pages ADD COLUMN IF NOT EXISTS style_json TEXT NOT NULL DEFAULT '{}';
     `,
   },
+  {
+    id: '0022-named-calendars',
+    sql: `
+      CREATE TABLE IF NOT EXISTS od_calendars (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'local',
+        visible INTEGER NOT NULL DEFAULT 1,
+        external_id TEXT,
+        ics_url TEXT,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_calendars_ws ON od_calendars(workspace_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_calendars_external
+        ON od_calendars(workspace_id, source, external_id)
+        WHERE external_id IS NOT NULL;
+      ALTER TABLE od_calendar_events ADD COLUMN IF NOT EXISTS calendar_id TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN IF NOT EXISTS color TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN IF NOT EXISTS recurrence TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN IF NOT EXISTS timezone TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN IF NOT EXISTS attendees TEXT;
+      ALTER TABLE od_calendar_events ADD COLUMN IF NOT EXISTS external_uid TEXT;
+      CREATE INDEX IF NOT EXISTS odx_calendar_events_cal
+        ON od_calendar_events(workspace_id, calendar_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_calendar_events_external
+        ON od_calendar_events(workspace_id, source, external_uid)
+        WHERE external_uid IS NOT NULL;
+    `,
+  },
+  {
+    id: '0023-calendar-sharing',
+    sql: `
+      ALTER TABLE od_calendars ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'shared';
+      ALTER TABLE od_calendars ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
+      ALTER TABLE od_calendars ADD COLUMN IF NOT EXISTS team_id TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_calendars_personal
+        ON od_calendars(workspace_id, owner_user_id)
+        WHERE kind = 'personal' AND owner_user_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS odx_calendars_team ON od_calendars(workspace_id, team_id);
+      CREATE TABLE IF NOT EXISTS od_calendar_event_guests (
+        event_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (event_id, kind, subject_id)
+      );
+      CREATE INDEX IF NOT EXISTS odx_calendar_event_guests_subject
+        ON od_calendar_event_guests(workspace_id, kind, subject_id);
+    `,
+  },
+  {
+    id: '0024-calendar-booking-links',
+    sql: `
+      CREATE TABLE IF NOT EXISTS od_booking_routes (
+        token_hash TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        booking_type_id TEXT NOT NULL,
+        created_at BIGINT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS od_calendar_booking_types (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL,
+        calendar_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        location TEXT,
+        duration_minutes INTEGER NOT NULL,
+        timezone TEXT NOT NULL,
+        weekdays TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        url TEXT NOT NULL,
+        revoked_at BIGINT,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_booking_types_ws
+        ON od_calendar_booking_types(workspace_id, owner_user_id);
+      CREATE TABLE IF NOT EXISTS od_calendar_bookings (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        booking_type_id TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        guest_name TEXT NOT NULL,
+        guest_email TEXT NOT NULL,
+        starts_at TEXT NOT NULL,
+        ends_at TEXT NOT NULL,
+        created_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_calendar_bookings_slot
+        ON od_calendar_bookings(booking_type_id, starts_at);
+    `,
+  },
 ];
 
 /** Bring a Postgres database up to the current schema. Safe to call on every

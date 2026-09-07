@@ -41,6 +41,8 @@ const PUBLIC_API_PATHS = new Set([
  * new person joins, and they are by definition not a member of anything yet. */
 const PUBLIC_API_PREFIXES = [
   '/api/invites/',
+  // Public Calendly-style booking pages. Guests pick a slot without signing in.
+  '/api/book/',
   // Composio returns the browser here after OAuth. The handler is keyed on
   // a short-lived `state`; it must not require a session cookie.
   '/api/connectors/oauth/callback/',

@@ -33,6 +33,12 @@ describe('chat-files', () => {
 
   it('sniffs images from bytes and forces download for html', () => {
     expect(sniffChatFileMime(PNG, 'x.bin')).toBe('image/png');
+    expect(sniffChatFileMime(Buffer.from('not-magic'), 'notes.docx')).toBe(
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    expect(sniffChatFileMime(Buffer.from('not-magic'), 'pack.zip')).toBe('application/zip');
+    expect(sniffChatFileMime(Buffer.from('not-magic'), 'invite.ics')).toBe('text/calendar');
+    expect(sniffChatFileMime(Buffer.from('not-magic'), 'clip.mkv')).toBe('video/x-matroska');
     expect(chatFileContentDisposition('text/html', 'note.html')).toContain('attachment');
     expect(chatFileContentDisposition('image/png', 'logo.png')).toContain('inline');
   });

@@ -7,7 +7,7 @@ import '../src/index.css';
 import '../src/styles/home/index.css';
 
 export const metadata: Metadata = {
-  title: 'Substrate',
+  title: 'Plyxl',
   icons: {
     icon: '/app-icon.png',
     apple: '/app-icon.png',

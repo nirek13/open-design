@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 
@@ -49,12 +49,23 @@ describe('ClerkSession', () => {
     getToken.mockClear();
     setSessionTokenProvider(null);
     document.cookie = 'od_session=; Path=/; Max-Age=0; SameSite=Lax';
+    sessionStorage.clear();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ valid: true, orgName: 'Northwind', role: 'member' }),
+      })),
+    );
   });
 
   afterEach(() => {
     cleanup();
     setSessionTokenProvider(null);
     document.cookie = 'od_session=; Path=/; Max-Age=0; SameSite=Lax';
+    sessionStorage.clear();
+    vi.unstubAllGlobals();
+    window.history.replaceState({}, '', '/');
   });
 
   it('shows a sign-in-or-up card that stays on this page after success', () => {
@@ -67,7 +78,8 @@ describe('ClerkSession', () => {
     );
     expect(screen.getByTestId('clerk-sign-in')).toBeInTheDocument();
     expect(screen.getByTestId('clerk-sign-in-widget')).toBeInTheDocument();
-    expect(screen.getByText('Sign in to Substrate')).toBeInTheDocument();
+    expect(screen.getByText('Plyxl')).toBeInTheDocument();
+    expect(screen.getByText('The Future Of Work')).toBeInTheDocument();
     expect(screen.getByText('Sign in or create a new account to continue.')).toBeInTheDocument();
     expect(screen.queryByTestId('app')).toBeNull();
     expect(signInProps[0]).toMatchObject({
@@ -77,6 +89,50 @@ describe('ClerkSession', () => {
     });
     expect(signInProps[0]?.fallback).toBeTruthy();
     expect(typeof signInProps[0]?.fallbackRedirectUrl).toBe('string');
+    expect(typeof signInProps[0]?.forceRedirectUrl).toBe('string');
+  });
+
+  it('forces Clerk back onto a /join link after sign-in', async () => {
+    window.history.replaceState({}, '', '/join/tok-abc');
+    render(
+      <I18nProvider initial="en">
+        <ClerkSession publishableKey="pk_test_x">
+          <div data-testid="app">app</div>
+        </ClerkSession>
+      </I18nProvider>,
+    );
+    expect(signInProps[0]).toMatchObject({
+      forceRedirectUrl: '/join/tok-abc',
+      fallbackRedirectUrl: '/join/tok-abc',
+    });
+    expect(clerkProviderProps[0]).toMatchObject({
+      signInForceRedirectUrl: '/join/tok-abc',
+      signUpForceRedirectUrl: '/join/tok-abc',
+    });
+    expect(await screen.findByTestId('clerk-join-eyebrow')).toBeInTheDocument();
+    expect(screen.getByText('Northwind')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalled();
+    });
+  });
+
+  it('returns a signed-in visitor to a pending invite instead of dumping them on /', async () => {
+    signedIn = true;
+    window.history.replaceState({}, '', '/');
+    sessionStorage.setItem('open-design:pending-invite:v1', 'tok-abc');
+    const replaceState = vi.spyOn(window.history, 'replaceState');
+    render(
+      <I18nProvider initial="en">
+        <ClerkSession publishableKey="pk_test_x">
+          <div data-testid="app">app</div>
+        </ClerkSession>
+      </I18nProvider>,
+    );
+    expect(await screen.findByTestId('app')).toBeInTheDocument();
+    expect(replaceState).toHaveBeenCalledWith(expect.anything(), '', '/join/tok-abc');
+    replaceState.mockRestore();
+    sessionStorage.removeItem('open-design:pending-invite:v1');
+    window.history.replaceState({}, '', '/');
   });
 
   it('finishes an OAuth redirect instead of re-showing the form', () => {
@@ -135,6 +191,7 @@ describe('ClerkSession', () => {
     expect(clerkProviderProps[0]).toMatchObject({
       allowedRedirectProtocols: ['http', 'https', 'od'],
       signInFallbackRedirectUrl: 'http://127.0.0.1:17573/',
+      signInForceRedirectUrl: 'http://127.0.0.1:17573/',
     });
     expect(typeof clerkProviderProps[0]?.routerPush).toBe('function');
     expect(typeof clerkProviderProps[0]?.routerReplace).toBe('function');

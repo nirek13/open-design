@@ -7,11 +7,13 @@ import type {
   MailLabel,
   MailMessage,
   MailProfile,
+  MailTriageDecision,
   ModifyMailRequest,
   ReplyMailRequest,
   SendMailRequest,
   SendMailResponse,
 } from '@open-design/contracts';
+import { classifyMailMessages, mailTriageHasWork } from '@open-design/contracts';
 import type { BoundedJsonObject } from '../live-artifacts/schema.js';
 import { composioConnectorProvider } from '../connectors/composio.js';
 import type { ConnectorCredentialMaterial } from '../connectors/service.js';
@@ -492,6 +494,26 @@ export async function trashMailMessage(exec: GmailExecutor, messageId: string): 
   } catch (err) {
     gmailFailure(err, 'Could not move Gmail message to trash');
   }
+}
+
+/** Sort and mark a mailbox the same way the Mail UI split-inbox does. */
+export async function triageMailMessages(
+  exec: GmailExecutor,
+  messages: readonly MailMessage[],
+  apply: boolean,
+): Promise<{ decisions: MailTriageDecision[]; appliedCount: number }> {
+  const decisions = classifyMailMessages(messages);
+  if (!apply) return { decisions, appliedCount: 0 };
+  let appliedCount = 0;
+  for (const decision of decisions) {
+    if (!mailTriageHasWork(decision)) continue;
+    await modifyMailMessage(exec, decision.messageId, {
+      addLabelIds: decision.addLabelIds,
+      removeLabelIds: decision.removeLabelIds,
+    });
+    appliedCount += 1;
+  }
+  return { decisions, appliedCount };
 }
 
 export function parseAddressList(value: unknown): string[] {

@@ -19,7 +19,7 @@ vi.mock('../../src/i18n', () => ({
   }),
   useT: () => (key: string) => {
     const labels: Record<string, string> = {
-      'app.brand': 'Substrate',
+      'app.brand': 'Plyxl',
       'common.close': 'Close',
       'common.untitled': 'Untitled',
       'entry.navDesignSystems': 'Design systems',
@@ -122,7 +122,6 @@ describe('WorkspaceTabsBar navigation semantics', () => {
 
   afterEach(() => {
     cleanup();
-    document.querySelector('[data-testid="blank-workspace-area"]')?.remove();
   });
 
   it('renders trailing chrome on the tab row', () => {
@@ -138,21 +137,89 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     expect(screen.getByTestId('trailing-probe')).toBeTruthy();
   });
 
-  it('keeps Home tab as a singleton and avoids duplication', async () => {
-    const { rerender } = render(
+  it('creates additional Home tabs from the new-tab control', async () => {
+    render(
       <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
     );
 
     expect(screen.getAllByRole('tab')).toHaveLength(1);
 
-    // Clicking 'New tab' when a Home tab already exists should activate the existing Home tab
+    fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
     fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
     fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
 
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
+      expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(4);
+    });
+
+    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(3);
+    expect(navigate).toHaveBeenCalledWith(homeRoute);
+  });
+
+  it('closes extra Home tabs without removing the pinned original', async () => {
+    render(
+      <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab')).toHaveLength(3);
+    });
+
+    const closeButtons = screen.getAllByRole('button', { name: 'Close' });
+    fireEvent.click(closeButtons[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
+
+    await waitFor(() => {
+      const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
       expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(1);
     });
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+  });
+
+  it('keeps creating Home tabs with no upper bound', async () => {
+    render(
+      <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
+    );
+
+    for (let i = 0; i < 8; i += 1) {
+      fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    }
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab')).toHaveLength(9);
+    });
+    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(8);
+  });
+
+  it('appends a new Home tab from a project instead of jumping to the pinned Home', async () => {
+    render(
+      <WorkspaceTabsBar route={{ ...projectRoute }} projects={[project]} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab')).toHaveLength(2);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
+
+    await waitFor(() => {
+      const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
+      expect(labels).toHaveLength(3);
+      expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(2);
+      expect(labels.filter((label) => label.includes('Project Alpha'))).toHaveLength(1);
+    });
+  });
+
+  it('keeps Home tab as a singleton for sidebar sections and avoids duplication', async () => {
+    const { rerender } = render(
+      <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
+    );
+
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
 
     // Navigate to projectRoute using rerender with a fresh object reference
     rerender(<WorkspaceTabsBar route={{ ...projectRoute }} projects={[project]} />);
@@ -252,31 +319,6 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     });
   });
 
-  it('closes the Search tabs popover when the route flips to onboarding', async () => {
-    const { rerender } = render(
-      <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
-    );
-
-    // Open the Search-tabs popover from the (non-onboarding) home view.
-    fireEvent.click(screen.getByRole('button', { name: 'Search tabs' }));
-    await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: 'Search tabs' })).toBeTruthy();
-    });
-
-    // Onboarding hides the trigger button; the already-open popover must not
-    // survive the route transition (e.g. browser back/forward into
-    // /onboarding), or it floats over the first-run flow with no visible
-    // control to dismiss it.
-    rerender(
-      <WorkspaceTabsBar route={{ kind: 'home', view: 'onboarding' }} projects={[project]} />,
-    );
-
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: 'Search tabs' })).toBeNull();
-    });
-    expect(screen.queryByRole('button', { name: 'Search tabs' })).toBeNull();
-  });
-
   it('collapses every entry section into the single leftmost tab (no new tab per section)', async () => {
     const { rerender } = render(
       <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
@@ -335,7 +377,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     });
   });
 
-  it('collapses a restored two-entry-tab workspace into a single entry tab', async () => {
+  it('restores multiple entry tabs without collapsing them', async () => {
     window.localStorage.setItem(
       'open-design:workspace-tabs:v1',
       JSON.stringify({
@@ -349,8 +391,11 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     render(<WorkspaceTabsBar route={{ kind: 'home', view: 'projects' }} projects={[project]} />);
     await waitFor(() => {
       const tabs = screen.getAllByRole('tab');
-      expect(tabs).toHaveLength(1);
-      expect(tabs[0]?.textContent ?? '').toContain('Projects');
+      const labels = tabs.map((tab) => tab.textContent ?? '');
+      expect(tabs).toHaveLength(2);
+      expect(labels[0]).toContain('Workspace');
+      expect(labels[1]).toContain('Projects');
+      expect(tabs[1]?.getAttribute('aria-selected')).toBe('true');
     });
   });
 
@@ -527,7 +572,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     });
   });
 
-  it('deduplicates and cleans up restored Home tabs from old sessions', async () => {
+  it('restores multiple Home tabs from a previous session', async () => {
     window.localStorage.setItem(
       'open-design:workspace-tabs:v1',
       JSON.stringify({
@@ -555,8 +600,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
 
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
-      // Expect that the duplicate Home tabs are deduplicated to exactly one Home tab
-      expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(1);
+      expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(2);
     });
   });
 
@@ -583,8 +627,8 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     expect(allowedDefault).toBe(false);
     await waitFor(() => {
       const labels = screen.getAllByRole('tab').map((tab) => tab.textContent ?? '');
-      expect(labels).toHaveLength(2);
-      expect(labels.some((label) => label.includes('Workspace'))).toBe(true);
+      expect(labels).toHaveLength(3);
+      expect(labels.filter((label) => label.includes('Workspace'))).toHaveLength(2);
       expect(labels.some((label) => label.includes('Project Alpha'))).toBe(true);
     });
     expect(navigate).toHaveBeenCalledWith(homeRoute);
@@ -717,27 +761,6 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     expect(previousAllowedDefault).toBe(false);
     await waitFor(() => {
       expect(navigate).toHaveBeenLastCalledWith(projectRoute);
-    });
-  });
-
-  it('dismisses tab search when a blank page area handles the mouse down', async () => {
-    const outsideArea = document.createElement('div');
-    outsideArea.setAttribute('data-testid', 'blank-workspace-area');
-    outsideArea.addEventListener('mousedown', (event) => event.stopPropagation());
-    document.body.append(outsideArea);
-
-    render(<WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Search tabs' }));
-
-    await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: 'Search tabs' })).toBeTruthy();
-    });
-
-    fireEvent.mouseDown(outsideArea);
-
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: 'Search tabs' })).toBeNull();
     });
   });
 

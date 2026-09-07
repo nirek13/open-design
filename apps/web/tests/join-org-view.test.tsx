@@ -36,5 +36,6 @@ describe('JoinOrgView', () => {
     fireEvent.click(screen.getByTestId('join-accept'));
     expect(await screen.findByText(/you are in/i)).toBeInTheDocument();
     expect(accept).toHaveBeenCalledWith('tok-1');
+    expect(sessionStorage.getItem('open-design:pending-invite:v1')).toBeNull();
   });
 });

@@ -81,7 +81,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // failed requests, and rendering a sign-in screen would be a guess.
   if (failed) {
     return (
-      <Notice title="Cannot reach Substrate">
+      <Notice title="Cannot reach Plyxl">
         The daemon is not responding. Start it with <code>pnpm tools-dev start web</code> and
         reload.
       </Notice>

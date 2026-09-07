@@ -137,23 +137,25 @@ describe('SendAppPicker', () => {
     vi.spyOn(registry, 'fetchAppAccess').mockResolvedValue({ grants: [], teamGrants: [], denials: [] });
     vi.spyOn(registry, 'setAppAccess').mockResolvedValue({ grants: [], teamGrants: [], denials: [] });
     vi.spyOn(registry, 'postChatMessage').mockResolvedValue({
-      id: 'msg-sent',
-      channelId: DM.id,
-      orgId: 'ws-1',
-      authorMemberId: 'wsm-1',
-      authorName: 'Local Owner',
-      body: 'Shared Expense form',
-      system: false,
-      attachments: [{ kind: 'app', id: 'app-1', label: 'Expense form' }],
-      mentions: [],
-      parentMessageId: null,
-      replyCount: 0,
-      reactions: [],
-      editedAt: null,
-      deletedAt: null,
-      createdAt: 1,
-      pinned: false,
-      saved: false,
+      message: {
+        id: 'msg-sent',
+        channelId: DM.id,
+        orgId: 'ws-1',
+        authorMemberId: 'wsm-1',
+        authorName: 'Local Owner',
+        body: 'Shared Expense form',
+        system: false,
+        attachments: [{ kind: 'app', id: 'app-1', label: 'Expense form' }],
+        mentions: [],
+        parentMessageId: null,
+        replyCount: 0,
+        reactions: [],
+        editedAt: null,
+        deletedAt: null,
+        createdAt: 1,
+        pinned: false,
+        saved: false,
+      },
     });
   });
 

@@ -94,7 +94,7 @@ describe('RecentProjectsStrip', () => {
       return {
         x: 0,
         y: 0,
-        width: this.classList.contains('recent-projects__row') ? 1332 : 180,
+        width: this.classList.contains('recent-projects__row') ? 1344 : 180,
         height: 100,
         top: 0,
         right: 0,

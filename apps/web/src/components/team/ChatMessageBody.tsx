@@ -14,10 +14,12 @@ import styles from './ChatMessageBody.module.css';
 interface Props {
   body: string;
   attachments: TeamChatAttachment[];
-  onOpenApp?: (attachment: TeamChatAttachment) => void;
+  onOpenAttachment?: (attachment: TeamChatAttachment) => void;
 }
 
-export function ChatMessageBody({ body, attachments, onOpenApp }: Props) {
+const OPENABLE = new Set(['app', 'page', 'event']);
+
+export function ChatMessageBody({ body, attachments, onOpenAttachment }: Props) {
   const files = attachments.filter((attachment) => attachment.kind === 'file' || attachment.kind === 'link');
   const records = attachments.filter(
     (attachment) => attachment.kind !== 'file' && attachment.kind !== 'link',
@@ -86,12 +88,12 @@ export function ChatMessageBody({ body, attachments, onOpenApp }: Props) {
         <ul className={styles.records}>
           {records.map((attachment, index) => (
             <li key={`${attachment.kind}-${attachment.id}-${index}`}>
-              {attachment.kind === 'app' && onOpenApp ? (
+              {OPENABLE.has(attachment.kind) && onOpenAttachment ? (
                 <button
                   type="button"
                   className={styles.recordButton}
-                  onClick={() => onOpenApp(attachment)}
-                  data-testid={`team-app-attachment-${attachment.id}`}
+                  onClick={() => onOpenAttachment(attachment)}
+                  data-testid={`team-${attachment.kind}-attachment-${attachment.id}`}
                 >
                   <Badge tone="info">{attachment.label}</Badge>
                 </button>

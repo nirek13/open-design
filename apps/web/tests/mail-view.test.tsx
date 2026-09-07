@@ -157,6 +157,46 @@ describe('MailView', () => {
     expect(await screen.findByLabelText('Compose')).toBeTruthy();
   });
 
+  it('classifies asks into Needs reply and drafts an editable reply', async () => {
+    vi.spyOn(registry, 'fetchOrgMailStatus').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 12, threadsTotal: 8 },
+      labels: [{ id: 'INBOX', name: 'INBOX', type: 'system', messagesUnread: 1, messagesTotal: 12 }],
+    });
+    vi.spyOn(registry, 'fetchOrgMailMessages').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 12, threadsTotal: 8 },
+      messages: [MESSAGE],
+      nextPageToken: null,
+      resultSizeEstimate: 1,
+    });
+    vi.spyOn(registry, 'fetchOrgMailThread').mockResolvedValue({
+      thread: { id: 't1', messages: [{ ...MESSAGE, unread: false, html: null }] },
+    });
+    const triage = vi.spyOn(registry, 'triageOrgMail').mockResolvedValue({
+      connected: true,
+      applied: true,
+      decisions: [],
+      appliedCount: 1,
+    });
+
+    renderMail();
+    expect(await screen.findByTestId('mail-split-needs_reply')).toBeTruthy();
+    expect(screen.getAllByText('Needs reply').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText('Q3 budget'));
+    const reader = await screen.findByTestId('mail-reader');
+    const summary = await screen.findByTestId('mail-summary');
+    expect(reader.contains(summary)).toBe(true);
+    expect(summary.textContent).toMatch(/Read fast/);
+    fireEvent.click(await screen.findByTestId('mail-draft'));
+    expect((screen.getByLabelText('Reply') as HTMLTextAreaElement).value).toMatch(/Hi Ada,/);
+
+    fireEvent.click(screen.getByTestId('mail-triage'));
+    await waitFor(() => {
+      expect(triage).toHaveBeenCalledWith('ws-1', expect.objectContaining({ apply: true }));
+    });
+  });
+
   it('fits an html letter to its full height instead of a nested viewport', async () => {
     const html = '<p>Please review the attached budget in full.</p>';
     vi.spyOn(registry, 'fetchOrgMailStatus').mockResolvedValue({
@@ -178,7 +218,48 @@ describe('MailView', () => {
     renderMail();
     fireEvent.click(await screen.findByText('Q3 budget'));
     const frame = await screen.findByTestId('mail-body-frame');
-    expect(frame.getAttribute('sandbox')).toBe('');
+    expect(frame.getAttribute('sandbox')).toBe('allow-same-origin');
     expect(frame.getAttribute('srcdoc') ?? '').toContain(html);
+    expect(frame.style.height).toBeTruthy();
+    expect(Number.parseInt(frame.style.height, 10)).toBeGreaterThan(0);
+  });
+
+  it('renders a thread even when summary bullets repeat the same sentence', async () => {
+    const repeated = 'This email summarises the info that you shared.';
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(registry, 'fetchOrgMailStatus').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 12, threadsTotal: 8 },
+      labels: [{ id: 'INBOX', name: 'INBOX', type: 'system', messagesUnread: 1, messagesTotal: 12 }],
+    });
+    vi.spyOn(registry, 'fetchOrgMailMessages').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 12, threadsTotal: 8 },
+      messages: [MESSAGE],
+      nextPageToken: null,
+      resultSizeEstimate: 1,
+    });
+    vi.spyOn(registry, 'fetchOrgMailThread').mockResolvedValue({
+      thread: {
+        id: 't1',
+        messages: [{
+          ...MESSAGE,
+          unread: false,
+          html: null,
+          text: `${repeated} ${repeated} Please review the attached budget before Friday.`,
+        }],
+      },
+    });
+
+    renderMail();
+    fireEvent.click(await screen.findByText('Q3 budget'));
+    const summary = await screen.findByTestId('mail-summary');
+    expect(summary.querySelectorAll('li').length).toBeGreaterThan(0);
+    expect(await screen.findByText('Ada <ada@example.com>')).toBeTruthy();
+    expect(screen.getByTestId('mail-reader').textContent).toContain(repeated);
+    expect(
+      consoleError.mock.calls.some((call) =>
+        call.some((arg) => String(arg).includes('same key'))),
+    ).toBe(false);
   });
 });

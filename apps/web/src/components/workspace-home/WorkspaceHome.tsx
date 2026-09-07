@@ -306,6 +306,7 @@ export function WorkspaceHome({
       <WorkspacePage
       testId="workspace-home"
       fill
+      studio
       eyebrow={activeOrg?.name}
       title={t('workspace.title')}
       lead={t('workspace.subtitle')}
@@ -418,6 +419,12 @@ export function WorkspaceHome({
       ) : null}
 
       <div className={`${styles.stage}${showingSearch ? ` ${styles.stageSearching}` : ''}`}>
+        <div className={styles.atmosphere} aria-hidden data-testid="home-atmosphere">
+          <span className={styles.orbLamp} />
+          <span className={styles.orbLeft} />
+          <span className={styles.orbRight} />
+          <span className={styles.ring} />
+        </div>
         <HubAskComposer
           orgId={activeOrgId}
           value={query}

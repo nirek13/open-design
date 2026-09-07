@@ -4,6 +4,12 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { forwardRef, useImperativeHandle } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../../src/utils/local-cli-usage', () => ({
+  LOCAL_CLI_USAGE_ENABLED: true,
+  isLocalCliUsageEnabled: () => true,
+  effectiveExecutionMode: (mode: string) => mode,
+}));
+
 import type { SkillSummary } from '@open-design/contracts';
 import { ChatPane, buildRunErrorDiagnosticText, retryableAssistantMessage } from '../../src/components/ChatPane';
 import { DESIGN_SYSTEM_WORKSPACE_PROMPT_PREFIX } from '../../src/design-system-auto-prompt';

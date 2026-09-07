@@ -124,6 +124,17 @@ describe('organization routes', () => {
     ]);
   });
 
+  it('renames the organization', async () => {
+    const patched = await json('PATCH', `/api/orgs/${orgId}`, { name: 'Acme' });
+    expect(patched.status).toBe(200);
+    expect(patched.body.organization.name).toBe('Acme');
+
+    const shown = await json('GET', `/api/orgs/${orgId}`);
+    expect(shown.body.organization.name).toBe('Acme');
+    const listed = await json('GET', '/api/orgs');
+    expect(listed.body.organizations[0].name).toBe('Acme');
+  });
+
   it('serves a scraped site logo after a website is saved', async () => {
     const missing = await fetch(`${base}/api/orgs/${orgId}/mark`);
     expect(missing.status).toBe(404);

@@ -7,6 +7,7 @@
    self-contained tree.
    ============================================================ */
 @import './entry-layout.css';
+@import './home-atmosphere.css';
 @import './home-hero.css';
 @import './plus-menu.css';
 @import './recent-projects.css';

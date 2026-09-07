@@ -1,5 +1,10 @@
-import type { PageBlockType } from '@open-design/contracts';
-import type { DraftBlock } from '../components/pages/page-draft';
+import {
+  isPageToolType,
+  pageToolPlainText,
+  parsePageTool,
+  type PageBlockType,
+} from '@open-design/contracts';
+import { toolPayload, type DraftBlock } from '../components/pages/page-draft';
 
 function headingPrefix(type: PageBlockType): string {
   if (type === 'heading_1') return '# ';
@@ -85,6 +90,15 @@ function walkMarkdown(blocks: DraftBlock[], depth = 0): string[] {
         }
         break;
       }
+      case 'board':
+      case 'checklist':
+      case 'assigner':
+      case 'poll':
+      case 'timeline':
+      case 'decision':
+      case 'goals':
+        lines.push(...toolMarkdown(block, indent));
+        break;
       default:
         if (text) lines.push(`${indent}${text}`);
         break;
@@ -104,6 +118,50 @@ function tableRows(block: DraftBlock): string[][] {
   return nested.map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : ['']));
 }
 
+function toolMarkdown(block: DraftBlock, indent: string): string[] {
+  if (!isPageToolType(block.type)) return [];
+  const tool = parsePageTool(block.type, toolPayload(block));
+  switch (tool.kind) {
+    case 'board':
+      return tool.columns.flatMap((column) => [
+        `${indent}### ${column.title || 'Untitled'}`,
+        ...column.cards.map((card) => `${indent}- ${card.title || 'Untitled card'}`),
+      ]);
+    case 'checklist':
+      return tool.items.map((item) => `${indent}- [${item.checked ? 'x' : ' '}] ${item.text}`);
+    case 'assigner':
+      return tool.tasks.map((task) => {
+        const who = task.assigneeName || task.assigneeId || 'unassigned';
+        return `${indent}- [${task.status}] ${task.title || 'Untitled'} (${who})`;
+      });
+    case 'poll': {
+      const lines = tool.question ? [`${indent}**${tool.question}**`] : [];
+      for (const option of tool.options) {
+        lines.push(`${indent}- ${option.label || 'Option'} — ${option.voterIds.length}`);
+      }
+      return lines;
+    }
+    case 'timeline':
+      return tool.items.map(
+        (item) => `${indent}- [${item.done ? 'x' : ' '}] ${item.date ? `${item.date} · ` : ''}${item.title}`,
+      );
+    case 'decision': {
+      const lines = tool.question ? [`${indent}**${tool.question}**`] : [];
+      for (const option of tool.options) {
+        const mark = option.id === tool.chosenId ? '[x]' : '[ ]';
+        lines.push(`${indent}- ${mark} ${option.label || 'Option'}`);
+      }
+      if (tool.notes.trim()) lines.push(`${indent}${tool.notes.trim()}`);
+      return lines;
+    }
+    case 'goals':
+      return tool.items.map((item) => {
+        const pct = item.target <= 0 ? 0 : Math.round((item.current / item.target) * 100);
+        return `${indent}- ${item.title || 'Goal'}: ${item.current}/${item.target}${item.unit ? ` ${item.unit}` : ''} (${pct}%)`;
+      });
+  }
+}
+
 export function pageToMarkdown(title: string, blocks: DraftBlock[]): string {
   const heading = `# ${title.trim() || 'Untitled'}`;
   const body = walkMarkdown(blocks).join('\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -118,7 +176,10 @@ export function countPageWords(title: string, blocks: DraftBlock[]): number {
 
 function flattenText(blocks: DraftBlock[]): string {
   return blocks
-    .map((block) => `${block.text} ${flattenText(block.children)}`)
+    .map((block) => {
+      const tool = isPageToolType(block.type) ? pageToolPlainText(toolPayload(block)) : '';
+      return `${block.text} ${tool} ${flattenText(block.children)}`;
+    })
     .join(' ')
     .trim();
 }

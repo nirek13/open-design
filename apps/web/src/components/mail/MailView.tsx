@@ -4,7 +4,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Button, EmptyState, Input, Skeleton, Textarea } from '@open-design/components';
-import type { MailLabel, MailMessage, MailProfile } from '@open-design/contracts';
+import {
+  classifyMailMessage,
+  draftMailReply,
+  senderDisplayName,
+  summarizeMailThread,
+  type MailLabel,
+  type MailMessage,
+  type MailProfile,
+  type MailTriageBucket,
+} from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
@@ -17,6 +26,7 @@ import {
   replyOrgMail,
   sendOrgMail,
   trashOrgMail,
+  triageOrgMail,
 } from '../../providers/registry';
 import { navigate } from '../../router';
 import { Icon } from '../Icon';
@@ -33,6 +43,14 @@ const SYSTEM_FOLDERS = [
   { id: 'IMPORTANT', key: 'mail.important' as const },
   { id: 'TRASH', key: 'mail.trash' as const },
 ] as const;
+
+const SPLIT_INBOX: Array<{ id: 'all' | MailTriageBucket; key: 'mail.all' | 'mail.needsReply' | 'mail.fyi' | 'mail.bulk' | 'mail.other' }> = [
+  { id: 'all', key: 'mail.all' },
+  { id: 'needs_reply', key: 'mail.needsReply' },
+  { id: 'fyi', key: 'mail.fyi' },
+  { id: 'bulk', key: 'mail.bulk' },
+  { id: 'other', key: 'mail.other' },
+];
 
 interface Props {
   active: boolean;
@@ -79,9 +97,7 @@ function splitAddresses(value: string): string[] {
 }
 
 function displayName(from: string): string {
-  const match = from.match(/^"?([^"<]+)"?\s*</);
-  if (match?.[1]) return match[1].trim();
-  return from.split('@')[0] || from;
+  return senderDisplayName(from);
 }
 
 function formatWhen(message: MailMessage): string {
@@ -105,21 +121,52 @@ const MAIL_FRAME_CSS = [
   'html,body{margin:0;padding:0;height:auto!important;background:#fff;}',
   'img,video{max-width:100%;height:auto;}',
 ].join('');
+const MAIL_FRAME_MIN_HEIGHT = 160;
 
 function wrapMailHtml(html: string): string {
   return `<style data-od-mail-fit="true">${MAIL_FRAME_CSS}</style>${html}`;
 }
 
+function measureMailFrameHeight(frame: HTMLIFrameElement): number {
+  const doc = frame.contentDocument;
+  if (!doc?.documentElement) return MAIL_FRAME_MIN_HEIGHT;
+  const content = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0);
+  return Math.max(content, MAIL_FRAME_MIN_HEIGHT);
+}
+
 function MailHtmlFrame({ html, title }: { html: string; title: string }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(MAIL_FRAME_MIN_HEIGHT);
+
+  const fit = useCallback(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    setHeight(measureMailFrameHeight(frame));
+  }, []);
+
+  function onFrameLoad() {
+    const frame = frameRef.current;
+    if (!frame) return;
+    fit();
+    const doc = frame.contentDocument;
+    if (!doc) return;
+    for (const img of Array.from(doc.images)) {
+      if (!img.complete) img.addEventListener('load', fit, { once: true });
+    }
+  }
+
   return (
     <div className={styles.bodyViewport}>
       <iframe
+        ref={frameRef}
         className={styles.bodyFrame}
-        sandbox=""
+        sandbox="allow-same-origin"
         referrerPolicy="no-referrer"
         title={title}
         srcDoc={wrapMailHtml(html)}
         data-testid="mail-body-frame"
+        onLoad={onFrameLoad}
+        style={{ height }}
       />
     </div>
   );
@@ -153,6 +200,9 @@ export function MailView({ active, initialThreadId }: Props) {
   const [commandQuery, setCommandQuery] = useState('');
   const [commandCursor, setCommandCursor] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [split, setSplit] = useState<'all' | MailTriageBucket>('all');
+  const [triaging, setTriaging] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const authAbortRef = useRef<AbortController | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const commandRef = useRef<HTMLInputElement | null>(null);
@@ -162,6 +212,27 @@ export function MailView({ active, initialThreadId }: Props) {
     () => labels.filter((label) => label.type === 'user').sort((a, b) => a.name.localeCompare(b.name)),
     [labels],
   );
+
+  const classified = useMemo(
+    () => messages.map((item) => ({ message: item, bucket: classifyMailMessage(item).bucket })),
+    [messages],
+  );
+  const visible = useMemo(
+    () => (split === 'all' ? classified : classified.filter((item) => item.bucket === split)),
+    [classified, split],
+  );
+  const visibleMessages = useMemo(() => visible.map((item) => item.message), [visible]);
+  const splitCounts = useMemo(() => {
+    const counts: Record<'all' | MailTriageBucket, number> = {
+      all: classified.length,
+      needs_reply: 0,
+      fyi: 0,
+      bulk: 0,
+      other: 0,
+    };
+    for (const item of classified) counts[item.bucket] += 1;
+    return counts;
+  }, [classified]);
 
   const reloadList = useCallback(async (pageToken?: string) => {
     if (!activeOrgId) return;
@@ -355,12 +426,12 @@ export function MailView({ active, initialThreadId }: Props) {
     if (!activeOrgId) return;
     try {
       await trashOrgMail(activeOrgId, messageId);
+      setMessages((prev) => prev.filter((message) => message.id !== messageId));
       if (selectedThreadId && thread.some((message) => message.id === messageId)) {
         setSelectedThreadId(null);
         setThread([]);
         navigate({ kind: 'home', view: 'mail' });
       }
-      await reloadList();
     } catch (err) {
       setError(asError(err));
     }
@@ -378,7 +449,57 @@ export function MailView({ active, initialThreadId }: Props) {
     setSelectedThreadId(null);
   }
 
-  const selectedMessage = messages[selectedIndex] ?? null;
+  const selectedMessage = visibleMessages[selectedIndex] ?? null;
+  const threadSummary = useMemo(
+    () => (thread.length > 0 ? summarizeMailThread(thread) : null),
+    [thread],
+  );
+
+  async function onDone(target: MailMessage) {
+    const remaining = visibleMessages.filter((message) => message.id !== target.id);
+    const next = remaining[Math.min(selectedIndex, Math.max(remaining.length - 1, 0))] ?? null;
+    setMessages((prev) => prev.filter((message) => message.id !== target.id));
+    if (next) openThread(next.threadId);
+    else {
+      setSelectedThreadId(null);
+      setThread([]);
+      navigate({ kind: 'home', view: 'mail' });
+    }
+    if (!activeOrgId) return;
+    try {
+      await modifyOrgMail(activeOrgId, target.id, { removeLabelIds: ['INBOX'] });
+    } catch (err) {
+      setError(asError(err));
+      await reloadList();
+    }
+  }
+
+  async function onTriageInbox() {
+    if (!activeOrgId || triaging) return;
+    setTriaging(true);
+    setError(null);
+    try {
+      await triageOrgMail(activeOrgId, {
+        apply: true,
+        label: query ? undefined : folder,
+        query: query || undefined,
+      });
+      await Promise.all([reloadStatus(), reloadList()]);
+    } catch (err) {
+      setError(asError(err));
+    } finally {
+      setTriaging(false);
+    }
+  }
+
+  function onDraftReply() {
+    if (thread.length === 0) return;
+    setDrafting(true);
+    const drafted = draftMailReply(thread);
+    setReplyBody(drafted.body);
+    window.setTimeout(() => replyRef.current?.focus(), 0);
+    setDrafting(false);
+  }
 
   function runCommand(id: string) {
     setCommandOpen(false);
@@ -396,13 +517,21 @@ export function MailView({ active, initialThreadId }: Props) {
       setShortcutsOpen(true);
       return;
     }
-    const target = selectedMessage ?? (selectedThreadId ? messages.find((m) => m.threadId === selectedThreadId) : null);
+    if (id === 'triage') {
+      void onTriageInbox();
+      return;
+    }
+    if (id === 'draft') {
+      onDraftReply();
+      return;
+    }
+    const target = selectedMessage ?? (selectedThreadId ? visibleMessages.find((m) => m.threadId === selectedThreadId) : null);
     if (id === 'open' && selectedMessage) {
       openThread(selectedMessage.threadId);
       return;
     }
     if (!target) return;
-    if (id === 'archive') void onModify(target.id, undefined, ['INBOX']);
+    if (id === 'archive') void onDone(target);
     if (id === 'star') {
       void onModify(
         target.id,
@@ -421,7 +550,9 @@ export function MailView({ active, initialThreadId }: Props) {
   const commands = useMemo(() => {
     const items = [
       { id: 'compose', label: t('mail.compose'), hint: 'C' },
-      { id: 'archive', label: t('mail.done'), hint: 'E' },
+      { id: 'triage', label: t('mail.triage'), hint: 'T' },
+      { id: 'draft', label: t('mail.draftAi'), hint: 'D' },
+      { id: 'archive', label: t('mail.done'), hint: 'E / Space' },
       { id: 'star', label: t('mail.star'), hint: 'S' },
       { id: 'reply', label: t('mail.reply'), hint: 'R' },
       { id: 'unread', label: t('mail.markUnread'), hint: 'U' },
@@ -499,13 +630,16 @@ export function MailView({ active, initialThreadId }: Props) {
       if (typing || compose) return;
       if (event.key === 'j' || event.key === 'ArrowDown') {
         event.preventDefault();
-        setSelectedIndex((index) => Math.min(Math.max(messages.length - 1, 0), index + 1));
+        setSelectedIndex((index) => Math.min(Math.max(visibleMessages.length - 1, 0), index + 1));
       } else if (event.key === 'k' || event.key === 'ArrowUp') {
         event.preventDefault();
         setSelectedIndex((index) => Math.max(0, index - 1));
       } else if (event.key === 'Enter') {
         event.preventDefault();
         runCommand('open');
+      } else if (event.key === ' ' || event.key === 'Spacebar') {
+        event.preventDefault();
+        runCommand('archive');
       } else if (event.key === 'c') {
         event.preventDefault();
         runCommand('compose');
@@ -518,6 +652,24 @@ export function MailView({ active, initialThreadId }: Props) {
       } else if (event.key === 'r') {
         event.preventDefault();
         runCommand('reply');
+      } else if (event.key === 'd') {
+        event.preventDefault();
+        runCommand('draft');
+      } else if (event.key === 't') {
+        event.preventDefault();
+        runCommand('triage');
+      } else if (event.key === '1') {
+        event.preventDefault();
+        setSplit('all');
+      } else if (event.key === '2') {
+        event.preventDefault();
+        setSplit('needs_reply');
+      } else if (event.key === '3') {
+        event.preventDefault();
+        setSplit('fyi');
+      } else if (event.key === '4') {
+        event.preventDefault();
+        setSplit('bulk');
       } else if (event.key === 'u') {
         event.preventDefault();
         runCommand('unread');
@@ -536,15 +688,26 @@ export function MailView({ active, initialThreadId }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  const lastFocusedIndex = useRef<number | null>(null);
+
   useEffect(() => {
-    if (messages.length === 0) return;
-    if (selectedIndex > messages.length - 1) setSelectedIndex(messages.length - 1);
-  }, [messages.length, selectedIndex]);
+    if (visibleMessages.length === 0) return;
+    if (selectedIndex > visibleMessages.length - 1) setSelectedIndex(visibleMessages.length - 1);
+  }, [visibleMessages.length, selectedIndex]);
 
   useEffect(() => {
     const node = document.querySelector(`[data-mail-index="${selectedIndex}"]`);
     if (node instanceof HTMLElement) node.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex]);
+
+  useEffect(() => {
+    if (!active || !connected) return;
+    const previous = lastFocusedIndex.current;
+    lastFocusedIndex.current = selectedIndex;
+    if (previous === null || previous === selectedIndex) return;
+    const message = visibleMessages[selectedIndex];
+    if (message) openThread(message.threadId);
+  }, [active, connected, selectedIndex, visibleMessages]);
 
   if (!activeOrgId) {
     return (
@@ -592,6 +755,15 @@ export function MailView({ active, initialThreadId }: Props) {
             <>
               <Button variant="ghost" onClick={() => void reloadList()} disabled={loading}>
                 {t('mail.refresh')}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => void onTriageInbox()}
+                disabled={triaging || loading}
+                data-testid="mail-triage"
+              >
+                <Icon name="sparkles" size={14} />
+                {triaging ? t('mail.triaging') : t('mail.triage')}
               </Button>
               <Button onClick={() => setCompose(emptyDraft())} data-testid="mail-compose">
                 {t('mail.compose')}
@@ -677,12 +849,31 @@ export function MailView({ active, initialThreadId }: Props) {
           </nav>
 
           <section className={styles.list} aria-label={t('mail.inbox')}>
-            {loading && messages.length === 0 ? (
+            <div className={styles.split} role="tablist" aria-label={t('mail.splitInbox')}>
+              {SPLIT_INBOX.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={split === item.id}
+                  className={`${styles.splitTab}${split === item.id ? ` ${styles.splitTabActive}` : ''}`}
+                  data-testid={`mail-split-${item.id}`}
+                  onClick={() => {
+                    setSplit(item.id);
+                    setSelectedIndex(0);
+                  }}
+                >
+                  <span>{t(item.key)}</span>
+                  {splitCounts[item.id] ? <span className={styles.unreadCount}>{splitCounts[item.id]}</span> : null}
+                </button>
+              ))}
+            </div>
+            {loading && visibleMessages.length === 0 ? (
               Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className={styles.rowSkeleton} />)
-            ) : messages.length === 0 ? (
+            ) : visible.length === 0 ? (
               <p className={styles.emptyList}>{query ? t('mail.emptySearch') : t('mail.empty')}</p>
             ) : (
-              messages.map((message, index) => {
+              visible.map(({ message, bucket }, index) => {
                 const selected = message.threadId === selectedThreadId;
                 const focused = index === selectedIndex;
                 return (
@@ -705,6 +896,15 @@ export function MailView({ active, initialThreadId }: Props) {
                     <span className={styles.rowFrom}>{displayName(message.from)}</span>
                     <span className={styles.rowSubject}>
                       {message.starred ? '★ ' : ''}
+                      {bucket !== 'other' ? (
+                        <span className={`${styles.bucket} ${
+                          bucket === 'needs_reply' ? styles.bucket_needs_reply
+                            : bucket === 'fyi' ? styles.bucket_fyi
+                              : styles.bucket_bulk
+                        }`}>
+                          {t(bucket === 'needs_reply' ? 'mail.needsReply' : bucket === 'fyi' ? 'mail.fyi' : 'mail.bulk')}
+                        </span>
+                      ) : null}
                       {message.subject}
                       {message.snippet ? <span className={styles.rowSnippet}> — {message.snippet}</span> : null}
                     </span>
@@ -737,6 +937,14 @@ export function MailView({ active, initialThreadId }: Props) {
                     <div className={styles.threadActions}>
                       <Button
                         variant="ghost"
+                        onClick={() => onDraftReply()}
+                        disabled={drafting || thread.length === 0}
+                        data-testid="mail-draft"
+                      >
+                        {drafting ? t('mail.drafting') : t('mail.draftAi')}
+                      </Button>
+                      <Button
+                        variant="ghost"
                         onClick={() => void onModify(
                           latest.id,
                           latest.starred ? undefined : ['STARRED'],
@@ -747,7 +955,7 @@ export function MailView({ active, initialThreadId }: Props) {
                       </Button>
                       <Button
                         variant="ghost"
-                        onClick={() => void onModify(latest.id, undefined, ['INBOX'])}
+                        onClick={() => void onDone(latest)}
                       >
                         {t('mail.done')}
                       </Button>
@@ -757,27 +965,46 @@ export function MailView({ active, initialThreadId }: Props) {
                     </div>
                   ) : null}
                 </div>
-                <div className={styles.messages}>
-                  {thread.map((message) => (
-                    <article key={message.id} className={styles.message}>
-                      <header className={styles.messageHead}>
-                        <div>
-                          <p className={styles.messageFrom}>{message.from}</p>
-                          <p className={styles.messageMeta}>
-                            {t('mail.to')} {message.to.join(', ') || '—'}
-                            {message.date || message.internalDate
-                              ? ` · ${formatWhen(message)}`
-                              : ''}
-                          </p>
-                        </div>
-                      </header>
-                      {message.html ? (
-                        <MailHtmlFrame html={message.html} title={message.subject} />
-                      ) : (
-                        <pre className={styles.bodyText}>{message.text || message.snippet}</pre>
-                      )}
-                    </article>
-                  ))}
+                <div className={styles.reader} data-testid="mail-reader">
+                  <div
+                    className={`${styles.messages}${
+                      threadSummary && threadSummary.bullets.length > 0
+                        ? ` ${styles.messagesWithSummary}`
+                        : ''
+                    }`}
+                  >
+                    {thread.map((message) => (
+                      <article key={message.id} className={styles.message}>
+                        <header className={styles.messageHead}>
+                          <div>
+                            <p className={styles.messageFrom}>{message.from}</p>
+                            <p className={styles.messageMeta}>
+                              {t('mail.to')} {message.to.join(', ') || '—'}
+                              {message.date || message.internalDate
+                                ? ` · ${formatWhen(message)}`
+                                : ''}
+                            </p>
+                          </div>
+                        </header>
+                        {message.html ? (
+                          <MailHtmlFrame html={message.html} title={message.subject} />
+                        ) : (
+                          <pre className={styles.bodyText}>{message.text || message.snippet}</pre>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                  {threadSummary && threadSummary.bullets.length > 0 ? (
+                    <aside className={styles.summary} data-testid="mail-summary">
+                      <p className={styles.summaryKicker}>{t('mail.summary')}</p>
+                      <p className={styles.summaryHeadline}>{threadSummary.headline}</p>
+                      <ul>
+                        {threadSummary.bullets.map((bullet, index) => (
+                          <li key={`${index}:${bullet}`}>{bullet}</li>
+                        ))}
+                      </ul>
+                    </aside>
+                  ) : null}
                 </div>
                 <form
                   className={styles.reply}
@@ -871,7 +1098,10 @@ export function MailView({ active, initialThreadId }: Props) {
             <dl>
               <div><dt>J / K</dt><dd>Move</dd></div>
               <div><dt>Enter</dt><dd>Open</dd></div>
-              <div><dt>E</dt><dd>{t('mail.done')}</dd></div>
+              <div><dt>Space / E</dt><dd>{t('mail.done')}</dd></div>
+              <div><dt>T</dt><dd>{t('mail.triage')}</dd></div>
+              <div><dt>D</dt><dd>{t('mail.draftAi')}</dd></div>
+              <div><dt>1–4</dt><dd>{t('mail.splitInbox')}</dd></div>
               <div><dt>C</dt><dd>{t('mail.compose')}</dd></div>
               <div><dt>R</dt><dd>{t('mail.reply')}</dd></div>
               <div><dt>S</dt><dd>{t('mail.star')}</dd></div>

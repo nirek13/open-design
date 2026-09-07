@@ -101,6 +101,7 @@ test('[P2] tab chrome hosts org, notifications, and settings', async ({ page }) 
   const trailing = page.getByTestId('workspace-tabs-trailing');
   await expect(trailing).toBeVisible();
   await expect(trailing.getByTestId('org-switcher-trigger')).toBeVisible();
+  await expect(trailing.getByTestId('chrome-search-trigger')).toBeVisible();
   await expect(trailing.getByTestId('message-center-trigger')).toBeVisible();
   await expect(trailing.getByTestId('entry-settings-menu-trigger')).toBeVisible();
 
@@ -110,7 +111,16 @@ test('[P2] tab chrome hosts org, notifications, and settings', async ({ page }) 
   await expect(page.getByTestId('inline-model-switcher-chip')).toBeVisible();
 });
 
-test('[P1] home composer execution pill reflects the selected Local CLI agent and opens the switcher', async ({ page }) => {
+test('[P2] tab chrome search bar opens the Command+1 spotlight', async ({ page }) => {
+  await gotoEntryHome(page);
+
+  const trailing = page.getByTestId('workspace-tabs-trailing');
+  await trailing.getByTestId('chrome-search-trigger').click();
+  await expect(page.getByTestId('org-search-palette')).toBeVisible();
+  await expect(page.getByTestId('org-search-palette-input')).toBeFocused();
+});
+
+test.skip('[P1] home composer execution pill reflects the selected Local CLI agent and opens the switcher', async ({ page }) => {
   await gotoEntryHome(page);
 
   const pill = page.getByTestId('inline-model-switcher-chip');

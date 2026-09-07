@@ -10,6 +10,8 @@ import type { Express, Request as ExpressRequest, Response } from 'express';
 import {
   LOCAL_OWNER_USER_ID,
   createApiError,
+  draftMailReply,
+  summarizeMailThread,
   type ModifyMailRequest,
   type ReplyMailRequest,
   type SendMailRequest,
@@ -38,6 +40,7 @@ import {
   replyToThread,
   sendMail,
   trashMailMessage,
+  triageMailMessages,
 } from '../workspace-data/mail.js';
 
 type Request = ExpressRequest<Record<string, string>>;
@@ -85,15 +88,21 @@ function asReplyBody(value: unknown): ReplyMailRequest {
   };
 }
 
+function asLabelIds(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return value.split(/[,;]/).map((part) => part.trim()).filter(Boolean);
+  }
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean);
+}
+
 function asModifyBody(value: unknown): ModifyMailRequest {
   const body = asObject(value, 'request body');
   const next: ModifyMailRequest = {};
-  if (Array.isArray(body.addLabelIds)) {
-    next.addLabelIds = body.addLabelIds.filter((item): item is string => typeof item === 'string');
-  }
-  if (Array.isArray(body.removeLabelIds)) {
-    next.removeLabelIds = body.removeLabelIds.filter((item): item is string => typeof item === 'string');
-  }
+  const add = asLabelIds(body.addLabelIds ?? body.add);
+  const remove = asLabelIds(body.removeLabelIds ?? body.remove);
+  if (add.length > 0) next.addLabelIds = add;
+  if (remove.length > 0) next.removeLabelIds = remove;
   return next;
 }
 
@@ -269,6 +278,55 @@ export function registerMailRoutes(app: Express, ctx: RegisterMailRoutesDeps) {
     }),
   );
 
+  app.post(
+    '/api/orgs/:orgId/mail/triage',
+    handle(async (req, res) => {
+      await scope(req);
+      if (!gmailConnected()) {
+        res.json({ connected: false, applied: false, decisions: [], appliedCount: 0 });
+        return;
+      }
+      const exec = requireExecutor();
+      const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+      const listed = await listMailMessages(exec, {
+        labelIds: typeof body.label === 'string' && body.label.trim() ? [body.label.trim()] : ['INBOX'],
+        ...(typeof body.query === 'string' && body.query.trim() ? { query: body.query.trim() } : {}),
+        maxResults: typeof body.maxResults === 'number' && Number.isFinite(body.maxResults)
+          ? body.maxResults
+          : 40,
+      });
+      const apply = body.apply === true;
+      const result = await triageMailMessages(exec, listed.messages, apply);
+      res.json({
+        connected: true,
+        applied: apply,
+        decisions: result.decisions,
+        appliedCount: result.appliedCount,
+      });
+    }),
+  );
+
+  app.post(
+    '/api/orgs/:orgId/mail/threads/:threadId/summarize',
+    handle(async (req, res) => {
+      await scope(req);
+      const exec = requireExecutor();
+      const messages = await getMailThread(exec, param(req, 'threadId'));
+      res.json({ summary: summarizeMailThread(messages) });
+    }),
+  );
+
+  app.post(
+    '/api/orgs/:orgId/mail/threads/:threadId/draft',
+    handle(async (req, res) => {
+      await scope(req);
+      const exec = requireExecutor();
+      const messages = await getMailThread(exec, param(req, 'threadId'));
+      const instruction = typeof req.body?.instruction === 'string' ? req.body.instruction : undefined;
+      res.json({ draft: draftMailReply(messages, { instruction }) });
+    }),
+  );
+
   // --- Agent tools --------------------------------------------------------
 
   async function toolOrgId(req: Request): Promise<string> {
@@ -372,6 +430,86 @@ export function registerMailRoutes(app: Express, ctx: RegisterMailRoutesDeps) {
       }
       const result = await replyToThread(exec, threadId, asReplyBody(req.body));
       res.status(201).json({ orgId, ...result });
+    }),
+  );
+
+  app.post(
+    '/api/tools/mail/modify',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'mail:modify');
+      if (!grant) return;
+      const orgId = await toolOrgId(req);
+      const exec = requireExecutor();
+      const messageId = String(req.body?.messageId ?? req.body?.message ?? '');
+      if (!messageId) {
+        throw new WorkspaceDataError('WORKSPACE_VALIDATION_FAILED', 422, 'messageId is required');
+      }
+      await modifyMailMessage(exec, messageId, asModifyBody(req.body));
+      res.json({ orgId, ok: true });
+    }),
+  );
+
+  app.post(
+    '/api/tools/mail/triage',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'mail:triage');
+      if (!grant) return;
+      const orgId = await toolOrgId(req);
+      if (!gmailConnected()) {
+        res.json({ orgId, connected: false, applied: false, decisions: [], appliedCount: 0 });
+        return;
+      }
+      const exec = requireExecutor();
+      const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+      const listed = await listMailMessages(exec, {
+        labelIds: typeof body.label === 'string' && body.label.trim() ? [body.label.trim()] : ['INBOX'],
+        ...(typeof body.query === 'string' && body.query.trim() ? { query: body.query.trim() } : {}),
+        maxResults: typeof body.maxResults === 'number' && Number.isFinite(body.maxResults)
+          ? body.maxResults
+          : 40,
+      });
+      const apply = body.apply === true;
+      const result = await triageMailMessages(exec, listed.messages, apply);
+      res.json({
+        orgId,
+        connected: true,
+        applied: apply,
+        decisions: result.decisions,
+        appliedCount: result.appliedCount,
+      });
+    }),
+  );
+
+  app.post(
+    '/api/tools/mail/summarize',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'mail:summarize');
+      if (!grant) return;
+      const orgId = await toolOrgId(req);
+      const exec = requireExecutor();
+      const threadId = String(req.body?.threadId ?? req.body?.thread ?? '');
+      if (!threadId) {
+        throw new WorkspaceDataError('WORKSPACE_VALIDATION_FAILED', 422, 'threadId is required');
+      }
+      const messages = await getMailThread(exec, threadId);
+      res.json({ orgId, summary: summarizeMailThread(messages) });
+    }),
+  );
+
+  app.post(
+    '/api/tools/mail/draft',
+    handle(async (req, res) => {
+      const grant = authorizeToolRequest(req, res, 'mail:draft');
+      if (!grant) return;
+      const orgId = await toolOrgId(req);
+      const exec = requireExecutor();
+      const threadId = String(req.body?.threadId ?? req.body?.thread ?? '');
+      if (!threadId) {
+        throw new WorkspaceDataError('WORKSPACE_VALIDATION_FAILED', 422, 'threadId is required');
+      }
+      const instruction = typeof req.body?.instruction === 'string' ? req.body.instruction : undefined;
+      const messages = await getMailThread(exec, threadId);
+      res.json({ orgId, draft: draftMailReply(messages, { instruction }) });
     }),
   );
 }

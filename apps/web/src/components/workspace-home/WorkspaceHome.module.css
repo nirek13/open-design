@@ -1,6 +1,7 @@
 /* Stage: the search/ask box sits in the remaining viewport. */
 
 .stage {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -8,6 +9,94 @@
   justify-content: center;
   min-height: 0;
   padding: 0 16px 10vh;
+}
+
+.atmosphere {
+  position: absolute;
+  inset: -12% -22% 8%;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.orbLamp,
+.orbLeft,
+.orbRight,
+.ring {
+  position: absolute;
+  pointer-events: none;
+}
+
+.orbLamp {
+  left: 50%;
+  top: -18%;
+  width: min(92vw, 1100px);
+  height: min(62vw, 680px);
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--accent-tint) 88%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 18%, transparent) 38%,
+    transparent 78%
+  );
+  animation: homeOrbDrift 36s linear infinite alternate;
+}
+
+.orbLeft {
+  left: -14%;
+  top: 18%;
+  width: min(52vw, 520px);
+  height: min(52vw, 520px);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 14%, transparent),
+    transparent 78%
+  );
+  animation: homeOrbDrift 42s linear infinite alternate-reverse;
+}
+
+.orbRight {
+  right: -16%;
+  top: 4%;
+  width: min(48vw, 480px);
+  height: min(48vw, 480px);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent-soft) 55%, transparent),
+    transparent 76%
+  );
+  animation: homeOrbDrift 40s linear infinite alternate;
+}
+
+.ring {
+  left: 50%;
+  top: 42%;
+  width: min(640px, 78vw);
+  height: min(640px, 78vw);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    transparent 42%,
+    color-mix(in srgb, var(--accent) 8%, transparent) 62%,
+    transparent 78%
+  );
+}
+
+@keyframes homeOrbDrift {
+  from { translate: 0 0; }
+  to { translate: 18px 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbLamp,
+  .orbLeft,
+  .orbRight {
+    animation: none;
+  }
 }
 
 .stageSearching {
@@ -58,6 +147,8 @@
 }
 
 .ask {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -112,12 +203,10 @@
   display: flex;
   flex-direction: column;
   padding: 4px 6px;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
   border-radius: 28px;
-  background: var(--bg-elevated);
-  box-shadow:
-    0 1px 6px color-mix(in srgb, var(--text) 6%, transparent),
-    0 8px 28px color-mix(in srgb, var(--text) 5%, transparent);
+  background: transparent;
+  box-shadow: none;
   transform: scale(1);
   transition:
     border-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -126,19 +215,14 @@
 }
 
 .askBox:hover {
-  box-shadow:
-    0 1px 8px color-mix(in srgb, var(--text) 8%, transparent),
-    0 12px 36px color-mix(in srgb, var(--text) 7%, transparent);
+  border-color: color-mix(in srgb, var(--text) 26%, transparent);
 }
 
 .askBox:focus-within,
 .askBoxFocused {
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
   transform: scale(1.015);
-  box-shadow:
-    0 1px 8px color-mix(in srgb, var(--text) 8%, transparent),
-    0 16px 40px color-mix(in srgb, var(--accent) 12%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .askMain {
@@ -256,6 +340,8 @@
 }
 
 .searchQuiet {
+  position: relative;
+  z-index: 1;
   margin: 18px 0 0;
   color: var(--text-muted);
   font-size: 13.5px;

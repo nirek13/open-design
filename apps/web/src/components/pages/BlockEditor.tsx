@@ -67,10 +67,12 @@ import {
   removeAt,
   stampServerIds,
   tableRows,
+  TOOL_TYPES,
   updateAt,
   type DraftBlock,
   type PageIndexEntry,
 } from './page-draft';
+import { PageTool } from './PageTools';
 
 export type { DraftBlock, PageIndexEntry };
 export {
@@ -111,6 +113,13 @@ const ICONS: Partial<Record<PageBlockType, string>> = {
   artifact: '◇',
   page: '📄',
   record: '🧾',
+  board: '▤',
+  checklist: '☐',
+  assigner: '👤',
+  poll: '◔',
+  timeline: '↦',
+  decision: '⚖',
+  goals: '◎',
 };
 
 interface SlashState {
@@ -334,9 +343,16 @@ export function BlockEditor({
     (item): item is Extract<SlashItem, { source: 'block' }> =>
       item.source === 'block' && MEDIA_TYPES.has(item.type),
   );
+  const toolSlash = slashItems.filter(
+    (item): item is Extract<SlashItem, { source: 'block' }> =>
+      item.source === 'block' && TOOL_TYPES.has(item.type),
+  );
   const otherSlash = slashItems.filter(
     (item): item is Extract<SlashItem, { source: 'block' }> =>
-      item.source === 'block' && !BASIC_TYPES.has(item.type) && !MEDIA_TYPES.has(item.type),
+      item.source === 'block' &&
+      !BASIC_TYPES.has(item.type) &&
+      !MEDIA_TYPES.has(item.type) &&
+      !TOOL_TYPES.has(item.type),
   );
   const mentionItems = useMemo(() => {
     if (!mention) return [];
@@ -732,6 +748,8 @@ export function BlockEditor({
             {basicSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
             {mediaSlash.length > 0 ? <div className={styles.slashTitle}>Media</div> : null}
             {mediaSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
+            {toolSlash.length > 0 ? <div className={styles.slashTitle}>Tools</div> : null}
+            {toolSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
             {otherSlash.length > 0 ? <div className={styles.slashTitle}>Advanced</div> : null}
             {otherSlash.map((item) => renderSlashItem(item, slashItems.indexOf(item)))}
           </>
@@ -1137,6 +1155,16 @@ export function BlockEditor({
         </div>
       );
     }
+    if (TOOL_TYPES.has(block.type)) {
+      return (
+        <PageTool
+          block={block}
+          readOnly={readOnly}
+          orgId={orgId}
+          onChange={(patch) => onChange(updateAt(blocks, block.key, patch))}
+        />
+      );
+    }
     return null;
   };
 
@@ -1148,7 +1176,8 @@ export function BlockEditor({
       block.type === 'column' ||
       block.type === 'table_of_contents' ||
       block.type === 'breadcrumb' ||
-      block.type === 'equation'
+      block.type === 'equation' ||
+      TOOL_TYPES.has(block.type)
     ) {
       return false;
     }

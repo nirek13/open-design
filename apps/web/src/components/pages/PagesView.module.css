@@ -431,6 +431,29 @@
   background: var(--bg-fill-secondary, rgba(0, 0, 0, 0.06));
 }
 
+.sendScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, #000 40%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.sendCard {
+  width: min(560px, 100%);
+  max-height: min(90vh, 720px);
+  overflow: auto;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid var(--border, #e1e5eb);
+  background: var(--bg-elevated, #fff);
+  box-shadow: var(--shadow-md, 0 6px 24px rgba(28, 27, 26, 0.07));
+}
+
 .menuCheck {
   display: flex;
   align-items: center;

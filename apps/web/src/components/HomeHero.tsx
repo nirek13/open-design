@@ -1246,14 +1246,18 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
 
   return (
     <section ref={homeHeroRef} className="home-hero" data-testid="home-hero">
-      <div className="home-hero__brand" aria-hidden>
-        <span className="home-hero__brand-mark od-brand-glyph" />
-        <span className="home-hero__brand-name">{t('app.brand')}</span>
+      <div className="home-hero__atmosphere" aria-hidden data-testid="home-atmosphere">
+        <span className="home-hero__orb home-hero__orb--lamp" />
+        <span className="home-hero__orb home-hero__orb--left" />
+        <span className="home-hero__orb home-hero__orb--right" />
+        <span className="home-hero__ring" />
+        <span className="home-hero__grain" />
       </div>
-      <h1 className="home-hero__title">{t('homeHero.title')}</h1>
-      <p className="home-hero__subtitle">
-        {t('homeHero.subtitlePrefix')}
-      </p>
+      <div className="home-hero__brand">
+        <span className="home-hero__brand-mark od-brand-glyph" aria-hidden />
+        <h1 className="home-hero__title">{t('homeHero.title')}</h1>
+        <p className="home-hero__subtitle">{t('homeHero.subtitlePrefix')}</p>
+      </div>
 
       <div
         className={`home-hero__input-card${

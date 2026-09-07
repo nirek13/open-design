@@ -292,7 +292,8 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
   const shareUrlFor = (req: Request, token: string) => `${publicBaseUrl(req)}/s/${token}`;
   /** Join landing is the web SPA. In split-port local runs that is not this
    * daemon, so the URL follows `browserFacingOrigin`. */
-  const joinUrlFor = (req: Request, token: string) => `${browserFacingOrigin(req)}/join/${token}`;
+  const joinUrlFor = (req: Request, token: string) =>
+    `${browserFacingOrigin(req)}/join/${encodeURIComponent(token)}`;
 
   // --- Bootstrap ----------------------------------------------------------
 

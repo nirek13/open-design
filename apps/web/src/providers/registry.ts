@@ -4379,12 +4379,57 @@ export async function commitImportPlan(
 export async function fetchOrgCalendarEvents(
   orgId: string,
   range?: { from?: string; to?: string },
-): Promise<{ events: import('@open-design/contracts').CalendarEvent[]; googleConnected: boolean; lastSyncedAt: number | null }> {
+): Promise<import('@open-design/contracts').CalendarEventsResponse> {
   const params = new URLSearchParams();
   if (range?.from) params.set('from', range.from);
   if (range?.to) params.set('to', range.to);
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
   return workspaceDataJson(orgPath(orgId, `/calendar/events${suffix}`));
+}
+
+export async function fetchOrgCalendars(
+  orgId: string,
+): Promise<{ calendars: import('@open-design/contracts').OrgCalendar[] }> {
+  return workspaceDataJson(orgPath(orgId, '/calendar/calendars'));
+}
+
+export async function createOrgNamedCalendar(
+  orgId: string,
+  body: import('@open-design/contracts').UpsertOrgCalendarRequest,
+): Promise<import('@open-design/contracts').OrgCalendar> {
+  const json = await workspaceDataJson<{ calendar: import('@open-design/contracts').OrgCalendar }>(
+    orgPath(orgId, '/calendar/calendars'),
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+  );
+  return json.calendar;
+}
+
+export async function updateOrgNamedCalendar(
+  orgId: string,
+  calendarId: string,
+  body: import('@open-design/contracts').PatchOrgCalendarRequest,
+): Promise<import('@open-design/contracts').OrgCalendar> {
+  const json = await workspaceDataJson<{ calendar: import('@open-design/contracts').OrgCalendar }>(
+    orgPath(orgId, `/calendar/calendars/${encodeURIComponent(calendarId)}`),
+    { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+  );
+  return json.calendar;
+}
+
+export async function deleteOrgNamedCalendar(orgId: string, calendarId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/calendar/calendars/${encodeURIComponent(calendarId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchOrgCalendarEvent(
+  orgId: string,
+  eventId: string,
+): Promise<import('@open-design/contracts').CalendarEvent> {
+  const json = await workspaceDataJson<{ event: import('@open-design/contracts').CalendarEvent }>(
+    orgPath(orgId, `/calendar/events/${encodeURIComponent(eventId)}`),
+  );
+  return json.event;
 }
 
 export async function createOrgCalendarEvent(
@@ -4418,8 +4463,88 @@ export async function deleteOrgCalendarEvent(orgId: string, eventId: string): Pr
 
 export async function syncOrgGoogleCalendar(
   orgId: string,
-): Promise<{ imported: number; events: import('@open-design/contracts').CalendarEvent[]; lastSyncedAt: number }> {
+): Promise<import('@open-design/contracts').CalendarSyncResponse> {
   return workspaceDataJson(orgPath(orgId, '/calendar/google/sync'), { method: 'POST' });
+}
+
+export async function syncOrgNotionCalendar(
+  orgId: string,
+  databaseId?: string,
+): Promise<import('@open-design/contracts').CalendarSyncResponse> {
+  return workspaceDataJson(orgPath(orgId, '/calendar/notion/sync'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(databaseId ? { databaseId } : {}),
+  });
+}
+
+export async function importOrgCalendar(
+  orgId: string,
+  body: import('@open-design/contracts').ImportCalendarRequest,
+): Promise<import('@open-design/contracts').CalendarSyncResponse> {
+  return workspaceDataJson(orgPath(orgId, '/calendar/import'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchOrgBookingTypes(
+  orgId: string,
+): Promise<import('@open-design/contracts').CalendarBookingTypesResponse> {
+  return workspaceDataJson(orgPath(orgId, '/calendar/booking-types'));
+}
+
+export async function createOrgBookingType(
+  orgId: string,
+  body: import('@open-design/contracts').UpsertCalendarBookingTypeRequest,
+): Promise<import('@open-design/contracts').CreatedCalendarBookingType> {
+  return workspaceDataJson(orgPath(orgId, '/calendar/booking-types'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function revokeOrgBookingType(orgId: string, bookingTypeId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/calendar/booking-types/${encodeURIComponent(bookingTypeId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchCalendarEventInvite(
+  orgId: string,
+  eventId: string,
+): Promise<import('@open-design/contracts').CalendarInviteResponse> {
+  return workspaceDataJson(orgPath(orgId, `/calendar/events/${encodeURIComponent(eventId)}/invite.ics?format=json`));
+}
+
+export async function fetchPublicBookingPage(
+  token: string,
+): Promise<import('@open-design/contracts').PublicBookingPage> {
+  return workspaceDataJson(`/api/book/${encodeURIComponent(token)}`);
+}
+
+export async function fetchPublicBookingSlots(
+  token: string,
+  range?: { from?: string; to?: string },
+): Promise<import('@open-design/contracts').PublicBookingSlotsResponse> {
+  const params = new URLSearchParams();
+  if (range?.from) params.set('from', range.from);
+  if (range?.to) params.set('to', range.to);
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return workspaceDataJson(`/api/book/${encodeURIComponent(token)}/slots${suffix}`);
+}
+
+export async function createPublicBooking(
+  token: string,
+  body: import('@open-design/contracts').CreatePublicBookingRequest,
+): Promise<import('@open-design/contracts').CreatedPublicBooking> {
+  return workspaceDataJson(`/api/book/${encodeURIComponent(token)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 }
 
 
@@ -4487,6 +4612,17 @@ export async function modifyOrgMail(
 export async function trashOrgMail(orgId: string, messageId: string): Promise<void> {
   await workspaceDataJson(orgPath(orgId, `/mail/messages/${encodeURIComponent(messageId)}/trash`), {
     method: 'POST',
+  });
+}
+
+export async function triageOrgMail(
+  orgId: string,
+  body?: { apply?: boolean; label?: string; query?: string; maxResults?: number },
+): Promise<import('@open-design/contracts').MailTriageResponse> {
+  return workspaceDataJson(orgPath(orgId, '/mail/triage'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body ?? { apply: true }),
   });
 }
 

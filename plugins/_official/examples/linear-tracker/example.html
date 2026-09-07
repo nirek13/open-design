@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<script>(function(){
+  function makeStore(){
+    var data = {};
+    var api = {
+      getItem: function(k){ return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null; },
+      setItem: function(k, v){ data[k] = String(v); },
+      removeItem: function(k){ delete data[k]; },
+      clear: function(){ data = {}; },
+      key: function(i){ return Object.keys(data)[i] || null; }
+    };
+    Object.defineProperty(api, 'length', { get: function(){ return Object.keys(data).length; } });
+    return api;
+  }
+  function tryShim(name){
+    var works = false;
+    try { works = !!window[name] && typeof window[name].getItem === 'function'; void window[name].length; }
+    catch (_) { works = false; }
+    if (works) return;
+    try { Object.defineProperty(window, name, { configurable: true, value: makeStore() }); }
+    catch (_) { try { window[name] = makeStore(); } catch (__) {} }
+  }
+  tryShim('localStorage');
+  tryShim('sessionStorage');
+})();</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Design · Cycle 48</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Berkeley Mono', Menlo, monospace;
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+}
+[data-theme="dark"] {
+  --bg: #0f1011; --elev: #191a1b; --inset: #141516;
+  --ink: #f7f8f8; --ink-2: #d0d6e0; --ink-3: #8a8f98; --ink-4: #62666d;
+  --border: rgba(255,255,255,0.06); --border-strong: rgba(255,255,255,0.10);
+  --hover: rgba(255,255,255,0.03); --active: rgba(255,255,255,0.055);
+  --accent: #5e6ad2; --accent-hot: #7170ff; --accent-bg: rgba(94,106,210,0.12);
+  --shadow: 0 8px 28px rgba(0,0,0,0.45);
+  --status-backlog: #9ea1a9; --status-todo: #d4940e; --status-progress: #2b80c5;
+  --status-review: #8759c7; --status-done: #1a8d3a; --status-canceled: #6c6f78;
+  --pri-on: #b8bac2; --pri-off: rgba(255,255,255,0.10);
+  --pri-high: #c77d1a; --pri-urgent: #d4513a;
+  --scroll: rgba(255,255,255,0.10);
+  --overlay: rgba(0,0,0,0.62);
+}
+[data-theme="light"] {
+  --bg: #f4f5f6; --elev: #ffffff; --inset: #f8f9fa;
+  --ink: #1b1c1f; --ink-2: #37393e; --ink-3: #6c6f78; --ink-4: #9ea1a9;
+  --border: rgba(0,0,0,0.06); --border-strong: rgba(0,0,0,0.12);
+  --hover: rgba(0,0,0,0.025); --active: rgba(0,0,0,0.05);
+  --accent: #5e6ad2; --accent-hot: #6c78e2; --accent-bg: rgba(94,106,210,0.08);
+  --shadow: 0 12px 32px rgba(0,0,0,0.12);
+  --status-backlog: #9ea1a9; --status-todo: #d4940e; --status-progress: #2b80c5;
+  --status-review: #8759c7; --status-done: #1a8d3a; --status-canceled: #6c6f78;
+  --pri-on: #505259; --pri-off: rgba(0,0,0,0.10);
+  --pri-high: #c77d1a; --pri-urgent: #d4513a;
+  --scroll: rgba(0,0,0,0.12);
+  --overlay: rgba(15,16,17,0.45);
+}
+html, body { height: 100%; background: var(--bg); color: var(--ink); font-family: var(--font-sans); font-size: 13.5px; line-height: 1.4; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: none; border: 0; cursor: pointer; }
+.app { display: grid; grid-template-columns: 232px minmax(0, 1fr); height: 100%; }
+.rail { border-right: 1px solid var(--border); padding: 14px 10px 16px; display: flex; flex-direction: column; min-height: 0; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 12px; }
+.brand-mark { width: 18px; height: 18px; border-radius: 5px; background: var(--accent); display: grid; place-items: center; }
+.brand-mark svg { width: 11px; height: 11px; }
+.brand-name { font-weight: 510; font-size: 13px; letter-spacing: -0.01em; }
+.nav { display: flex; flex-direction: column; gap: 1px; overflow: auto; }
+.nav-label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-4); padding: 12px 8px 4px; }
+.nav-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; border-radius: 6px; color: var(--ink-2); }
+.nav-item svg { width: 14px; height: 14px; color: var(--ink-3); flex: 0 0 auto; }
+.nav-item .count { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 11px; color: var(--ink-4); }
+.nav-item:hover { background: var(--hover); }
+.nav-item.is-active { background: var(--accent-bg); color: var(--ink); }
+.nav-item.is-active svg { color: var(--accent-hot); }
+.rail-foot { margin-top: auto; padding: 10px 8px 0; color: var(--ink-4); font-size: 11px; }
+.workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.toolbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+.crumb { color: var(--ink-3); font-size: 13px; }
+.crumb b { color: var(--ink); font-weight: 510; }
+.cycle { display: flex; align-items: center; gap: 8px; margin-left: 6px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); }
+.cycle-bar { width: 64px; height: 4px; border-radius: 99px; background: var(--inset); overflow: hidden; }
+.cycle-bar > span { display: block; height: 100%; background: var(--accent); }
+.spacer { flex: 1; }
+.search { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--inset); min-width: 180px; }
+.search input { background: none; border: 0; outline: none; width: 160px; color: var(--ink); }
+.search input::placeholder { color: var(--ink-4); }
+.kbd { font-family: var(--font-mono); font-size: 10px; color: var(--ink-4); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.tool-btn { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; color: var(--ink-3); }
+.tool-btn:hover, .view-btn:hover { background: var(--hover); color: var(--ink); }
+.tool-btn svg, .view-btn svg { width: 14px; height: 14px; }
+.view-switch { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.view-btn { width: 30px; height: 26px; display: grid; place-items: center; color: var(--ink-3); }
+.view-btn.is-active { background: var(--accent-bg); color: var(--accent-hot); }
+.primary { background: var(--accent); color: #fff; border-radius: 6px; padding: 5px 10px; font-size: 12.5px; font-weight: 510; }
+.primary:hover { background: var(--accent-hot); }
+.stage { flex: 1; display: grid; min-height: 0; }
+.stage.list { grid-template-columns: minmax(0, 1fr) 360px; }
+.stage.board { grid-template-columns: 1fr; }
+.list-wrap, .board-wrap, .detail { min-height: 0; overflow: auto; }
+.list-wrap { border-right: 1px solid var(--border); }
+.group-h { position: sticky; top: 0; z-index: 1; background: var(--bg); padding: 10px 16px 6px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); display: flex; gap: 8px; align-items: center; }
+.group-h .n { font-variant-numeric: tabular-nums; color: var(--ink-4); }
+.row { display: grid; grid-template-columns: 18px 62px 14px minmax(0, 1fr) auto auto 24px; gap: 8px; align-items: center; height: 36px; padding: 0 16px; border-bottom: 1px solid transparent; cursor: pointer; }
+.row:hover { background: var(--hover); }
+.row.is-selected { background: var(--active); }
+.row.is-canceled .title { text-decoration: line-through; color: var(--ink-4); }
+.ident { font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); }
+.title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.labels { display: flex; gap: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.chip i { width: 6px; height: 6px; border-radius: 50%; display: block; }
+.av { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 8px; font-weight: 600; color: #fff; }
+.pri { display: flex; align-items: flex-end; gap: 1px; height: 12px; }
+.pri span { width: 2px; border-radius: 1px; background: var(--pri-off); }
+.pri span:nth-child(1) { height: 4px; } .pri span:nth-child(2) { height: 6px; }
+.pri span:nth-child(3) { height: 8px; } .pri span:nth-child(4) { height: 11px; }
+.pri span.on { background: var(--pri-on); }
+.pri.p3 span.on { background: var(--pri-high); }
+.pri.p4 span.on { background: var(--pri-urgent); }
+.dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid currentColor; position: relative; }
+.dot.backlog { color: var(--status-backlog); background: transparent; }
+.dot.todo { color: var(--status-todo); border-style: dashed; }
+.dot.progress { color: var(--status-progress); }
+.dot.progress::after, .dot.review::after { content: ""; position: absolute; inset: 2px 2px 2px 50%; background: currentColor; border-radius: 0 99px 99px 0; }
+.dot.review { color: var(--status-review); }
+.dot.done { color: var(--status-done); background: var(--status-done); border-color: var(--status-done); }
+.dot.canceled { color: var(--status-canceled); }
+.dot.canceled::after { content: ""; position: absolute; left: 2px; right: 2px; top: 5.5px; height: 1.5px; background: currentColor; }
+.empty { padding: 48px 20px; text-align: center; color: var(--ink-3); }
+.empty h3 { color: var(--ink); font-size: 14px; font-weight: 510; margin-bottom: 6px; }
+.detail { padding: 22px 22px 28px; background: var(--elev); }
+.detail.empty-detail { display: grid; place-items: center; color: var(--ink-4); }
+.d-id { font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); }
+.d-title { font-size: 18px; font-weight: 510; letter-spacing: -0.02em; margin: 8px 0 14px; line-height: 1.3; }
+.d-meta { display: grid; grid-template-columns: 92px 1fr; gap: 8px 10px; margin-bottom: 18px; font-size: 12.5px; }
+.d-meta dt { color: var(--ink-4); padding-top: 5px; }
+.d-meta dd select { width: 100%; background: var(--inset); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+.d-body { color: var(--ink-2); font-size: 13.5px; line-height: 1.6; }
+.d-body p + p { margin-top: 10px; }
+.board-wrap { display: flex; gap: 10px; padding: 14px; overflow: auto; align-items: flex-start; }
+.col { flex: 1 0 220px; background: var(--elev); border: 1px solid var(--border); border-radius: 10px; min-height: 420px; display: flex; flex-direction: column; }
+.col-h { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12.5px; font-weight: 510; }
+.col-h .n { font-size: 11px; color: var(--ink-4); font-weight: 400; }
+.col-body { padding: 8px; display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
+.card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 11px; cursor: grab; display: flex; flex-direction: column; gap: 8px; }
+.card:hover { border-color: var(--border-strong); }
+.card .top { display: flex; align-items: center; gap: 6px; }
+.card .ttl { font-size: 13px; line-height: 1.35; }
+.overlay { position: fixed; inset: 0; background: var(--overlay); display: grid; place-items: center; z-index: 20; }
+.dialog { width: min(520px, calc(100% - 32px)); background: var(--elev); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: var(--shadow); padding: 18px; }
+.dialog h2 { font-size: 15px; font-weight: 510; margin-bottom: 12px; }
+.dialog label { display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-4); margin: 10px 0 5px; }
+.dialog input[type=text], .dialog textarea, .dialog select {
+  width: 100%; background: var(--inset); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; outline: none;
+}
+.dialog textarea { min-height: 88px; resize: vertical; }
+.dialog input:focus, .dialog textarea:focus, .dialog select:focus { border-color: var(--accent); }
+.dialog-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.ghost { padding: 6px 10px; border-radius: 6px; color: var(--ink-3); }
+.ghost:hover { background: var(--hover); color: var(--ink); }
+.hidden { display: none !important; }
+@media (max-width: 960px) {
+  .app { grid-template-columns: 1fr; }
+  .rail { display: none; }
+  .stage.list { grid-template-columns: 1fr; }
+  .detail { border-top: 1px solid var(--border); }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5L7 3l6 9H5.5z" fill="#fff"/></svg>
+      </span>
+      <span class="brand-name">Open Design</span>
+    </div>
+    <nav class="nav" id="nav">
+      <button class="nav-item is-active" data-filter="inbox">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><path d="M2.5 6.5h11"/></svg>
+        Inbox <span class="count" data-count="inbox">0</span>
+      </button>
+      <button class="nav-item" data-filter="mine">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="6" r="2.2"/><path d="M3.5 13c.6-2.2 2.3-3.4 4.5-3.4S12.9 10.8 13.5 13"/></svg>
+        My issues <span class="count" data-count="mine">0</span>
+      </button>
+      <button class="nav-item" data-filter="active">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="5"/><path d="M8 8V4.8"/></svg>
+        Active <span class="count" data-count="active">0</span>
+      </button>
+      <button class="nav-item" data-filter="backlog">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="5"/></svg>
+        Backlog <span class="count" data-count="backlog">0</span>
+      </button>
+      <button class="nav-item" data-filter="all">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 4.5h10M3 8h10M3 11.5h7"/></svg>
+        All issues <span class="count" data-count="all">0</span>
+      </button>
+      <div class="nav-label">Projects</div>
+      <button class="nav-item" data-filter="project:Packaged">Packaged <span class="count" data-count="project:Packaged">0</span></button>
+      <button class="nav-item" data-filter="project:Web">Web <span class="count" data-count="project:Web">0</span></button>
+      <button class="nav-item" data-filter="project:Daemon">Daemon <span class="count" data-count="project:Daemon">0</span></button>
+      <button class="nav-item" data-filter="project:Hosting">Hosting <span class="count" data-count="project:Hosting">0</span></button>
+      <div class="nav-label">Views</div>
+      <button class="nav-item" data-filter="canceled">Canceled</button>
+      <button class="nav-item" data-filter="completed">Completed</button>
+    </nav>
+    <div class="rail-foot">Cycle 48 · production tracker</div>
+  </aside>
+  <section class="workspace">
+    <header class="toolbar">
+      <div class="crumb">Open Design <span style="color:var(--ink-4)">›</span> <b id="view-title">Inbox</b></div>
+      <div class="cycle"><span>Cycle 48</span><span class="cycle-bar" title="Cycle progress"><span id="cycle-fill"></span></span><span id="cycle-meta">0% · 4 days left</span></div>
+      <div class="spacer"></div>
+      <label class="search">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.2"/><path d="M10.4 10.4L13 13"/></svg>
+        <input id="search" type="search" placeholder="Search issues" autocomplete="off">
+        <span class="kbd">/</span>
+      </label>
+      <div class="view-switch" role="tablist" aria-label="View">
+        <button class="view-btn is-active" id="btn-list" title="List view">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5h10M3 8h10M3 11.5h10"/></svg>
+        </button>
+        <button class="view-btn" id="btn-board" title="Board view">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="3" width="3.2" height="10" rx="0.8"/><rect x="6.4" y="3" width="3.2" height="10" rx="0.8"/><rect x="10.3" y="3" width="3.2" height="10" rx="0.8"/></svg>
+        </button>
+      </div>
+      <button class="tool-btn" id="btn-theme" title="Toggle theme" aria-label="Toggle theme">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="3.2"/><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1"/></svg>
+      </button>
+      <button class="primary" id="btn-new">New issue</button>
+    </header>
+    <div class="stage list" id="stage">
+      <div class="list-wrap" id="list-wrap"></div>
+      <aside class="detail" id="detail"></aside>
+      <div class="board-wrap hidden" id="board-wrap"></div>
+    </div>
+  </section>
+</div>
+<div class="overlay hidden" id="overlay">
+  <form class="dialog" id="create-form">
+    <h2>New issue</h2>
+    <label for="f-title">Title</label>
+    <input id="f-title" name="title" type="text" required placeholder="Auth middleware refactor" autocomplete="off">
+    <label for="f-body">Description</label>
+    <textarea id="f-body" name="body" placeholder="What needs to ship, and why now."></textarea>
+    <div class="dialog-row">
+      <div>
+        <label for="f-status">Status</label>
+        <select id="f-status" name="status">
+          <option value="todo">Todo</option>
+          <option value="backlog">Backlog</option>
+          <option value="progress">In Progress</option>
+          <option value="review">In Review</option>
+        </select>
+      </div>
+      <div>
+        <label for="f-priority">Priority</label>
+        <select id="f-priority" name="priority">
+          <option value="0">No priority</option>
+          <option value="1">Low</option>
+          <option value="2" selected>Medium</option>
+          <option value="3">High</option>
+          <option value="4">Urgent</option>
+        </select>
+      </div>
+      <div>
+        <label for="f-project">Project</label>
+        <select id="f-project" name="project">
+          <option>Web</option>
+          <option>Daemon</option>
+          <option>Packaged</option>
+          <option>Hosting</option>
+          <option>Desktop</option>
+        </select>
+      </div>
+      <div>
+        <label for="f-assignee">Assignee</label>
+        <select id="f-assignee" name="assignee">
+          <option value="MV">M. Voss</option>
+          <option value="NC">N. Chen</option>
+          <option value="JP">J. Park</option>
+          <option value="AO">A. Okonkwo</option>
+          <option value="SP">S. Patel</option>
+        </select>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="ghost" id="btn-cancel">Cancel</button>
+      <button type="submit" class="primary">Create issue</button>
+    </div>
+  </form>
+</div>
+<script>
+(function () {
+  var STORE = 'od-linear-tracker:v1';
+  var ME = 'MV';
+  var CYCLE = 'Cycle 48';
+  var PEOPLE = {
+    MV: { name: 'M. Voss', color: '#5e6ad2' },
+    NC: { name: 'N. Chen', color: '#2b80c5' },
+    JP: { name: 'J. Park', color: '#1a8d3a' },
+    AO: { name: 'A. Okonkwo', color: '#8759c7' },
+    SP: { name: 'S. Patel', color: '#c77d1a' }
+  };
+  var STATUS = {
+    backlog: 'Backlog',
+    todo: 'Todo',
+    progress: 'In Progress',
+    review: 'In Review',
+    done: 'Done',
+    canceled: 'Canceled'
+  };
+  var BOARD = ['backlog', 'todo', 'progress', 'review', 'done'];
+  var SEED = [
+    { id: 'OD-214', title: 'Packaged beta updater writes the wrong Windows registry key', status: 'progress', priority: 4, assignee: 'MV', project: 'Packaged', labels: ['release', 'windows'], body: 'Beta installs must keep the real `release-beta-win` namespace so the uninstall key matches Open Design Beta.', updated: '2h' },
+    { id: 'OD-209', title: 'Preview channel Linux AppImage smoke is red', status: 'todo', priority: 3, assignee: 'JP', project: 'Packaged', labels: ['linux', 'ci'], body: 'Preview should follow stable platform policy, including the existing optional Linux path.', updated: '5h' },
+    { id: 'OD-201', title: 'Clerk org header dropped on workspace data writes', status: 'review', priority: 3, assignee: 'NC', project: 'Daemon', labels: ['auth', 'data'], body: 'Active organization must travel on `x-od-org` for every `/api/data` mutation.', updated: '1d' },
+    { id: 'OD-198', title: 'Playwright suite remounts chat when TodoWrite pins', status: 'progress', priority: 2, assignee: 'NC', project: 'Web', labels: ['e2e', 'chat'], body: 'Pinned todo slot sits outside `.chat-log`; auto-scroll has to observe that node directly.', updated: '3h' },
+    { id: 'OD-192', title: 'Anonymous org-site requests return 403 instead of 404', status: 'todo', priority: 3, assignee: 'SP', project: 'Hosting', labels: ['security'], body: 'A 403 confirms an internal tool exists. Unpublished org sites must 404.', updated: '6h' },
+    { id: 'OD-188', title: 'Apps gallery empty state missing i18n keys', status: 'backlog', priority: 1, assignee: 'AO', project: 'Web', labels: ['i18n'], body: 'Add the keys to types.ts and all 19 locale files before the empty state ships.', updated: '2d' },
+    { id: 'OD-181', title: 'Sidecar process stamp must stay five fields', status: 'done', priority: 2, assignee: 'MV', project: 'Desktop', labels: ['sidecar'], body: '`app`, `mode`, `namespace`, `ipc`, `source` — orchestration layers call package primitives.', updated: '4d' },
+    { id: 'OD-176', title: 'Daemon inferred data root from cwd on packaged start', status: 'done', priority: 4, assignee: 'NC', project: 'Daemon', labels: ['data-dir'], body: 'Packaged daemon receives the final namespace-scoped root as `OD_DATA_DIR` and must not guess.', updated: '5d' },
+    { id: 'OD-164', title: 'Design template gallery dropped the Templates tab copy', status: 'progress', priority: 2, assignee: 'AO', project: 'Web', labels: ['design'], body: 'New-project Start from rails still consume `/api/design-templates`. Update empty-state copy.', updated: '8h' },
+    { id: 'OD-159', title: 'One-click hosting must never hold a service-role key', status: 'review', priority: 4, assignee: 'SP', project: 'Hosting', labels: ['security', 'publish'], body: 'Daemon is a publish client only. Privileged work stays in the edge function.', updated: '1d' },
+    { id: 'OD-152', title: 'Cycle 48 release notes draft', status: 'todo', priority: 1, assignee: 'AO', project: 'Web', labels: ['docs'], body: 'Cover packaged updater, org apps, and hosting 404 behavior. No invented metrics.', updated: '2d' },
+    { id: 'OD-147', title: 'Guard JS allowlist for new deck-stage scripts', status: 'backlog', priority: 2, assignee: 'JP', project: 'Daemon', labels: ['tooling'], body: 'New `.js` files need an explicit generated/vendor reason and must pass `pnpm guard`.', updated: '3d' },
+    { id: 'OD-141', title: 'MCP tokens stored outside RUNTIME_DATA_DIR', status: 'canceled', priority: 3, assignee: 'NC', project: 'Daemon', labels: ['security'], body: 'Canceled after confirming tokens already live under the resolved daemon data root.', updated: '6d' }
+  ];
+  var LABEL_COLOR = { release: '#5e6ad2', windows: '#2b80c5', linux: '#1a8d3a', ci: '#8a8f98', auth: '#8759c7', data: '#c77d1a', e2e: '#2b80c5', chat: '#5e6ad2', security: '#d4513a', i18n: '#8759c7', sidecar: '#8a8f98', 'data-dir': '#c77d1a', design: '#5e6ad2', publish: '#1a8d3a', docs: '#6c6f78', tooling: '#2b80c5' };
+
+  var state = {
+    issues: [],
+    filter: 'inbox',
+    view: 'list',
+    selected: null,
+    query: '',
+    api: (typeof window.od === 'object' && window.od) ? window.od : null
+  };
+
+  function matches(issue, filter) {
+    if (filter === 'inbox') return issue.assignee === ME && issue.status !== 'done' && issue.status !== 'canceled';
+    if (filter === 'mine') return issue.assignee === ME;
+    if (filter === 'active') return issue.status === 'todo' || issue.status === 'progress' || issue.status === 'review';
+    if (filter === 'backlog') return issue.status === 'backlog';
+    if (filter === 'all') return issue.status !== 'canceled';
+    if (filter === 'canceled') return issue.status === 'canceled';
+    if (filter === 'completed') return issue.status === 'done';
+    if (filter.indexOf('project:') === 0) return issue.project === filter.slice(8);
+    return true;
+  }
+
+  function visible() {
+    var q = state.query.trim().toLowerCase();
+    return state.issues.filter(function (issue) {
+      if (!matches(issue, state.filter)) return false;
+      if (!q) return true;
+      return (issue.id + ' ' + issue.title + ' ' + issue.project + ' ' + (issue.labels || []).join(' ')).toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  function nextId() {
+    var max = 0;
+    state.issues.forEach(function (issue) {
+      var n = parseInt(String(issue.id).replace(/^[A-Z]+-/, ''), 10);
+      if (n > max) max = n;
+    });
+    return 'OD-' + (max + 1);
+  }
+
+  function persistLocal() {
+    try { localStorage.setItem(STORE, JSON.stringify(state.issues)); } catch (_) {}
+  }
+
+  function rowFromRecord(record) {
+    return {
+      id: record.identifier || record.id,
+      recordId: record.id,
+      title: record.title || '',
+      status: record.status || 'todo',
+      priority: Number(record.priority || 0),
+      assignee: record.assignee || ME,
+      project: record.project || 'Web',
+      labels: String(record.labels || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+      body: record.description || record.body || '',
+      updated: record.updated || 'now',
+      cycle: record.cycle || CYCLE
+    };
+  }
+
+  async function persistIssue(issue, isNew) {
+    persistLocal();
+    if (!state.api) return;
+    var data = {
+      identifier: issue.id,
+      title: issue.title,
+      status: issue.status,
+      priority: issue.priority,
+      assignee: issue.assignee,
+      project: issue.project,
+      labels: (issue.labels || []).join(','),
+      description: issue.body || '',
+      cycle: CYCLE
+    };
+    try {
+      if (isNew) {
+        var created = await state.api.create('issues', data);
+        if (created && created.id) issue.recordId = created.id;
+      } else if (issue.recordId) {
+        await state.api.update('issues', issue.recordId, data);
+      }
+    } catch (_) {}
+  }
+
+  function priHtml(level) {
+    var cls = 'pri' + (level >= 4 ? ' p4' : level === 3 ? ' p3' : '');
+    var html = '<span class="' + cls + '" title="Priority ' + level + '">';
+    for (var i = 1; i <= 4; i++) html += '<span class="' + (i <= level ? 'on' : '') + '"></span>';
+    return html + '</span>';
+  }
+
+  function chips(labels) {
+    return (labels || []).map(function (label) {
+      var color = LABEL_COLOR[label] || '#8a8f98';
+      return '<span class="chip"><i style="background:' + color + '"></i>' + label + '</span>';
+    }).join('');
+  }
+
+  function av(id) {
+    var p = PEOPLE[id] || { name: id, color: '#62666d' };
+    return '<span class="av" style="background:' + p.color + '" title="' + p.name + '">' + id + '</span>';
+  }
+
+  function titles() {
+    var map = { inbox: 'Inbox', mine: 'My issues', active: 'Active', backlog: 'Backlog', all: 'All issues', canceled: 'Canceled', completed: 'Completed' };
+    if (state.filter.indexOf('project:') === 0) return state.filter.slice(8);
+    return map[state.filter] || 'Issues';
+  }
+
+  function renderCounts() {
+    document.querySelectorAll('[data-count]').forEach(function (el) {
+      var key = el.getAttribute('data-count');
+      el.textContent = String(state.issues.filter(function (issue) { return matches(issue, key); }).length);
+    });
+    var cycleIssues = state.issues.filter(function (issue) { return issue.status !== 'canceled'; });
+    var done = cycleIssues.filter(function (issue) { return issue.status === 'done'; }).length;
+    var pct = cycleIssues.length ? Math.round((done / cycleIssues.length) * 100) : 0;
+    document.getElementById('cycle-fill').style.width = pct + '%';
+    document.getElementById('cycle-meta').textContent = pct + '% complete · 4 days left';
+    document.getElementById('view-title').textContent = titles();
+  }
+
+  function renderList() {
+    var items = visible();
+    var root = document.getElementById('list-wrap');
+    if (!items.length) {
+      root.innerHTML = '<div class="empty"><h3>No issues</h3><p>Nothing matches this view. Create one with C, or clear search.</p></div>';
+      return;
+    }
+    var groups = [];
+    var seen = {};
+    items.forEach(function (issue) {
+      var key = STATUS[issue.status] || issue.status;
+      if (!seen[key]) { seen[key] = []; groups.push(key); }
+      seen[key].push(issue);
+    });
+    root.innerHTML = groups.map(function (name) {
+      var rows = seen[name].map(function (issue) {
+        return '<div class="row' + (issue.id === state.selected ? ' is-selected' : '') + (issue.status === 'canceled' ? ' is-canceled' : '') + '" data-id="' + issue.id + '">' +
+          priHtml(issue.priority) +
+          '<span class="ident">' + issue.id + '</span>' +
+          '<span class="dot ' + issue.status + '" title="' + STATUS[issue.status] + '"></span>' +
+          '<span class="title">' + issue.title + '</span>' +
+          '<span class="labels">' + chips(issue.labels) + '</span>' +
+          '<span class="ident">' + issue.project + '</span>' +
+          av(issue.assignee) +
+        '</div>';
+      }).join('');
+      return '<div class="group-h">' + name + ' <span class="n">' + seen[name].length + '</span></div>' + rows;
+    }).join('');
+  }
+
+  function renderDetail() {
+    var el = document.getElementById('detail');
+    var issue = state.issues.find(function (item) { return item.id === state.selected; });
+    if (!issue || state.view !== 'list') {
+      el.innerHTML = '<div class="empty-detail">Select an issue</div>';
+      return;
+    }
+    var statusOpts = Object.keys(STATUS).map(function (key) {
+      return '<option value="' + key + '"' + (issue.status === key ? ' selected' : '') + '>' + STATUS[key] + '</option>';
+    }).join('');
+    var priOpts = ['No priority', 'Low', 'Medium', 'High', 'Urgent'].map(function (label, i) {
+      return '<option value="' + i + '"' + (issue.priority === i ? ' selected' : '') + '>' + label + '</option>';
+    }).join('');
+    var peopleOpts = Object.keys(PEOPLE).map(function (key) {
+      return '<option value="' + key + '"' + (issue.assignee === key ? ' selected' : '') + '>' + PEOPLE[key].name + '</option>';
+    }).join('');
+    el.innerHTML =
+      '<div class="d-id">' + issue.id + ' · ' + issue.project + ' · ' + CYCLE + '</div>' +
+      '<h1 class="d-title">' + issue.title + '</h1>' +
+      '<dl class="d-meta">' +
+        '<dt>Status</dt><dd><select data-edit="status">' + statusOpts + '</select></dd>' +
+        '<dt>Priority</dt><dd><select data-edit="priority">' + priOpts + '</select></dd>' +
+        '<dt>Assignee</dt><dd><select data-edit="assignee">' + peopleOpts + '</select></dd>' +
+        '<dt>Updated</dt><dd style="padding-top:5px;color:var(--ink-3)">' + issue.updated + '</dd>' +
+      '</dl>' +
+      '<div class="d-body"><p>' + (issue.body || 'No description.') + '</p></div>';
+  }
+
+  function renderBoard() {
+    var root = document.getElementById('board-wrap');
+    var items = visible();
+    root.innerHTML = BOARD.map(function (status) {
+      var cards = items.filter(function (issue) { return issue.status === status; });
+      return '<div class="col" data-status="' + status + '"><div class="col-h"><span>' + STATUS[status] + '</span><span class="n">' + cards.length + '</span></div><div class="col-body">' +
+        cards.map(function (issue) {
+          return '<article class="card" draggable="true" data-id="' + issue.id + '"><div class="top">' + priHtml(issue.priority) + '<span class="ident">' + issue.id + '</span>' + av(issue.assignee) + '</div><div class="ttl">' + issue.title + '</div><div class="labels">' + chips(issue.labels) + '</div></article>';
+        }).join('') + '</div></div>';
+    }).join('');
+  }
+
+  function render() {
+    renderCounts();
+    var list = document.getElementById('list-wrap');
+    var detail = document.getElementById('detail');
+    var board = document.getElementById('board-wrap');
+    var stage = document.getElementById('stage');
+    if (state.view === 'list') {
+      stage.className = 'stage list';
+      list.classList.remove('hidden');
+      detail.classList.remove('hidden');
+      board.classList.add('hidden');
+      renderList();
+      renderDetail();
+    } else {
+      stage.className = 'stage board';
+      list.classList.add('hidden');
+      detail.classList.add('hidden');
+      board.classList.remove('hidden');
+      renderBoard();
+    }
+  }
+
+  function select(id) {
+    state.selected = id;
+    render();
+  }
+
+  function patch(id, fields, isNew) {
+    var issue = state.issues.find(function (item) { return item.id === id; });
+    if (!issue) return;
+    Object.keys(fields).forEach(function (key) { issue[key] = fields[key]; });
+    issue.updated = 'now';
+    persistIssue(issue, !!isNew);
+    render();
+  }
+
+  document.getElementById('nav').addEventListener('click', function (event) {
+    var btn = event.target.closest('[data-filter]');
+    if (!btn) return;
+    state.filter = btn.getAttribute('data-filter');
+    document.querySelectorAll('.nav-item').forEach(function (el) { el.classList.toggle('is-active', el === btn); });
+    var first = visible()[0];
+    state.selected = first ? first.id : null;
+    render();
+  });
+
+  document.getElementById('list-wrap').addEventListener('click', function (event) {
+    var row = event.target.closest('[data-id]');
+    if (row) select(row.getAttribute('data-id'));
+  });
+
+  document.getElementById('detail').addEventListener('change', function (event) {
+    var field = event.target.getAttribute('data-edit');
+    if (!field || !state.selected) return;
+    var value = field === 'priority' ? Number(event.target.value) : event.target.value;
+    var fields = {};
+    fields[field] = value;
+    patch(state.selected, fields);
+  });
+
+  document.getElementById('board-wrap').addEventListener('dragstart', function (event) {
+    var card = event.target.closest('[data-id]');
+    if (!card || !event.dataTransfer) return;
+    event.dataTransfer.setData('text/plain', card.getAttribute('data-id'));
+  });
+  document.getElementById('board-wrap').addEventListener('dragover', function (event) {
+    if (event.target.closest('[data-status]')) event.preventDefault();
+  });
+  document.getElementById('board-wrap').addEventListener('drop', function (event) {
+    var col = event.target.closest('[data-status]');
+    var id = event.dataTransfer && event.dataTransfer.getData('text/plain');
+    if (!col || !id) return;
+    event.preventDefault();
+    patch(id, { status: col.getAttribute('data-status') });
+  });
+  document.getElementById('board-wrap').addEventListener('click', function (event) {
+    var card = event.target.closest('[data-id]');
+    if (card) select(card.getAttribute('data-id'));
+  });
+
+  document.getElementById('search').addEventListener('input', function (event) {
+    state.query = event.target.value;
+    render();
+  });
+  document.getElementById('btn-list').addEventListener('click', function () {
+    state.view = 'list';
+    document.getElementById('btn-list').classList.add('is-active');
+    document.getElementById('btn-board').classList.remove('is-active');
+    render();
+  });
+  document.getElementById('btn-board').addEventListener('click', function () {
+    state.view = 'board';
+    document.getElementById('btn-board').classList.add('is-active');
+    document.getElementById('btn-list').classList.remove('is-active');
+    render();
+  });
+  document.getElementById('btn-theme').addEventListener('click', function () {
+    var html = document.documentElement;
+    html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+
+  var overlay = document.getElementById('overlay');
+  function openCreate() {
+    overlay.classList.remove('hidden');
+    document.getElementById('f-title').focus();
+  }
+  function closeCreate() {
+    overlay.classList.add('hidden');
+    document.getElementById('create-form').reset();
+  }
+  document.getElementById('btn-new').addEventListener('click', openCreate);
+  document.getElementById('btn-cancel').addEventListener('click', closeCreate);
+  overlay.addEventListener('click', function (event) { if (event.target === overlay) closeCreate(); });
+  document.getElementById('create-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var issue = {
+      id: nextId(),
+      title: document.getElementById('f-title').value.trim(),
+      status: document.getElementById('f-status').value,
+      priority: Number(document.getElementById('f-priority').value),
+      assignee: document.getElementById('f-assignee').value,
+      project: document.getElementById('f-project').value,
+      labels: ['cycle'],
+      body: document.getElementById('f-body').value.trim(),
+      updated: 'now'
+    };
+    if (!issue.title) return;
+    state.issues.unshift(issue);
+    state.selected = issue.id;
+    persistIssue(issue, true);
+    closeCreate();
+    render();
+  });
+
+  document.addEventListener('keydown', function (event) {
+    var tag = (event.target && event.target.tagName) || '';
+    var typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    if (event.key === 'Escape') { closeCreate(); return; }
+    if (typing) return;
+    if (event.key === '/') { event.preventDefault(); document.getElementById('search').focus(); }
+    if (event.key === 'c') { event.preventDefault(); openCreate(); }
+    if (event.key === 'l') document.getElementById('btn-list').click();
+    if (event.key === 'b') document.getElementById('btn-board').click();
+    if (event.key === 'j' || event.key === 'k') {
+      var ids = visible().map(function (issue) { return issue.id; });
+      var idx = ids.indexOf(state.selected);
+      if (event.key === 'j') idx = Math.min(ids.length - 1, idx + 1);
+      else idx = Math.max(0, idx - 1);
+      if (ids[idx]) select(ids[idx]);
+    }
+  });
+
+  async function boot() {
+    var loaded = false;
+    if (state.api) {
+      try {
+        await state.api.describe('issues');
+        var records = await state.api.query('issues', { limit: 200 });
+        if (records && records.length) {
+          state.issues = records.map(rowFromRecord);
+          loaded = true;
+        }
+      } catch (_) {}
+    }
+    if (!loaded) {
+      try {
+        var raw = localStorage.getItem(STORE);
+        if (raw) state.issues = JSON.parse(raw);
+      } catch (_) {}
+      if (!state.issues.length) state.issues = SEED.slice();
+    }
+    var first = visible()[0];
+    state.selected = first ? first.id : (state.issues[0] && state.issues[0].id);
+    render();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

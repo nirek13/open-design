@@ -43,8 +43,8 @@ const EMPTY_DESIGN_SYSTEMS: DesignSystemSummary[] = [];
 
 const DEFAULT_RECENT_PROJECT_LIMIT = 6;
 const WIDE_RECENT_PROJECT_LIMIT = 7;
-// 7 * 180px cards + 6 * 12px gaps, matching recent-projects.css.
-const WIDE_RECENT_PROJECT_MIN_ROW_WIDTH = 1332;
+// 7 * 180px cards + 6 * 14px gaps, matching recent-projects.css.
+const WIDE_RECENT_PROJECT_MIN_ROW_WIDTH = 1344;
 
 export function RecentProjectsStrip({
   projects,

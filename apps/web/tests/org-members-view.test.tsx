@@ -132,6 +132,20 @@ describe('OrgMembersView invites', () => {
     expect(await screen.findByText(/shown once/i)).toBeTruthy();
   });
 
+  it('renames the organization from settings', async () => {
+    const rename = vi.spyOn(registry, 'renameOrganization').mockResolvedValue();
+    renderMembers();
+    const input = await screen.findByTestId('org-name-input');
+    await waitFor(() => {
+      expect(input).toHaveValue('Northwind');
+    });
+    fireEvent.change(input, { target: { value: 'Acme' } });
+    fireEvent.click(screen.getByTestId('org-rename'));
+    await waitFor(() => {
+      expect(rename).toHaveBeenCalledWith('ws-1', 'Acme');
+    });
+  });
+
   it('creates a named team from the members view', async () => {
     vi.spyOn(registry, 'createOrgTeam').mockResolvedValue({
       id: 'team-1',

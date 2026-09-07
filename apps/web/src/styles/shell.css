@@ -348,6 +348,10 @@
   -webkit-app-region: no-drag;
   overflow: visible;
 }
+.workspace-tabs-trailing [data-testid='chrome-search-trigger'] {
+  height: 28px;
+  max-height: 28px;
+}
 .workspace-tabs-trailing [data-testid='org-switcher-trigger'] {
   height: 28px;
   max-height: 28px;

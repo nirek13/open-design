@@ -24,6 +24,7 @@ import {
   DEFAULT_FAILURE_SOUND_ID,
   DEFAULT_SUCCESS_SOUND_ID,
 } from '../utils/notifications';
+import { isLocalCliUsageEnabled } from '../utils/local-cli-usage';
 import { randomUUID } from '../utils/uuid';
 
 const STORAGE_KEY = 'open-design:config';
@@ -1238,11 +1239,17 @@ export function applyDefaultOpenAiByokProfile(
   };
 }
 
+/** Local CLI is not a user-facing runtime; keep saved configs on BYOK. */
+export function applyHiddenLocalCliPolicy(config: AppConfig): AppConfig {
+  if (isLocalCliUsageEnabled() || config.mode !== 'daemon') return config;
+  return { ...config, mode: 'api', agentId: null };
+}
+
 /**
  * Reconciles a locally selected non-secret profile reference with the daemon.
  * After onboarding, bind a configured OpenAI (api.openai.com) profile so a
- * host-provided default key is used without another setup step. First-run
- * onboarding asks the user to opt in instead of auto-completing.
+ * host-provided default key is used without another setup step. When Local CLI
+ * usage is hidden, bind that key during first-run as well.
  */
 export function mergeByokCredentialProfiles(
   config: AppConfig,
@@ -1251,10 +1258,17 @@ export function mergeByokCredentialProfiles(
   if (!response) return config;
 
   if (!config.byokProfileId) {
-    if (config.mode === 'daemon' && config.agentId && config.agentId !== 'byok-opencode') {
+    const localCliSelected =
+      isLocalCliUsageEnabled()
+      && config.mode === 'daemon'
+      && Boolean(config.agentId)
+      && config.agentId !== 'byok-opencode';
+    if (localCliSelected) {
       return config;
     }
-    if (!config.onboardingCompleted) return config;
+    // When Local CLI is hidden, bind the host OpenAI key even during
+    // first-run so the user is not asked to pick a runtime.
+    if (isLocalCliUsageEnabled() && !config.onboardingCompleted) return config;
     const openAiProfile = findEnvOpenAiByokProfile(response.profiles);
     if (openAiProfile) {
       return applyDefaultOpenAiByokProfile(config, openAiProfile);
@@ -1264,12 +1278,12 @@ export function mergeByokCredentialProfiles(
 
   const profile = response.profiles.find((candidate) => candidate.id === config.byokProfileId);
   if (!profile?.configured) {
-    return {
+    return applyHiddenLocalCliPolicy({
       ...config,
       byokProfileId: undefined,
       byokCredentialConfigured: false,
       byokCredentialTail: undefined,
-    };
+    });
   }
   const protocol = profile.protocol as ApiProtocol;
   const knownProvider = KNOWN_PROVIDERS.find(
@@ -1278,7 +1292,7 @@ export function mergeByokCredentialProfiles(
       && candidate.baseUrl === profile.baseUrl,
   );
   const previousProtocolConfig = config.apiProtocolConfigs?.[protocol];
-  return {
+  return applyHiddenLocalCliPolicy({
     ...config,
     apiKey: '',
     apiProtocol: protocol,
@@ -1299,7 +1313,7 @@ export function mergeByokCredentialProfiles(
     byokCredentialConfigured: true,
     byokCredentialTail: profile.keyTail,
     model: profile.model,
-  };
+  });
 }
 
 interface PublicMediaProviderConfigEntry {

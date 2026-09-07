@@ -46,6 +46,7 @@ import { AccountMenu } from './components/account/AccountMenu';
 import { OrgSwitcher } from './components/org/OrgSwitcher';
 import { MessageCenter } from './components/MessageCenter';
 import { EntrySettingsMenu } from './components/EntrySettingsMenu';
+import { ChromeSearchTrigger } from './components/search/ChromeSearchTrigger';
 import { SearchPalette } from './components/search/SearchView';
 import {
   TOGGLE_SEARCH_EVENT,
@@ -62,6 +63,7 @@ import {
 import { OrgProvider, useOptionalOrg } from './org/OrgContext';
 import { AuthGate } from './auth/AuthGate';
 import { JoinOrgView } from './components/org/JoinOrgView';
+import { BookView } from './components/calendar/BookView';
 import { WorkspaceSetupView } from './components/org/WorkspaceSetupView';
 import {
   SettingsDialog,
@@ -116,6 +118,7 @@ import {
 import { createSilentUpdatePreferenceWriter } from './state/silent-update-preference';
 import { applyAppearanceToDocument } from './state/appearance';
 import { isMacPlatform } from './utils/platform';
+import { isLocalCliUsageEnabled } from './utils/local-cli-usage';
 import {
   amrArtifactUpgradeHomeMockOffer,
   type AmrArtifactUpgradeHomeOffer,
@@ -419,18 +422,25 @@ export function App() {
   return (
     <MotionConfig reducedMotion="user">
       <IframeKeepAliveProvider>
-        {/* Identity first, then organization. "Which organization am I in"
-            has no meaning before "who am I", and in clerk mode nothing below
-            this gate renders until a session exists. */}
-        <AuthGate>
-          <OrgProvider>
-            <RunningAppProvider>
-              <AppInner />
-            </RunningAppProvider>
-          </OrgProvider>
-        </AuthGate>
+        <AppGate />
       </IframeKeepAliveProvider>
     </MotionConfig>
+  );
+}
+
+function AppGate() {
+  const route = useRoute();
+  if (route.kind === 'book') {
+    return <BookView token={route.token} />;
+  }
+  return (
+    <AuthGate>
+      <OrgProvider>
+        <RunningAppProvider>
+          <AppInner />
+        </RunningAppProvider>
+      </OrgProvider>
+    </AuthGate>
   );
 }
 
@@ -472,7 +482,7 @@ function AppInner() {
   // Observability marker. `apps/web/src/observability/white-screen.ts`
   // keys its "app actually mounted" success condition on this attribute
   // because the dynamic-import loading shell (`<div class="od-loading-shell">
-  // Loading Substrate…</div>`) is itself >MIN_VISIBLE_TEXT and would
+  // Loading Plyxl…</div>`) is itself >MIN_VISIBLE_TEXT and would
   // otherwise be mistaken for a real mount. Survives subsequent render
   // crashes — once App has mounted at least once, it's no longer a white
   // screen (subsequent failures show up as `$exception`).
@@ -1452,6 +1462,7 @@ function AppInner() {
 
   const handleModeChange = useCallback(
     (mode: AppConfig['mode']) => {
+      if (!isLocalCliUsageEnabled() && mode === 'daemon') return;
       const next = { ...latestPersistedConfigRef.current, mode };
       latestPersistedConfigRef.current = next;
       saveConfig(next);
@@ -2776,6 +2787,9 @@ function AppInner() {
           onboardingCompleted={config.onboardingCompleted === true}
           trailing={(
             <>
+              {route.kind === 'home' && route.view === 'onboarding' ? null : (
+                <ChromeSearchTrigger open={searchPaletteOpen} />
+              )}
               <OrgSwitcher
                 onManage={() => {
                   navigate({ kind: 'home', view: 'organization' });

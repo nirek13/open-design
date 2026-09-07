@@ -2,7 +2,13 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { clerkHttpOrigin, clerkRedirectUrl, isHttpLocation, stayOnPackagedApp } from '../../src/auth/clerk-redirect-url';
+import {
+  clerkHttpOrigin,
+  clerkRedirectUrl,
+  isHttpLocation,
+  locationForClerkRedirect,
+  stayOnPackagedApp,
+} from '../../src/auth/clerk-redirect-url';
 
 describe('clerkRedirectUrl', () => {
   it('keeps a relative path on http(s) pages', () => {
@@ -31,6 +37,23 @@ describe('clerkRedirectUrl', () => {
     expect(clerkRedirectUrl({ protocol: 'od:', pathname: '/', search: '' })).toBe('http://127.0.0.1/');
     expect(clerkHttpOrigin('od://app')).toBeNull();
     expect(clerkHttpOrigin('not a url')).toBeNull();
+  });
+
+  it('strips Clerk handshake params and prefers a pending join path', () => {
+    expect(
+      locationForClerkRedirect({
+        protocol: 'http:',
+        pathname: '/',
+        search: '?__clerk_handshake=abc&x=1',
+      }),
+    ).toEqual({ protocol: 'http:', pathname: '/', search: '?x=1' });
+    expect(
+      clerkRedirectUrl(
+        { protocol: 'http:', pathname: '/', search: '?__clerk_handshake=abc' },
+        undefined,
+        '/join/tok-abc',
+      ),
+    ).toBe('/join/tok-abc');
   });
 });
 
