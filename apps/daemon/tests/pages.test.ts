@@ -159,6 +159,20 @@ describe('organization pages', () => {
     expect(withLive.blocks.at(-1)?.type).toBe('embed');
     expect(withLive.blocks.at(-1)?.props.url).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
 
+    const withLocal = await embedInPage(db(), orgId, child.id, {
+      type: 'embed',
+      url: '/api/projects/proj-wiki/raw/hero.png',
+    });
+    expect(withLocal.blocks.at(-1)?.type).toBe('embed');
+    expect(withLocal.blocks.at(-1)?.props.url).toBe('/api/projects/proj-wiki/raw/hero.png');
+    const again = await embedInPage(db(), orgId, child.id, {
+      type: 'embed',
+      url: '/api/projects/proj-wiki/raw/hero.png',
+    });
+    expect(again.blocks.filter((block) => block.type === 'embed')).toHaveLength(
+      withLocal.blocks.filter((block) => block.type === 'embed').length,
+    );
+
     const nested = await scaffoldPages(db(), orgId, 'member-1', {
       parentPageId: root.id,
       pages: [

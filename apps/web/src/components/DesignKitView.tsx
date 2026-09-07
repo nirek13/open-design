@@ -31,6 +31,7 @@ import type { DesignSystemEditClickProps } from '@open-design/contracts/analytic
 import { useT } from '../i18n';
 import { openExternalUrl, projectRawUrl } from '../providers/registry';
 import { buildSrcdoc } from '../runtime/srcdoc';
+import { AuthenticatedHtmlFrame } from './AuthenticatedHtmlFrame';
 import {
   fontStack,
   isLightHex,
@@ -44,68 +45,6 @@ import styles from './BrandPreviewCard.module.css';
 
 const IMAGE_CAP = 8;
 const DESIGN_KIT_PREVIEW_SANDBOX = 'allow-scripts allow-popups';
-
-/** Directory of a `/raw/.../file.html?cacheBust=` URL, for srcDoc `<base href>`. */
-function rawUrlDirectory(url: string): string {
-  const pathOnly = url.split('?')[0] ?? url;
-  const slash = pathOnly.lastIndexOf('/');
-  return slash >= 0 ? pathOnly.slice(0, slash + 1) : pathOnly;
-}
-
-/**
- * Kit/asset tiles used to set iframe `src` to `/api/projects/:id/raw/...`.
- * Those navigations run in an opaque sandbox (no `allow-same-origin`), so the
- * SameSite=Lax `od_session` cookie is withheld and Clerk returns 401. Fetch
- * from the parent (Bearer + cookie) and paint the HTML via srcDoc instead.
- */
-function AuthenticatedHtmlFrame({
-  src,
-  title,
-  className,
-  sandbox,
-  loading,
-  tabIndex,
-  'aria-hidden': ariaHidden,
-}: {
-  src: string;
-  title: string;
-  className?: string;
-  sandbox: string;
-  loading?: 'lazy' | 'eager';
-  tabIndex?: number;
-  'aria-hidden'?: boolean | 'true';
-}) {
-  const [srcDoc, setSrcDoc] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setSrcDoc(null);
-    void fetch(src, { cache: 'no-store', credentials: 'include' })
-      .then(async (resp) => {
-        if (!resp.ok || cancelled) return;
-        const html = await resp.text();
-        if (cancelled) return;
-        setSrcDoc(buildSrcdoc(html, { baseHref: rawUrlDirectory(src) }));
-      })
-      .catch(() => {
-        // Missing or unreadable preview — leave the frame blank.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [src]);
-  return (
-    <iframe
-      className={className}
-      title={title}
-      sandbox={sandbox}
-      srcDoc={srcDoc ?? undefined}
-      data-preview-src={src}
-      loading={loading}
-      tabIndex={tabIndex}
-      aria-hidden={ariaHidden}
-    />
-  );
-}
 
 type DesignMdModuleId = 'identity' | 'typography' | 'palette' | 'voice' | 'imageryLayout' | 'designSystem';
 

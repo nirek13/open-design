@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 import { useState } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/components/ChatPane', () => ({
   ChatPane: () => <div data-testid="pages-agent-chat" />,
 }));
+
+const { chatSend } = vi.hoisted(() => ({ chatSend: vi.fn() }));
 
 vi.mock('../src/components/workspace/useConversationChat', () => ({
   useConversationChat: () => ({
@@ -14,14 +16,14 @@ vi.mock('../src/components/workspace/useConversationChat', () => ({
     streaming: false,
     error: null,
     loading: false,
-    onSend: vi.fn(),
+    onSend: chatSend,
     onRetry: vi.fn(),
     onStop: vi.fn(),
   }),
 }));
 
 import { applyMarkdownShortcut, BlockEditor, emptyBlock, type DraftBlock } from '../src/components/pages/BlockEditor';
-import { PagesView } from '../src/components/pages/PagesView';
+import { PagesView, pickNewlyCreatedPage } from '../src/components/pages/PagesView';
 import { composePagesWikiPrompt } from '../src/components/pages/wiki-prompt';
 import * as createdEmbed from '../src/runtime/created-embed';
 import { I18nProvider } from '../src/i18n';
@@ -111,22 +113,48 @@ describe('composePagesWikiPrompt', () => {
     expect(prompt).toContain('page-1');
     expect(prompt).toContain('Handbook');
     expect(prompt).toContain('type embed');
+    expect(prompt).toContain('$OD_PROJECT_ID');
     expect(prompt).toContain('board');
     expect(prompt).toContain('assigner');
+    expect(prompt).toContain('Native tools first');
+    expect(prompt).toContain('Do not generate HTML/JS');
+    expect(prompt).toContain('notes tab bar');
+    expect(prompt).toContain('Do not edit other existing pages');
+    expect(prompt).toContain('active tab');
+    expect(prompt).toContain('"$OD_NODE_BIN" "$OD_BIN" tools pages append');
+    expect(prompt).toContain('Writing a JSON payload to a file is not done');
+    expect(prompt).toContain('content.items');
   });
 
-  it('tells the agent to create a unique file and embed it when making from a page', () => {
+  it('lists pages already open in the notes tab bar', () => {
+    const prompt = composePagesWikiPrompt({
+      request: 'Add hiring steps',
+      pageId: 'page-1',
+      pageTitle: 'Handbook',
+      openTabs: [
+        { id: 'page-1', title: 'Handbook', icon: '📘' },
+        { id: 'page-2', title: 'Hiring', icon: '🤝' },
+      ],
+    });
+    expect(prompt).toContain('Notes tab bar');
+    expect(prompt).toContain('page-2');
+    expect(prompt).toContain('Hiring');
+  });
+
+  it('prefers native page tools when making an app from a page, with embed as fallback', () => {
     const prompt = composePagesWikiPrompt({
       request: 'A hiring dashboard',
       pageId: 'page-1',
       pageTitle: 'Handbook',
       make: { kind: 'app', prompt: 'A hiring dashboard' },
     });
-    expect(prompt).toContain('unique interactive app');
+    expect(prompt).toContain('native wiki tool');
+    expect(prompt).toContain('Do not generate HTML and embed it when a native tool covers the request');
     expect(prompt).toContain('A hiring dashboard');
+    expect(prompt).toContain('unique interactive app');
     expect(prompt).toContain('tools pages embed');
     expect(prompt).toContain('/raw/');
-    expect(prompt).toContain('Do not stop at a description');
+    expect(prompt).toContain('chart');
   });
 
   it('includes the page excerpt when provided', () => {
@@ -140,10 +168,23 @@ describe('composePagesWikiPrompt', () => {
     expect(prompt).toContain('📘');
     expect(prompt).toContain('Welcome to the team');
   });
+
+  it('names the chat project so embed URLs are not placeholders', () => {
+    const prompt = composePagesWikiPrompt({
+      request: 'Embed a picture',
+      pageId: 'page-1',
+      pageTitle: 'Handbook',
+      projectId: 'proj-wiki',
+    });
+    expect(prompt).toContain('proj-wiki');
+    expect(prompt).toContain('/api/projects/proj-wiki/raw/');
+    expect(prompt).not.toContain('<this project id>');
+  });
 });
 
 describe('PagesView', () => {
   beforeEach(() => {
+    chatSend.mockReset();
     vi.spyOn(registry, 'fetchAuthContext').mockResolvedValue({
       mode: 'local-owner',
       viewer: { userId: 'user-local-owner', displayName: 'Local Owner', email: null, username: null, bio: null, avatarUrl: null },
@@ -156,6 +197,8 @@ describe('PagesView', () => {
     vi.spyOn(registry, 'fetchWorkspacePage').mockResolvedValue(detail);
     vi.spyOn(registry, 'updateWorkspacePage').mockResolvedValue(detail);
     vi.spyOn(registry, 'setWorkspacePageBlocks').mockResolvedValue(detail);
+    vi.spyOn(registry, 'fetchProjectFiles').mockResolvedValue([]);
+    vi.spyOn(registry, 'embedInWorkspacePage').mockResolvedValue(detail);
   });
 
   afterEach(() => {
@@ -171,8 +214,71 @@ describe('PagesView', () => {
     expect(await screen.findByDisplayValue('Handbook')).toBeTruthy();
     expect(screen.getByTestId('pages-ask-ai')).toBeTruthy();
     expect(screen.getByRole('textbox', { name: 'Ask AI' })).toBeTruthy();
+    expect(screen.getByTestId('pages-tab-bar')).toBeTruthy();
+    expect(screen.getByTestId('pages-tab-page-1').textContent).toContain('Handbook');
     expect(screen.getByTestId('page-context-chip').textContent).toContain('Handbook');
     expect(screen.getByTestId('page-context-chip').textContent).toContain('Building on');
+  });
+
+  it('keeps opened notes in a tab bar and tells Ask AI about those tabs', async () => {
+    const handbook = pageDetail();
+    const hiring = pageDetail({
+      id: 'page-2',
+      title: 'Hiring',
+      icon: '🤝',
+      parentPageId: null,
+      blocks: [
+        {
+          id: 'h1',
+          pageId: 'page-2',
+          parentBlockId: null,
+          type: 'paragraph',
+          content: 'Roles',
+          props: {},
+          position: 0,
+          children: [],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    });
+    vi.spyOn(registry, 'fetchPageTree').mockResolvedValue([
+      { page: handbook, children: [] },
+      { page: hiring, children: [] },
+    ]);
+    vi.spyOn(registry, 'fetchWorkspacePage').mockImplementation(async (_org, pageId) =>
+      pageId === 'page-2' ? hiring : handbook,
+    );
+    const create = vi.spyOn(projects, 'createProject').mockResolvedValue({
+      project: {
+        id: 'proj-tabs',
+        name: 'Hiring: Add steps',
+        skillId: null,
+        designSystemId: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      conversationId: 'conv-tabs',
+    });
+    renderPages();
+    expect(await screen.findByTestId('pages-tab-page-1')).toBeTruthy();
+    fireEvent.click(within(screen.getByTestId('pages-sidebar')).getByText('Hiring'));
+    expect(await screen.findByTestId('pages-tab-page-2')).toBeTruthy();
+    expect(screen.getByTestId('pages-tab-page-1')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask AI' }), {
+      target: { value: 'Add hiring steps' },
+    });
+    fireEvent.submit(screen.getByTestId('pages-ask-ai'));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    const prompt = String(create.mock.calls[0]?.[0]?.pendingPrompt ?? '');
+    expect(prompt).toContain('notes tab bar');
+    expect(prompt).toContain('page-1');
+    expect(prompt).toContain('page-2');
+    fireEvent.click(
+      within(screen.getByTestId('pages-tab-page-1')).getByRole('button', { name: 'Close tab' }),
+    );
+    await waitFor(() => expect(screen.queryByTestId('pages-tab-page-1')).toBeNull());
+    expect(screen.getByTestId('pages-tab-page-2')).toBeTruthy();
   });
 
   it('adds a cover and favorites the open page', async () => {
@@ -228,10 +334,15 @@ describe('PagesView', () => {
       title: 'Handbook',
       icon: '📘',
     });
+    expect(arg?.metadata?.workspaceId).toBe('ws-1');
     expect(arg?.pendingPrompt).toContain('page-1');
+    expect(arg?.pendingPrompt).toContain('$OD_PROJECT_ID');
     expect(arg?.pendingPrompt).toContain('Welcome');
     expect(arg?.pendingPrompt).toContain('Add an onboarding section');
     expect(await screen.findByTestId('pages-agent-builder')).toBeTruthy();
+    await waitFor(() => expect(chatSend).toHaveBeenCalled());
+    expect(String(chatSend.mock.calls[0]?.[0])).toContain('proj-1');
+    expect(String(chatSend.mock.calls[0]?.[0])).toContain('/api/projects/proj-1/raw/');
     expect(screen.getByTestId('pages-view').getAttribute('data-builder-layout')).toBe('docked');
     expect(screen.getByTestId('pages-title')).toBeTruthy();
     fireEvent.click(screen.getByTestId('pages-agent-expand'));
@@ -240,6 +351,462 @@ describe('PagesView', () => {
     expect(screen.getByTestId('pages-view').getAttribute('data-builder-layout')).toBe('docked');
     fireEvent.click(screen.getByTestId('pages-agent-close'));
     expect(screen.getByTestId('pages-ask-ai')).toBeTruthy();
+  });
+
+  it('does not rewrite page blocks when only the title changes', async () => {
+    renderPages();
+    expect(await screen.findByTestId('pages-title')).toBeTruthy();
+    fireEvent.change(screen.getByTestId('pages-title'), { target: { value: 'Renamed handbook' } });
+    await waitFor(() => expect(registry.updateWorkspacePage).toHaveBeenCalled(), { timeout: 2000 });
+    expect(registry.setWorkspacePageBlocks).not.toHaveBeenCalled();
+  });
+
+  it('reloads the open page so an agent embed appears without a manual refresh', async () => {
+    vi.spyOn(projects, 'createProject').mockResolvedValue({
+      project: {
+        id: 'proj-embed',
+        name: 'Handbook: Embed picture',
+        skillId: null,
+        designSystemId: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      conversationId: 'conv-embed',
+    });
+    let loads = 0;
+    vi.spyOn(registry, 'fetchWorkspacePage').mockImplementation(async () => {
+      loads += 1;
+      if (loads === 1) return pageDetail();
+      return pageDetail({
+        updatedAt: 99,
+        blocks: [
+          ...pageDetail().blocks,
+          {
+            id: 'emb-1',
+            pageId: 'page-1',
+            parentBlockId: null,
+            type: 'embed',
+            content: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            props: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+            position: 1,
+            children: [],
+            createdAt: 2,
+            updatedAt: 2,
+          },
+        ],
+      });
+    });
+    renderPages();
+    expect(await screen.findByTestId('pages-title')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask AI' }), {
+      target: { value: 'Embed a walkthrough' },
+    });
+    fireEvent.submit(screen.getByTestId('pages-ask-ai'));
+    expect(await screen.findByTestId('pages-agent-builder')).toBeTruthy();
+    expect(await screen.findByTestId('pages-rich-embed')).toBeTruthy();
+  });
+
+  it('embeds a chart from the chat project onto the open notes page', async () => {
+    const chartUrl = '/api/projects/proj-chart/raw/revenue-chart.html';
+    const withChart = pageDetail({
+      updatedAt: 50,
+      blocks: [
+        ...pageDetail().blocks,
+        {
+          id: 'emb-chart',
+          pageId: 'page-1',
+          parentBlockId: null,
+          type: 'embed',
+          content: chartUrl,
+          props: { url: chartUrl },
+          position: 1,
+          children: [],
+          createdAt: 50,
+          updatedAt: 50,
+        },
+      ],
+    });
+    vi.spyOn(projects, 'createProject').mockResolvedValue({
+      project: {
+        id: 'proj-chart',
+        name: 'Handbook: Revenue chart',
+        skillId: null,
+        designSystemId: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      conversationId: 'conv-chart',
+    });
+    vi.spyOn(registry, 'fetchProjectFiles').mockResolvedValue([
+      {
+        name: 'revenue-chart.html',
+        path: 'revenue-chart.html',
+        type: 'file',
+        size: 2048,
+        mtime: 2,
+        kind: 'html',
+        mime: 'text/html',
+      },
+    ]);
+    const embed = vi.spyOn(registry, 'embedInWorkspacePage').mockResolvedValue(withChart);
+    renderPages();
+    expect(await screen.findByTestId('pages-title')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask AI' }), {
+      target: { value: 'Make a revenue chart' },
+    });
+    fireEvent.submit(screen.getByTestId('pages-ask-ai'));
+    expect(await screen.findByTestId('pages-agent-builder')).toBeTruthy();
+    await waitFor(() => expect(embed).toHaveBeenCalled());
+    expect(embed).toHaveBeenCalledWith('ws-1', 'page-1', { type: 'embed', url: chartUrl });
+    expect(await screen.findByTestId('pages-rich-embed')).toBeTruthy();
+  });
+
+  it('retries embedding a chart if the first attach fails', async () => {
+    const chartUrl = '/api/projects/proj-chart/raw/revenue-chart.html';
+    const withChart = pageDetail({
+      updatedAt: 50,
+      blocks: [
+        ...pageDetail().blocks,
+        {
+          id: 'emb-chart',
+          pageId: 'page-1',
+          parentBlockId: null,
+          type: 'embed',
+          content: chartUrl,
+          props: { url: chartUrl },
+          position: 1,
+          children: [],
+          createdAt: 50,
+          updatedAt: 50,
+        },
+      ],
+    });
+    vi.spyOn(projects, 'createProject').mockResolvedValue({
+      project: {
+        id: 'proj-chart',
+        name: 'Handbook: Revenue chart',
+        skillId: null,
+        designSystemId: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      conversationId: 'conv-chart',
+    });
+    vi.spyOn(registry, 'fetchProjectFiles').mockResolvedValue([
+      {
+        name: 'revenue-chart.html',
+        path: 'revenue-chart.html',
+        type: 'file',
+        size: 2048,
+        mtime: 2,
+        kind: 'html',
+        mime: 'text/html',
+      },
+    ]);
+    const embed = vi
+      .spyOn(registry, 'embedInWorkspacePage')
+      .mockRejectedValueOnce(new Error('busy'))
+      .mockResolvedValue(withChart);
+    renderPages();
+    expect(await screen.findByTestId('pages-title')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask AI' }), {
+      target: { value: 'Make a revenue chart' },
+    });
+    fireEvent.submit(screen.getByTestId('pages-ask-ai'));
+    expect(await screen.findByTestId('pages-agent-builder')).toBeTruthy();
+    await waitFor(() => expect(embed.mock.calls.length).toBeGreaterThanOrEqual(2), { timeout: 3500 });
+    expect(await screen.findByTestId('pages-rich-embed')).toBeTruthy();
+  });
+
+  it('keeps the chart on the notes page after a title autosave', async () => {
+    const chartUrl = '/api/projects/proj-chart/raw/revenue-chart.html';
+    const withChart = pageDetail({
+      updatedAt: 50,
+      blocks: [
+        ...pageDetail().blocks,
+        {
+          id: 'emb-chart',
+          pageId: 'page-1',
+          parentBlockId: null,
+          type: 'embed',
+          content: chartUrl,
+          props: { url: chartUrl },
+          position: 1,
+          children: [],
+          createdAt: 50,
+          updatedAt: 50,
+        },
+      ],
+    });
+    vi.spyOn(projects, 'createProject').mockResolvedValue({
+      project: {
+        id: 'proj-chart',
+        name: 'Handbook: Revenue chart',
+        skillId: null,
+        designSystemId: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      conversationId: 'conv-chart',
+    });
+    vi.spyOn(registry, 'fetchProjectFiles').mockResolvedValue([
+      {
+        name: 'revenue-chart.html',
+        path: 'revenue-chart.html',
+        type: 'file',
+        size: 2048,
+        mtime: 2,
+        kind: 'html',
+        mime: 'text/html',
+      },
+    ]);
+    vi.spyOn(registry, 'embedInWorkspacePage').mockResolvedValue(withChart);
+    vi.spyOn(registry, 'updateWorkspacePage').mockImplementation(async (_org, _id, input) =>
+      pageDetail({
+        ...withChart,
+        title: String(input.title ?? withChart.title),
+        updatedAt: 60,
+      }),
+    );
+    renderPages();
+    expect(await screen.findByTestId('pages-title')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask AI' }), {
+      target: { value: 'Make a revenue chart' },
+    });
+    fireEvent.submit(screen.getByTestId('pages-ask-ai'));
+    expect(await screen.findByTestId('pages-rich-embed')).toBeTruthy();
+    fireEvent.change(screen.getByTestId('pages-title'), { target: { value: 'Handbook with chart' } });
+    await waitFor(() => expect(registry.updateWorkspacePage).toHaveBeenCalled(), { timeout: 2000 });
+    expect(screen.getByTestId('pages-rich-embed')).toBeTruthy();
+    for (const call of (registry.setWorkspacePageBlocks as unknown as { mock: { calls: unknown[][] } }).mock.calls) {
+      expect(JSON.stringify(call[2])).toContain('revenue-chart.html');
+    }
+  });
+
+  it('embeds a chart that appears after Ask AI has already started', async () => {
+    const chartUrl = '/api/projects/proj-chart/raw/charts/revenue.html';
+    const withChart = pageDetail({
+      updatedAt: 50,
+      blocks: [
+        ...pageDetail().blocks,
+        {
+          id: 'emb-chart',
+          pageId: 'page-1',
+          parentBlockId: null,
+          type: 'embed',
+          content: chartUrl,
+          props: { url: chartUrl },
+          position: 1,
+          children: [],
+          createdAt: 50,
+          updatedAt: 50,
+        },
+      ],
+    });
+    vi.spyOn(projects, 'createProject').mockResolvedValue({
+      project: {
+        id: 'proj-chart',
+        name: 'Handbook: Revenue chart',
+        skillId: null,
+        designSystemId: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      conversationId: 'conv-chart-late',
+    });
+    let files: Array<{
+      name: string;
+      path: string;
+      type: 'file';
+      size: number;
+      mtime: number;
+      kind: 'html';
+      mime: string;
+    }> = [];
+    vi.spyOn(registry, 'fetchProjectFiles').mockImplementation(async () => files);
+    const embed = vi.spyOn(registry, 'embedInWorkspacePage').mockResolvedValue(withChart);
+    renderPages();
+    expect(await screen.findByTestId('pages-title')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask AI' }), {
+      target: { value: 'Make a revenue chart' },
+    });
+    fireEvent.submit(screen.getByTestId('pages-ask-ai'));
+    expect(await screen.findByTestId('pages-agent-builder')).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(embed).not.toHaveBeenCalled();
+    files = [
+      {
+        name: 'charts/revenue.html',
+        path: 'charts/revenue.html',
+        type: 'file',
+        size: 2048,
+        mtime: 2,
+        kind: 'html',
+        mime: 'text/html',
+      },
+    ];
+    await waitFor(() => expect(embed).toHaveBeenCalled(), { timeout: 3500 });
+    expect(embed).toHaveBeenCalledWith('ws-1', 'page-1', { type: 'embed', url: chartUrl });
+    expect(await screen.findByTestId('pages-rich-embed')).toBeTruthy();
+  });
+
+  it('keeps the chart on the notes page after a body autosave', async () => {
+    const chartUrl = '/api/projects/proj-chart/raw/revenue-chart.html';
+    const withChart = pageDetail({
+      updatedAt: 50,
+      blocks: [
+        ...pageDetail().blocks,
+        {
+          id: 'emb-chart',
+          pageId: 'page-1',
+          parentBlockId: null,
+          type: 'embed',
+          content: chartUrl,
+          props: { url: chartUrl },
+          position: 1,
+          children: [],
+          createdAt: 50,
+          updatedAt: 50,
+        },
+      ],
+    });
+    vi.spyOn(projects, 'createProject').mockResolvedValue({
+      project: {
+        id: 'proj-chart',
+        name: 'Handbook: Revenue chart',
+        skillId: null,
+        designSystemId: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      conversationId: 'conv-chart-body',
+    });
+    vi.spyOn(registry, 'fetchProjectFiles').mockResolvedValue([
+      {
+        name: 'revenue-chart.html',
+        path: 'revenue-chart.html',
+        type: 'file',
+        size: 2048,
+        mtime: 2,
+        kind: 'html',
+        mime: 'text/html',
+      },
+    ]);
+    vi.spyOn(registry, 'embedInWorkspacePage').mockResolvedValue(withChart);
+    vi.spyOn(registry, 'setWorkspacePageBlocks').mockImplementation(async (_org, _id, input) =>
+      pageDetail({
+        ...withChart,
+        updatedAt: 90,
+        blocks: (input.blocks ?? []).map((block, index) => ({
+          id: `b${index}`,
+          pageId: 'page-1',
+          parentBlockId: null,
+          type: block.type,
+          content: block.content ?? '',
+          props: block.props ?? {},
+          position: index,
+          children: [],
+          createdAt: 90,
+          updatedAt: 90,
+        })),
+      } as WorkspacePageDetail),
+    );
+    renderPages();
+    expect(await screen.findByTestId('pages-title')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask AI' }), {
+      target: { value: 'Make a revenue chart' },
+    });
+    fireEvent.submit(screen.getByTestId('pages-ask-ai'));
+    expect(await screen.findByTestId('pages-rich-embed')).toBeTruthy();
+    const editor = within(screen.getByTestId('pages-editor')).getByRole('textbox');
+    fireEvent.focus(editor);
+    fireEvent.input(editor, { target: { textContent: 'Welcome — see the chart' } });
+    await waitFor(() => expect(registry.setWorkspacePageBlocks).toHaveBeenCalled(), { timeout: 2000 });
+    expect(screen.getByTestId('pages-rich-embed')).toBeTruthy();
+    const last = (registry.setWorkspacePageBlocks as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls.at(-1);
+    expect(JSON.stringify(last?.[2])).toContain('revenue-chart.html');
+  });
+
+  it('opens a newly created notes page when the open page did not change', async () => {
+    const handbook = pageDetail();
+    const created = pageDetail({
+      id: 'page-new',
+      title: 'Hiring wiki',
+      updatedAt: 5,
+      parentPageId: 'page-1',
+      blocks: [
+        {
+          id: 'n1',
+          pageId: 'page-new',
+          parentBlockId: null,
+          type: 'paragraph',
+          content: 'Roles',
+          props: {},
+          position: 0,
+          children: [],
+          createdAt: 5,
+          updatedAt: 5,
+        },
+      ],
+    });
+    let includeCreated = false;
+    vi.spyOn(registry, 'fetchPageTree').mockImplementation(async () =>
+      includeCreated
+        ? [{ page: handbook, children: [{ page: created, children: [] }] }]
+        : [{ page: handbook, children: [] }],
+    );
+    vi.spyOn(registry, 'fetchWorkspacePage').mockImplementation(async (_org, pageId) =>
+      pageId === 'page-new' ? created : handbook,
+    );
+    vi.spyOn(projects, 'createProject').mockImplementation(async () => {
+      includeCreated = true;
+      return {
+        project: {
+          id: 'proj-new-page',
+          name: 'Handbook: Hiring wiki',
+          skillId: null,
+          designSystemId: null,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        conversationId: 'conv-new-page',
+      };
+    });
+    renderPages();
+    expect(await screen.findByDisplayValue('Handbook')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask AI' }), {
+      target: { value: 'Create a hiring wiki' },
+    });
+    fireEvent.submit(screen.getByTestId('pages-ask-ai'));
+    expect(await screen.findByTestId('pages-agent-builder')).toBeTruthy();
+    expect(await screen.findByDisplayValue('Hiring wiki')).toBeTruthy();
+    expect(screen.getByTestId('pages-tab-page-new').textContent).toContain('Hiring wiki');
+    expect(screen.getByTestId('pages-tab-page-1')).toBeTruthy();
+  });
+});
+
+describe('pickNewlyCreatedPage', () => {
+  it('prefers a new child of the open page, else a new root', () => {
+    expect(
+      pickNewlyCreatedPage(
+        [
+          { id: 'other', parentPageId: 'elsewhere' },
+          { id: 'child', parentPageId: 'page-1' },
+        ],
+        'page-1',
+      ),
+    ).toBe('child');
+    expect(
+      pickNewlyCreatedPage(
+        [
+          { id: 'nested', parentPageId: 'x' },
+          { id: 'root', parentPageId: null },
+        ],
+        'page-1',
+      ),
+    ).toBe('root');
+    expect(pickNewlyCreatedPage([], 'page-1')).toBeNull();
   });
 });
 
@@ -343,6 +910,9 @@ describe('BlockEditor', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Expense form/ }));
     expect(screen.getByTestId('pages-rich-embed')).toHaveAttribute('data-provider', 'App');
+    const frame = screen.getByTitle('expense-form.html');
+    expect(frame.getAttribute('data-preview-src')).toBe('/api/projects/p1/raw/expense-form.html');
+    expect(frame.getAttribute('src')).toBeFalsy();
   });
 
   it('lets you make a unique app from the slash menu', () => {

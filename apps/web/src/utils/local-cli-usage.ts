@@ -1,6 +1,6 @@
 /**
  * Local coding-agent CLIs are not offered as a user-facing runtime.
- * Execution defaults to BYOK (including a host-provided OpenAI key).
+ * Execution defaults to BYOK (including a host-provided OpenAI or Anthropic key).
  */
 export const LOCAL_CLI_USAGE_ENABLED = false;
 

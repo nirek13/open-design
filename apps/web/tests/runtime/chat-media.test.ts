@@ -4,6 +4,7 @@ import {
   extractMessageUrls,
   filesFromTransfer,
   parseChatAccent,
+  parseChatCsv,
 } from '../../src/runtime/chat-media';
 
 describe('chat-media', () => {
@@ -21,6 +22,14 @@ describe('chat-media', () => {
     expect(chatFileKind('application/zip', 'pack.zip')).toBe('file');
     expect(chatFileKind('image/heic', 'photo.heic')).toBe('file');
     expect(chatFileKind('video/x-matroska', 'clip.mkv')).toBe('video');
+    expect(chatFileKind('text/markdown', 'notes.md')).toBe('markdown');
+    expect(chatFileKind('', 'notes.md')).toBe('markdown');
+    expect(chatFileKind('text/csv', 'grid.csv')).toBe('csv');
+    expect(chatFileKind('application/json', 'data.json')).toBe('json');
+    expect(chatFileKind('text/html', 'card.html')).toBe('html');
+    expect(chatFileKind('', 'util.ts')).toBe('code');
+    expect(chatFileKind('text/plain', 'readme.txt')).toBe('text');
+    expect(chatFileKind('font/ttf', 'brand.ttf')).toBe('font');
     expect(chatFileKind('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'notes.docx')).toBe('file');
   });
 
@@ -39,6 +48,13 @@ describe('chat-media', () => {
     } as unknown as DataTransfer;
     expect(filesFromTransfer(paste).map((file) => file.name)).toEqual(['shot.png']);
     expect(filesFromTransfer(null)).toEqual([]);
+  });
+
+  it('splits csv rows for the table preview', () => {
+    expect(parseChatCsv('name,role\nAda,"Lead, design"')).toEqual([
+      ['name', 'role'],
+      ['Ada', 'Lead, design'],
+    ]);
   });
 
   it('pulls a chat accent from design-system tokens and swatches', () => {

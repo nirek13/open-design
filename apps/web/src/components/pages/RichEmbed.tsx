@@ -1,10 +1,11 @@
 import { useMemo, useState, type CSSProperties, type FormEvent } from 'react';
-import { iframeSnippet, resolveRichEmbed, type RichEmbedModel } from '../../runtime/rich-embed';
+import { iframeSnippet, isOpaqueLocalHtmlEmbed, resolveRichEmbed, type RichEmbedModel } from '../../runtime/rich-embed';
 import {
   PAGE_MAKE_ACTIONS,
   pageMakeAction,
   type PageMakeKind,
 } from '../../runtime/page-make';
+import { AuthenticatedHtmlFrame } from '../AuthenticatedHtmlFrame';
 import { CreatedWorkPicker } from './CreatedWorkPicker';
 import styles from './RichEmbed.module.css';
 
@@ -99,6 +100,19 @@ function EmbedBody({ model }: { model: RichEmbedModel }) {
     );
   }
   if (model.kind === 'iframe') {
+    if (isOpaqueLocalHtmlEmbed(model)) {
+      return (
+        <AuthenticatedHtmlFrame
+          className={styles.frameInner}
+          src={model.src}
+          title={model.title}
+          sandbox={model.sandbox}
+          allow={model.allow}
+          allowFullScreen
+          loading="lazy"
+        />
+      );
+    }
     return (
       <iframe
         className={styles.frameInner}

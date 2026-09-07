@@ -5,6 +5,8 @@ import {
   classifyMailMessage,
   classifyMailMessages,
   draftMailReply,
+  extractMailAddress,
+  extractMailAddresses,
   mailTriageHasWork,
   senderFirstName,
   summarizeMailThread,
@@ -98,10 +100,21 @@ describe('mail agent', () => {
     expect(summary.bullets).toContain('Please review the attached budget before Friday.');
   });
 
+  it('extracts a bare address from display-name mail headers', () => {
+    expect(extractMailAddress('Ada <ada@example.com>')).toBe('ada@example.com');
+    expect(extractMailAddress('"Ada Lovelace" <ada@example.com>')).toBe('ada@example.com');
+    expect(extractMailAddress('pat@example.com')).toBe('pat@example.com');
+    expect(extractMailAddress('not-an-address')).toBeNull();
+    expect(extractMailAddresses('Ada <ada@example.com>, bob@example.com, ada@example.com')).toEqual([
+      'ada@example.com',
+      'bob@example.com',
+    ]);
+  });
+
   it('drafts a reply to the latest sender, honoring an instruction', () => {
     const thread = [message({ subject: 'Q3 budget', from: 'Ada <ada@example.com>' })];
     const auto = draftMailReply(thread);
-    expect(auto.to).toEqual(['Ada <ada@example.com>']);
+    expect(auto.to).toEqual(['ada@example.com']);
     expect(auto.body).toMatch(/^Hi Ada,/);
     expect(auto.body).toContain('Q3 budget');
 

@@ -78,6 +78,7 @@ const ENV_KEYS: Record<string, string[]> = {
   // who pastes an Azure deployment URL into the OpenAI Base URL field
   // gets the credential picked up automatically.
   openai: [
+    'OD_DEFAULT_OPENAI_API_KEY',
     'OD_OPENAI_API_KEY',
     'OPENAI_API_KEY',
     'AZURE_API_KEY',

@@ -599,13 +599,52 @@ function embedToBlock(input: EmbedPageBlockRequest): PageBlockInput {
   }
 }
 
+function normalizeMediaUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  try {
+    return decodeURIComponent(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function mediaUrlFromBlock(block: {
+  content?: unknown;
+  props?: Record<string, unknown>;
+}): string {
+  const props = block.props ?? {};
+  const raw =
+    (typeof props.url === 'string' && props.url) ||
+    (typeof props.path === 'string' && props.path) ||
+    (typeof block.content === 'string' ? block.content : '');
+  return String(raw).trim();
+}
+
+function pageContainsMediaUrl(page: WorkspacePageDetail, url: string): boolean {
+  const target = normalizeMediaUrl(url);
+  if (!target) return false;
+  const walk = (blocks: PageBlock[]): boolean => {
+    for (const block of blocks) {
+      if (normalizeMediaUrl(mediaUrlFromBlock(block)) === target) return true;
+      if ((block.children?.length ?? 0) > 0 && walk(block.children)) return true;
+    }
+    return false;
+  };
+  return walk(page.blocks);
+}
+
 export async function embedInPage(
   db: SqlExecutor,
   orgId: string,
   pageId: string,
   input: EmbedPageBlockRequest,
 ): Promise<WorkspacePageDetail> {
-  return appendPageBlocks(db, orgId, pageId, { blocks: [embedToBlock(input)] });
+  const block = embedToBlock(input);
+  const url = mediaUrlFromBlock(block);
+  const existing = await getPage(db, orgId, pageId);
+  if (url && pageContainsMediaUrl(existing, url)) return existing;
+  return appendPageBlocks(db, orgId, pageId, { blocks: [block] });
 }
 
 export async function searchPages(

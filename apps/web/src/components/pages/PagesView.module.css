@@ -77,7 +77,6 @@
 .newPage:hover,
 .pageRow:hover,
 .favButton:hover,
-.crumbBtn:hover,
 .metaBtn:hover {
   background: var(--bg-fill-secondary, rgba(0, 0, 0, 0.06));
 }
@@ -270,46 +269,82 @@
   padding: 4px 12px;
 }
 
-.crumbs {
+.tabs {
   display: flex;
   align-items: center;
   gap: 2px;
   min-width: 0;
   flex: 1 1 auto;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 
-.crumb {
+.tab {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
+  max-width: 200px;
   min-width: 0;
+  border-radius: var(--radius-sm, 6px);
+  transition:
+    background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.crumbSep {
-  color: var(--text-faint, #b3b0a8);
-  padding: 0 4px;
+.tab:hover:not(.tabActive) {
+  background: var(--bg-fill-secondary, rgba(0, 0, 0, 0.06));
 }
 
-.crumbBtn {
+.tabActive {
+  background: var(--bg-raised, #fff);
+  box-shadow: 0 0 0 1px var(--border-soft, #edf0f4);
+}
+
+.tabBtn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 180px;
+  min-width: 0;
   border: none;
   background: transparent;
   color: var(--text-muted, #74716b);
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm, 6px);
-  overflow: hidden;
+  padding: 6px 4px 6px 8px;
 }
 
-.crumbBtn span:last-child {
+.tabActive .tabBtn {
+  color: var(--text, #1c1917);
+}
+
+.tabLabel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tabClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-inline-end: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #74716b);
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.tabClose:hover,
+.tabActive .tabClose {
+  opacity: 1;
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
 }
 
 .chromeRight {

@@ -13,7 +13,9 @@ import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
   archiveWorkspacePage,
   createWorkspacePage,
+  embedInWorkspacePage,
   fetchPageTree,
+  fetchProjectFiles,
   fetchWorkspacePage,
   setWorkspacePageBlocks,
   updateWorkspacePage,
@@ -37,6 +39,14 @@ import { countPageWords, pageToMarkdown } from '../../runtime/page-export';
 import { pageFontFamily } from '../../runtime/page-style';
 import { composePagesWikiPrompt, draftBlocksPlainText } from './wiki-prompt';
 import { pageMakeAction, type PageMakeKind } from '../../runtime/page-make';
+import {
+  collectPageEmbedUrls,
+  mergeMissingMediaBlocks,
+  normalizeEmbedUrl,
+  pageMediaBlocks,
+  selectProjectFilesToEmbed,
+} from '../../runtime/created-embed';
+import { canCommitPageBlocks, createPageWriteQueue } from '../../runtime/page-block-commit';
 import { PageContextChip } from './PageContextChip';
 import { PagesAgentBuilder, type PagesAgentSession } from './PagesAgentBuilder';
 import { SendToChatPicker } from '../apps/SendToChatPicker';
@@ -77,7 +87,7 @@ const COVER_PRESETS: Array<{ id: string; css: string }> = [
 ];
 
 const FALLBACK_AGENT_CONFIG: AppConfig = {
-  mode: 'daemon',
+  mode: 'api',
   apiKey: '',
   baseUrl: '',
   model: '',
@@ -100,6 +110,21 @@ function flattenTree(nodes: PageTreeNode[]): WorkspacePage[] {
   };
   walk(nodes);
   return out;
+}
+
+/** During Ask AI, open work that landed on a newly created notes page
+ * instead of leaving the person on an unchanged page. Prefer a child of
+ * the page they were looking at so it shows in the sidebar under them. */
+export function pickNewlyCreatedPage(
+  created: Array<{ id: string; parentPageId: string | null }>,
+  currentId: string | null,
+): string | null {
+  if (created.length === 0) return null;
+  if (currentId) {
+    const child = created.find((page) => page.parentPageId === currentId);
+    if (child) return child.id;
+  }
+  return created.find((page) => page.parentPageId == null)?.id ?? created[created.length - 1]!.id;
 }
 
 function filterTree(nodes: PageTreeNode[], query: string): PageTreeNode[] {
@@ -273,6 +298,7 @@ export function PagesView({
 
   const [tree, setTree] = useState<PageTreeNode[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [openTabIds, setOpenTabIds] = useState<string[]>([]);
   const [page, setPage] = useState<WorkspacePageDetail | null>(null);
   const [title, setTitle] = useState('');
   const [icon, setIcon] = useState<string | null>(null);
@@ -309,16 +335,40 @@ export function PagesView({
   const styleRef = useRef(style);
   const openedInitial = useRef<string | null>(null);
   const persistInFlight = useRef(false);
+  const saveStateRef = useRef(saveState);
+  const currentIdRef = useRef(currentId);
+  const openTabIdsRef = useRef<string[]>([]);
+  const pagesOrgRef = useRef<string | null>(null);
+  const pageUpdatedAtRef = useRef<number | null>(null);
+  const savedBlocksJsonRef = useRef('');
+  const sessionKnownPageIdsRef = useRef<Set<string> | null>(null);
+  const embedInFlightRef = useRef(false);
+  const agentSessionRef = useRef<PagesAgentSession | null>(null);
+  const liveMediaBlocksRef = useRef<DraftBlock[]>([]);
+  const pageWriteQueueRef = useRef(createPageWriteQueue());
+  const persistRef = useRef<() => Promise<void>>(async () => {});
 
   draftRef.current = draft;
   titleRef.current = title;
   iconRef.current = icon;
   coverRef.current = cover;
   styleRef.current = style;
+  saveStateRef.current = saveState;
+  currentIdRef.current = currentId;
+  openTabIdsRef.current = openTabIds;
+  agentSessionRef.current = agentSession;
 
   useEffect(() => {
     if (!activeOrgId) return;
     setFavorites(readFavorites(activeOrgId));
+  }, [activeOrgId]);
+
+  useEffect(() => {
+    if (!activeOrgId) return;
+    if (pagesOrgRef.current && pagesOrgRef.current !== activeOrgId) {
+      setOpenTabIds([]);
+    }
+    pagesOrgRef.current = activeOrgId;
   }, [activeOrgId]);
 
   const allPages = useMemo(() => flattenTree(tree), [tree]);
@@ -327,6 +377,18 @@ export function PagesView({
     [allPages],
   );
   const crumbs = useMemo(() => breadcrumbsFor(tree, currentId), [tree, currentId]);
+  const openTabs = useMemo(() => {
+    const byId = new Map(allPages.map((item) => [item.id, item]));
+    return openTabIds.flatMap((id) => {
+      if (id === currentId) {
+        return [{ id, title, icon, parentPageId: page?.parentPageId ?? null }];
+      }
+      const item = byId.get(id);
+      return item
+        ? [{ id: item.id, title: item.title, icon: item.icon, parentPageId: item.parentPageId }]
+        : [];
+    });
+  }, [allPages, currentId, icon, openTabIds, page?.parentPageId, title]);
   const visibleTree = useMemo(() => filterTree(tree, query), [tree, query]);
   const favoritePages = useMemo(
     () => allPages.filter((item) => favorites.includes(item.id)),
@@ -350,17 +412,22 @@ export function PagesView({
     return next;
   }, [activeOrgId]);
 
-  const openPage = useCallback(
+  const showPage = useCallback(
     async (pageId: string, syncUrl = true) => {
       if (!activeOrgId) return;
       const detail = await fetchWorkspacePage(activeOrgId, pageId);
+      const fromServer = blocksFromServer(detail.blocks);
       setCurrentId(pageId);
       setPage(detail);
       setTitle(detail.title);
       setIcon(detail.icon);
       setCover(detail.cover);
       setStyle(detail.style ?? {});
-      setDraft(blocksFromServer(detail.blocks));
+      setDraft(fromServer);
+      draftRef.current = fromServer;
+      liveMediaBlocksRef.current = pageMediaBlocks(fromServer);
+      savedBlocksJsonRef.current = JSON.stringify(blocksToServer(fromServer));
+      pageUpdatedAtRef.current = detail.updatedAt;
       setSaveState('saved');
       setError(null);
       setIconOpen(false);
@@ -372,6 +439,37 @@ export function PagesView({
       if (syncUrl) navigate({ kind: 'home', view: 'pages', pageId }, { replace: true });
     },
     [activeOrgId],
+  );
+
+  const openPage = useCallback(
+    async (pageId: string, syncUrl = true) => {
+      setOpenTabIds((prev) => (prev.includes(pageId) ? prev : [...prev, pageId]));
+      await showPage(pageId, syncUrl);
+    },
+    [showPage],
+  );
+
+  const closeTab = useCallback(
+    async (pageId: string) => {
+      const prev = openTabIdsRef.current;
+      const idx = prev.indexOf(pageId);
+      const next = prev.filter((id) => id !== pageId);
+      setOpenTabIds(next);
+      if (currentIdRef.current !== pageId) return;
+      const fallback = next[Math.min(idx, Math.max(next.length - 1, 0))] ?? null;
+      if (fallback) {
+        await showPage(fallback);
+        return;
+      }
+      setCurrentId(null);
+      setPage(null);
+      setTitle('');
+      setIcon(null);
+      setCover(null);
+      setDraft([emptyBlock()]);
+      navigate({ kind: 'home', view: 'pages' }, { replace: true });
+    },
+    [showPage],
   );
 
   useEffect(() => {
@@ -396,57 +494,92 @@ export function PagesView({
   }, [active, activeOrgId, initialPageId, loadTree, openPage]);
 
   const persist = useCallback(async () => {
-    if (!activeOrgId || !currentId || persistInFlight.current) return;
-    persistInFlight.current = true;
-    setSaveState('saving');
-    const snapshotTitle = titleRef.current;
-    const snapshotIcon = iconRef.current;
-    const snapshotCover = coverRef.current;
-    const snapshotStyle = styleRef.current;
-    const snapshotBlocks = draftRef.current;
-    try {
-      if (
-        snapshotTitle !== page?.title ||
-        snapshotIcon !== page?.icon ||
-        snapshotCover !== page?.cover ||
-        JSON.stringify(snapshotStyle ?? {}) !== JSON.stringify(page?.style ?? {})
-      ) {
-        await updateWorkspacePage(activeOrgId, currentId, {
-          title: snapshotTitle || 'Untitled',
-          icon: snapshotIcon,
-          cover: snapshotCover,
-          style: snapshotStyle,
+    if (!activeOrgId || !currentId) return;
+    await pageWriteQueueRef.current.enqueue(async () => {
+      if (persistInFlight.current) return;
+      persistInFlight.current = true;
+      setSaveState('saving');
+      const snapshotTitle = titleRef.current;
+      const snapshotIcon = iconRef.current;
+      const snapshotCover = coverRef.current;
+      const snapshotStyle = styleRef.current;
+      const snapshotBlocks = draftRef.current;
+      const savedJsonAtStart = savedBlocksJsonRef.current;
+      const updatedAtAtStart = pageUpdatedAtRef.current;
+      try {
+        let saved = page;
+        const wroteMeta =
+          snapshotTitle !== page?.title ||
+          snapshotIcon !== page?.icon ||
+          snapshotCover !== page?.cover ||
+          JSON.stringify(snapshotStyle ?? {}) !== JSON.stringify(page?.style ?? {});
+        if (wroteMeta) {
+          saved = await updateWorkspacePage(activeOrgId, currentId, {
+            title: snapshotTitle || 'Untitled',
+            icon: snapshotIcon,
+            cover: snapshotCover,
+            style: snapshotStyle,
+          });
+        }
+        const toWrite = mergeMissingMediaBlocks(snapshotBlocks, [
+          ...pageMediaBlocks(draftRef.current),
+          ...liveMediaBlocksRef.current,
+        ]);
+        const nextBlocksJson = JSON.stringify(blocksToServer(toWrite));
+        const wroteBlocks = canCommitPageBlocks({
+          snapshotJson: nextBlocksJson,
+          savedJson: savedBlocksJsonRef.current,
+          savedJsonAtStart,
+          updatedAtAtStart,
+          currentUpdatedAt: pageUpdatedAtRef.current,
         });
-      }
-      const saved = await setWorkspacePageBlocks(activeOrgId, currentId, {
-        blocks: blocksToServer(snapshotBlocks),
-      });
-      setPage(saved);
-      setDraft((current) => stampServerIds(current, saved.blocks));
-      const drifted =
-        titleRef.current !== snapshotTitle ||
-        iconRef.current !== snapshotIcon ||
-        coverRef.current !== snapshotCover ||
-        styleRef.current !== snapshotStyle ||
-        draftRef.current !== snapshotBlocks;
-      await loadTree();
-      if (drifted) {
+        // Skip a no-op or stale block replace. Autosave otherwise overwrites
+        // live `tools pages embed` / project-file embeds with an older draft.
+        if (wroteBlocks) {
+          saved = await setWorkspacePageBlocks(activeOrgId, currentId, {
+            blocks: blocksToServer(toWrite),
+          });
+          savedBlocksJsonRef.current = nextBlocksJson;
+        }
+        if (saved && (wroteBlocks || wroteMeta)) {
+          setPage(saved);
+          pageUpdatedAtRef.current = saved.updatedAt;
+          setDraft((current) => {
+            const next = mergeMissingMediaBlocks(
+              stampServerIds(current, saved.blocks),
+              pageMediaBlocks(current),
+            );
+            draftRef.current = next;
+            liveMediaBlocksRef.current = pageMediaBlocks(next);
+            return next;
+          });
+        }
+        const drifted =
+          titleRef.current !== snapshotTitle ||
+          iconRef.current !== snapshotIcon ||
+          coverRef.current !== snapshotCover ||
+          styleRef.current !== snapshotStyle ||
+          draftRef.current !== snapshotBlocks;
+        await loadTree();
+        if (drifted) {
+          setSaveState('dirty');
+          if (saveTimer.current) clearTimeout(saveTimer.current);
+          saveTimer.current = setTimeout(() => {
+            void persist();
+          }, AUTOSAVE_MS);
+        } else {
+          setSaveState('saved');
+        }
+        setError(null);
+      } catch (err) {
         setSaveState('dirty');
-        if (saveTimer.current) clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(() => {
-          void persist();
-        }, AUTOSAVE_MS);
-      } else {
-        setSaveState('saved');
+        setError(errorMessage(err));
+      } finally {
+        persistInFlight.current = false;
       }
-      setError(null);
-    } catch (err) {
-      setSaveState('dirty');
-      setError(errorMessage(err));
-    } finally {
-      persistInFlight.current = false;
-    }
-  }, [activeOrgId, currentId, loadTree, page?.cover, page?.icon, page?.style, page?.title]);
+    });
+  }, [activeOrgId, currentId, loadTree, page]);
+  persistRef.current = persist;
 
   const scheduleSave = useCallback(() => {
     setSaveState('dirty');
@@ -507,6 +640,164 @@ export function PagesView({
     }
   };
 
+  const applyServerPage = useCallback((detail: WorkspacePageDetail) => {
+    if (currentIdRef.current !== detail.id) return;
+    const fromServer = blocksFromServer(detail.blocks);
+    const merged = mergeMissingMediaBlocks(fromServer, liveMediaBlocksRef.current);
+    const restoredMedia =
+      collectPageEmbedUrls(merged).size > collectPageEmbedUrls(fromServer).size;
+    setPage(detail);
+    setTitle(detail.title);
+    setIcon(detail.icon);
+    setCover(detail.cover);
+    setStyle(detail.style ?? {});
+    setDraft(merged);
+    draftRef.current = merged;
+    liveMediaBlocksRef.current = pageMediaBlocks(merged);
+    savedBlocksJsonRef.current = JSON.stringify(blocksToServer(fromServer));
+    pageUpdatedAtRef.current = detail.updatedAt;
+    if (restoredMedia) {
+      setSaveState('dirty');
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => {
+        void persistRef.current();
+      }, AUTOSAVE_MS);
+      return;
+    }
+    setSaveState('saved');
+  }, []);
+
+  const refreshOpenPage = useCallback(async (): Promise<boolean> => {
+    if (!activeOrgId || !currentIdRef.current) return false;
+    if (saveStateRef.current !== 'saved' || persistInFlight.current) return false;
+    const pageId = currentIdRef.current;
+    const detail = await fetchWorkspacePage(activeOrgId, pageId);
+    if (currentIdRef.current !== pageId) return false;
+    if (saveStateRef.current !== 'saved' || persistInFlight.current) return false;
+    if (pageUpdatedAtRef.current != null && detail.updatedAt <= pageUpdatedAtRef.current) return false;
+    applyServerPage(detail);
+    return true;
+  }, [activeOrgId, applyServerPage]);
+
+  const absorbServerEmbeds = useCallback((detail: WorkspacePageDetail) => {
+    if (currentIdRef.current !== detail.id) return;
+    const fromServer = blocksFromServer(detail.blocks);
+    liveMediaBlocksRef.current = mergeMissingMediaBlocks(
+      pageMediaBlocks(fromServer),
+      liveMediaBlocksRef.current,
+    );
+    if (saveStateRef.current === 'saved' && !persistInFlight.current) {
+      applyServerPage(detail);
+      return;
+    }
+    const have = collectPageEmbedUrls(draftRef.current);
+    const extras = fromServer.filter((block) => {
+      if (block.type !== 'embed' && block.type !== 'image' && block.type !== 'video' && block.type !== 'artifact') {
+        return false;
+      }
+      const url = normalizeEmbedUrl(String(block.props.url ?? block.props.path ?? block.text ?? ''));
+      return Boolean(url) && !have.has(url);
+    });
+    if (extras.length === 0) {
+      pageUpdatedAtRef.current = Math.max(pageUpdatedAtRef.current ?? 0, detail.updatedAt);
+      return;
+    }
+    const next = [...draftRef.current, ...extras];
+    draftRef.current = next;
+    liveMediaBlocksRef.current = pageMediaBlocks(next);
+    setDraft(next);
+    pageUpdatedAtRef.current = Math.max(pageUpdatedAtRef.current ?? 0, detail.updatedAt);
+  }, [applyServerPage]);
+
+  const embedAgentProjectFiles = useCallback(async (): Promise<boolean> => {
+    const session = agentSessionRef.current;
+    if (!session || !activeOrgId || !currentIdRef.current) return false;
+    if (embedInFlightRef.current) return false;
+    const pageId = currentIdRef.current;
+    const files = await fetchProjectFiles(session.projectId);
+    const pending = selectProjectFilesToEmbed({
+      files,
+      projectId: session.projectId,
+      alreadySeen: new Set(),
+      pageUrls: collectPageEmbedUrls(draftRef.current),
+    });
+    if (pending.length === 0) return false;
+    return pageWriteQueueRef.current.enqueue(async () => {
+      if (embedInFlightRef.current || currentIdRef.current !== pageId) return false;
+      const stillPending = selectProjectFilesToEmbed({
+        files,
+        projectId: session.projectId,
+        alreadySeen: new Set(),
+        pageUrls: collectPageEmbedUrls(draftRef.current),
+      });
+      if (stillPending.length === 0) return false;
+      embedInFlightRef.current = true;
+      try {
+        let latest: WorkspacePageDetail | null = null;
+        for (const item of stillPending) {
+          latest = await embedInWorkspacePage(activeOrgId, pageId, { type: 'embed', url: item.url });
+          if (currentIdRef.current !== pageId) return true;
+        }
+        if (latest && currentIdRef.current === pageId) {
+          absorbServerEmbeds(latest);
+        }
+        return true;
+      } finally {
+        embedInFlightRef.current = false;
+      }
+    });
+  }, [absorbServerEmbeds, activeOrgId]);
+
+  const refreshAgentPages = useCallback(async () => {
+    if (!activeOrgId) return;
+    try {
+      await embedAgentProjectFiles();
+      if (saveStateRef.current !== 'saved' || persistInFlight.current) return;
+      const nextTree = await loadTree();
+      const known = sessionKnownPageIdsRef.current;
+      const created = known
+        ? flattenTree(nextTree).filter((page) => !known.has(page.id))
+        : [];
+      if (known) {
+        for (const page of created) known.add(page.id);
+      }
+      if (created.length > 0) {
+        setExpanded((prev) => {
+          const next = new Set(prev);
+          for (const page of created) {
+            next.add(page.id);
+            if (page.parentPageId) next.add(page.parentPageId);
+          }
+          return next;
+        });
+      }
+      const currentChanged = await refreshOpenPage();
+      if (currentChanged || created.length === 0 || saveStateRef.current !== 'saved') return;
+      const openId = pickNewlyCreatedPage(created, currentIdRef.current);
+      if (openId && openId !== currentIdRef.current) {
+        await openPage(openId);
+      }
+    } catch {
+      // Keep the open page; the next tick retries.
+    }
+  }, [activeOrgId, embedAgentProjectFiles, loadTree, openPage, refreshOpenPage]);
+
+  useEffect(() => {
+    if (!agentSession) {
+      sessionKnownPageIdsRef.current = null;
+      return;
+    }
+    if (!sessionKnownPageIdsRef.current) {
+      sessionKnownPageIdsRef.current = new Set(flattenTree(tree).map((page) => page.id));
+      if (currentIdRef.current) sessionKnownPageIdsRef.current.add(currentIdRef.current);
+    }
+    void refreshAgentPages();
+    const timer = setInterval(() => {
+      void refreshAgentPages();
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [agentSession, activeOrgId, refreshAgentPages]);
+
   const askWikiAgent = async (request: string, options?: { makeKind?: PageMakeKind }) => {
     const trimmed = request.trim();
     if (!trimmed || aiBusy) return;
@@ -514,35 +805,41 @@ export function PagesView({
     try {
       const pageTitle = (titleRef.current || '').trim() || undefined;
       const makeKind = options?.makeKind;
-      const seedPrompt = composePagesWikiPrompt({
+      const promptInput = {
         request: trimmed,
         pageId: currentId,
         pageTitle,
         pageIcon: iconRef.current,
         pageExcerpt: currentId ? draftBlocksPlainText(draftRef.current) : null,
+        openTabs: openTabIdsRef.current.map((id) => {
+          if (id === currentId) {
+            return { id, title: pageTitle, icon: iconRef.current };
+          }
+          const item = allPages.find((page) => page.id === id);
+          return { id, title: item?.title, icon: item?.icon };
+        }),
         ...(makeKind ? { make: { kind: makeKind, prompt: trimmed } } : {}),
-      });
+      };
       const created = await createProject({
         name: pageTitle
           ? `${pageTitle}: ${makeKind ? `Make ${pageMakeAction(makeKind).noun}` : trimmed}`.slice(0, 60)
           : (makeKind ? `Make ${pageMakeAction(makeKind).noun}: ${trimmed}` : trimmed).slice(0, 60),
-        pendingPrompt: seedPrompt,
+        pendingPrompt: composePagesWikiPrompt(promptInput),
         skillId: null,
         designSystemId: null,
-        ...(currentId
-          ? {
-              metadata: {
-                kind: makeKind ? pageMakeAction(makeKind).projectKind : ('other' as const),
+        metadata: {
+          ...(makeKind ? { kind: pageMakeAction(makeKind).projectKind } : currentId ? { kind: 'other' as const } : {}),
+          ...(activeOrgId ? { workspaceId: activeOrgId } : {}),
+          ...(currentId
+            ? {
                 pageContext: {
                   pageId: currentId,
                   title: pageTitle || 'Untitled',
                   icon: iconRef.current,
                 },
-              },
-            }
-          : makeKind
-            ? { metadata: { kind: pageMakeAction(makeKind).projectKind } }
+              }
             : {}),
+        },
       });
       if (created?.project && created.conversationId) {
         setAiPrompt('');
@@ -552,7 +849,10 @@ export function PagesView({
           pageId: currentId,
           pageTitle: pageTitle || t('pages.untitled'),
           pageIcon: iconRef.current,
-          seedPrompt: created.project.pendingPrompt?.trim() || seedPrompt,
+          seedPrompt: composePagesWikiPrompt({
+            ...promptInput,
+            projectId: created.project.id,
+          }),
         });
         setBuilderLayout('docked');
         setBuilderOpen(true);
@@ -571,9 +871,12 @@ export function PagesView({
     setBusy(true);
     setMoreOpen(false);
     try {
-      await archiveWorkspacePage(activeOrgId, currentId);
+      const archivedId = currentId;
+      await archiveWorkspacePage(activeOrgId, archivedId);
+      const remainingTabs = openTabIdsRef.current.filter((id) => id !== archivedId);
+      setOpenTabIds(remainingTabs);
       const next = await loadTree();
-      const first = next[0]?.page.id;
+      const first = remainingTabs[0] ?? next[0]?.page.id;
       if (first) await openPage(first);
       else {
         setCurrentId(null);
@@ -863,20 +1166,38 @@ export function PagesView({
               <Icon name="panel-left" size={16} />
             </button>
           ) : null}
-          <nav className={styles.crumbs} aria-label="Breadcrumb">
-            {crumbs.map((item, index) => (
-              <span key={item.id} className={styles.crumb}>
-                {index > 0 ? <span className={styles.crumbSep}>/</span> : null}
-                <button
-                  type="button"
-                  className={styles.crumbBtn}
-                  onClick={() => void openPage(item.id).catch((err) => setError(errorMessage(err)))}
+          <nav className={styles.tabs} role="tablist" aria-label={t('pages.openTabs')} data-testid="pages-tab-bar">
+            {openTabs.map((item) => {
+              const selected = item.id === currentId;
+              const label = item.title || t('pages.untitled');
+              return (
+                <div
+                  key={item.id}
+                  className={`${styles.tab}${selected ? ` ${styles.tabActive}` : ''}`}
+                  data-testid={`pages-tab-${item.id}`}
                 >
-                  <span>{item.icon ?? '📄'}</span>
-                  <span>{item.title || t('pages.untitled')}</span>
-                </button>
-              </span>
-            ))}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    className={styles.tabBtn}
+                    title={label}
+                    onClick={() => void openPage(item.id).catch((err) => setError(errorMessage(err)))}
+                  >
+                    <span aria-hidden>{item.icon ?? '📄'}</span>
+                    <span className={styles.tabLabel}>{label}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.tabClose}
+                    aria-label={t('pages.closeTab')}
+                    onClick={() => void closeTab(item.id).catch((err) => setError(errorMessage(err)))}
+                  >
+                    <Icon name="close" size={12} />
+                  </button>
+                </div>
+              );
+            })}
           </nav>
           <div className={styles.chromeRight}>
             <button
@@ -1206,6 +1527,8 @@ export function PagesView({
                   }}
                   onChange={(next) => {
                     setDraft(next);
+                    draftRef.current = next;
+                    liveMediaBlocksRef.current = pageMediaBlocks(next);
                     scheduleSave();
                   }}
                 />

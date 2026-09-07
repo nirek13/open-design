@@ -1,8 +1,14 @@
+import type { ByokChatProtocol } from '@open-design/contracts';
 import type { TrackingByokPreflightBlockReason } from '@open-design/contracts/analytics';
 import { KNOWN_PROVIDERS } from '../../state/config';
 import type { AppConfig } from '../../types';
 import { byokProviderRequiresApiKey } from '../../utils/byokProvider';
 import { blockingByokDraftIssues, validateByokDraft } from './validation';
+
+export const BYOK_PROVIDER_REQUIRED_MESSAGE =
+  'BYOK OpenCode requires a provider, API key, and model. Complete BYOK settings before starting a run.';
+export const BEDROCK_BYOK_UNSUPPORTED_MESSAGE =
+  'AWS Bedrock BYOK chat requires AWS credential signing and is not supported by the current API-key proxy.';
 
 type ByokPreflightConfig = Pick<
   AppConfig,
@@ -73,4 +79,28 @@ export function byokPreflightBlockReason(
   if (reasons.size === 0) return null;
   if (reasons.size > 1) return 'multiple';
   return reasons.values().next().value ?? 'config_invalid';
+}
+
+export function isOpenCodeByokChatProtocol(
+  protocol: AppConfig['apiProtocol'],
+): protocol is ByokChatProtocol {
+  return (
+    protocol === 'anthropic' ||
+    protocol === 'openai' ||
+    protocol === 'azure' ||
+    protocol === 'google' ||
+    protocol === 'ollama' ||
+    protocol === 'senseaudio' ||
+    protocol === 'aihubmix'
+  );
+}
+
+/** Non-secret profile id the daemon can resolve for a BYOK OpenCode run. */
+export function byokOpenCodeProfileIdFromConfig(
+  config: ByokPreflightConfig,
+): string | undefined {
+  if (!isOpenCodeByokChatProtocol(config.apiProtocol)) return undefined;
+  if (byokPreflightBlockReason(config) !== null) return undefined;
+  if (!config.byokCredentialConfigured) return undefined;
+  return config.byokProfileId?.trim() || undefined;
 }

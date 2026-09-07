@@ -392,16 +392,17 @@ Resources:
       RequiresCompatibilities:
         - FARGATE
       NetworkMode: awsvpc
-      Cpu:
-        Fn::FindInMap:
-          - TaskSizes
-          - !If [IsPerformance, xlarge, !Ref TaskSize]
-          - Cpu
-      Memory:
-        Fn::FindInMap:
-          - TaskSizes
-          - !If [IsPerformance, xlarge, !Ref TaskSize]
-          - Memory
+      # Nested !If, not !If inside FindInMap — vanilla CFN rejects
+      # `every Fn::FindInMap object requires three parameters` when the map
+      # key is an intrinsic. !Ref TaskSize as the key is fine.
+      Cpu: !If
+        - IsPerformance
+        - !FindInMap [TaskSizes, xlarge, Cpu]
+        - !FindInMap [TaskSizes, !Ref TaskSize, Cpu]
+      Memory: !If
+        - IsPerformance
+        - !FindInMap [TaskSizes, xlarge, Memory]
+        - !FindInMap [TaskSizes, !Ref TaskSize, Memory]
       EphemeralStorage:
         SizeInGiB: !If [IsPerformance, 100, 21]
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn

@@ -1571,11 +1571,18 @@ export interface Dict {
   'team.removeAttachment': string;
   'team.dropToAttach': string;
   'team.fileTooLarge': string;
+  'team.viewFile': string;
+  'team.downloadFile': string;
+  'team.closeFile': string;
+  'team.filePreviewError': string;
+  'team.fileTruncated': string;
   'team.uploadFailed': string;
   'team.home': string;
   'team.unreads': string;
   'team.activity': string;
   'team.later': string;
+  'team.history': string;
+  'team.noHistory': string;
   'team.starred': string;
   'team.browseChannels': string;
   'team.browseTitle': string;
@@ -1721,6 +1728,8 @@ export interface Dict {
   'pages.buildingOn': string;
   'pages.noPageContext': string;
   'pages.openPageContext': string;
+  'pages.openTabs': string;
+  'pages.closeTab': string;
   'pages.builderFullscreen': string;
   'pages.builderShowPage': string;
   'pages.builderClose': string;

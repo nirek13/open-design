@@ -99,7 +99,7 @@ describe('mail payload parsing', () => {
       threadId: 't1',
     });
     expect(parseAddressList('Ada <ada@example.com>, bob@example.com')).toEqual([
-      'Ada <ada@example.com>',
+      'ada@example.com',
       'bob@example.com',
     ]);
   });
@@ -136,6 +136,43 @@ describe('mail payload parsing', () => {
       recipient_email: 'pat@example.com',
       subject: 'Hi',
       body: 'Hello',
+    });
+    expect(calls[1]?.input).not.toHaveProperty('extra_recipients');
+    expect(calls[1]?.input).not.toHaveProperty('cc');
+  });
+
+  it('strips display names before calling Gmail send', async () => {
+    const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const exec: GmailExecutor = {
+      async execute(toolName, input) {
+        calls.push({ tool: toolName, input });
+        return { data: { id: 'sent-2', threadId: 'thread-2' } };
+      },
+    };
+    await sendMail(exec, {
+      to: ['Ada <ada@example.com>', 'bob@example.com'],
+      cc: ['Pat <pat@example.com>'],
+      subject: 'Hi',
+      body: 'Hello',
+    });
+    expect(calls[0]?.input).toMatchObject({
+      recipient_email: 'ada@example.com',
+      extra_recipients: ['bob@example.com'],
+      cc: ['pat@example.com'],
+    });
+  });
+
+  it('surfaces the Composio send error instead of a generic failure', async () => {
+    const { ConnectorServiceError } = await import('../src/connectors/service.js');
+    const exec: GmailExecutor = {
+      async execute() {
+        throw new ConnectorServiceError('CONNECTOR_EXECUTION_FAILED', 'Composio tool execution failed', 502, {
+          error: 'Invalid recipient_email: must be user@domain.com',
+        });
+      },
+    };
+    await expect(sendMail(exec, { to: ['pat@example.com'], subject: 'Hi', body: 'x' })).rejects.toMatchObject({
+      message: expect.stringContaining('Invalid recipient_email'),
     });
   });
 

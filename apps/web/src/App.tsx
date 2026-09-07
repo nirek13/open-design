@@ -107,6 +107,7 @@ import {
   migrateLegacyByokCredentialsToDaemon,
   mergeDaemonConfig,
   mergeByokCredentialProfiles,
+  bindEnvByokProfileIfNeeded,
   mergeDaemonMediaProviders,
   saveConfig,
   persistByokCredentialProfileToDaemon,
@@ -1389,17 +1390,20 @@ function AppInner() {
       ? { ...next, allowSilentUpdates: prevSilent }
       : next;
     const persisted = buildPersistedConfig(nextForOptimistic, configRef.current);
-    latestPersistedConfigRef.current = persisted;
-    saveConfig(persisted);
-    setConfig(persisted);
+    const bound = persisted.byokProfileId || persisted.apiKey?.trim()
+      ? persisted
+      : await bindEnvByokProfileIfNeeded(persisted);
+    latestPersistedConfigRef.current = bound;
+    saveConfig(bound);
+    setConfig(bound);
     const shouldSyncMediaProviders =
       daemonMediaProvidersFetchState === 'ok'
       && shouldSyncMediaProvidersOnSave(persisted.mediaProviders, {
         force: options?.forceMediaProviderSync,
       });
     const daemonPayload = silentChanged
-      ? { ...persisted, allowSilentUpdates: nextSilent }
-      : persisted;
+      ? { ...bound, allowSilentUpdates: nextSilent }
+      : bound;
     await Promise.all([
       shouldSyncMediaProviders
         ? syncMediaProvidersToDaemon(persisted.mediaProviders, {
@@ -1530,12 +1534,24 @@ function AppInner() {
   // user had previously configured for the target protocol.
   const handleApiProtocolChange = useCallback(
     (protocol: ApiProtocol) => {
-      const next = switchApiProtocolConfig(config, protocol);
-      saveConfig(next);
-      void syncConfigToDaemon(next);
-      setConfig(next);
+      const switched = switchApiProtocolConfig(
+        latestPersistedConfigRef.current,
+        protocol,
+      );
+      latestPersistedConfigRef.current = switched;
+      saveConfig(switched);
+      void syncConfigToDaemon(switched);
+      setConfig(switched);
+      void bindEnvByokProfileIfNeeded(switched).then((bound) => {
+        if (latestPersistedConfigRef.current.apiProtocol !== protocol) return;
+        if (bound === switched) return;
+        latestPersistedConfigRef.current = bound;
+        saveConfig(bound);
+        void syncConfigToDaemon(bound);
+        setConfig(bound);
+      });
     },
-    [config],
+    [],
   );
 
   // BYOK model picker — patches `model` (and the per-protocol shadow

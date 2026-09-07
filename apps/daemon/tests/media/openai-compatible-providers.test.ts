@@ -8,6 +8,7 @@ import { generateMedia } from '../../src/media/index.js';
 const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2uoAAAAASUVORK5CYII=';
 const VIDEO_BASE64 = Buffer.from([0, 0, 0, 24, 102, 116, 121, 112]).toString('base64');
 const OPENAI_ENV_KEYS = [
+  'OD_DEFAULT_OPENAI_API_KEY',
   'OD_OPENAI_API_KEY',
   'OPENAI_API_KEY',
   'AZURE_API_KEY',

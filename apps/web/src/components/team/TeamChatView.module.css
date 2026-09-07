@@ -398,61 +398,23 @@
 
 .pending {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   margin: 0;
-  padding: 0;
+  padding: 0 0 4px;
+  overflow-x: auto;
   list-style: none;
 }
 
-.pendingChip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 220px;
-  padding: 6px 8px;
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.22));
-  border-radius: 12px;
-  background: var(--surface-2, rgba(127, 127, 127, 0.06));
-}
-
-.pendingThumb {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  object-fit: cover;
-}
-
-.pendingGlyph {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--chat-on-accent, #fff);
-  background: var(--chat-accent, #1164a3);
-}
-
-.pendingCopy {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.pendingCopy strong {
-  overflow: hidden;
-  font-size: 0.8rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pendingCopy em {
-  font-style: normal;
-  font-size: 0.7rem;
-  color: var(--text-3, rgba(127, 127, 127, 0.75));
+.fileOpen {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--chat-accent, #1164a3);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
 }
 
 .pendingRemove {

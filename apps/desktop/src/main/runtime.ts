@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { BrowserWindow, app, dialog, ipcMain, nativeImage, screen, session, shell } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, nativeImage, nativeTheme, screen, session, shell } from "electron";
 import {
   DESKTOP_UPDATE_CHANNELS,
   DESKTOP_UPDATE_MODES,
@@ -31,7 +31,6 @@ import { renderDeckSlides } from "./deck-capture.js";
 import { openValidatedDirectory } from "./open-path.js";
 import { exportArtifact as exportArtifactFromHtml } from "./artifact-export.js";
 import { createElectronPdfTarget, exportPdfFromHtml, savePrintReadyDocumentAsPdf } from "./pdf-export.js";
-import { SPLASH_VIDEO_DATA_URL } from "./splash-video.js";
 import { RendererCrashLoopBreaker } from "./renderer-crash-loop.js";
 import type { PrintReadyPdfOptions } from "./pdf-export.js";
 import type { DesktopUpdater } from "./updater.js";
@@ -42,6 +41,7 @@ import {
   updateRestartSafetyError,
 } from "./update-preflight.js";
 import { isToggleSearchInput, TOGGLE_SEARCH_IPC_CHANNEL } from "./search-shortcut.js";
+import { createSplashDataUrl, resolveSplashTheme, splashWindowBackground } from "./splash-html.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -253,17 +253,15 @@ export function isRendererFailureHttpStatus(httpResponseCode: number): boolean {
 
 const PENDING_POLL_MS = 120;
 const RUNNING_POLL_MS = 2000;
-// Minimum time the light splash window stays on screen before we reveal the main
-// window. It is sized to outlast the ~1.7s clip so the brand animation always
-// plays through. The splash is shown immediately and in parallel with the
-// daemon/web boot (see the packaged entry), so this time overlaps startup rather
-// than adding to it; the <video> holds on its final frame (it does not loop)
-// while the runtime finishes coming up. See `createSplashWindow`.
-const MIN_SPLASH_MS = 2000;
+// Minimum time the splash window stays on screen before we reveal the main
+// window. Sized to let the brand choreography play through (~4s) while still
+// overlapping daemon/web boot (see the packaged entry) rather than adding to
+// it. See `createSplashWindow`.
+const MIN_SPLASH_MS = 4300;
 // While the splash is up, the real web app loads in a hidden main window. We
 // reveal it only once the web bundle reports it has actually mounted (it sets
 // `data-od-app-mounted="1"` on first paint of the real UI), so the user never
-// sees the web's own "Loading Substrate…" shell flash between the splash and
+// sees the web's own "Loading Plyxl…" shell flash between the splash and
 // the app. Poll cadence + a hard ceiling so a missing mount signal can never
 // strand the user on the splash forever.
 const WEB_MOUNT_POLL_MS = 80;
@@ -849,152 +847,20 @@ const MAC_WINDOW_CHROME_CSS = `
   }
 `;
 
-// Light-background startup splash shown while the web runtime boots. It plays
-// the brand intro clip once and then holds on its final settled logo frame until
-// the main window is ready. The clip is embedded as a base64 data URL so it
-// renders identically in dev and in packaged builds (see `splash-video.ts`).
+// Cinematic startup splash shown while the web runtime boots. Inline HTML
+// (no network, no on-disk asset) so it renders identically in dev and in
+// packaged builds before the daemon/web sidecars are up. Theme follows
+// Electron native appearance so light and dark both feel considered.
 function createPendingHtml(): string {
   const start = splashStagePayload("starting");
-  const initialPct = Math.max(0, Math.min(100, Math.round((start.step / start.total) * 100)));
-  return `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Substrate</title>
-    <style>
-      html,
-      body {
-        background: #f2f4f5;
-        height: 100%;
-        margin: 0;
-        overflow: hidden;
-      }
-      body {
-        align-items: center;
-        display: flex;
-        justify-content: center;
-      }
-      video {
-        background: #f2f4f5;
-        height: auto;
-        max-height: 100%;
-        max-width: 100%;
-        width: auto;
-      }
-      .boot-stage {
-        bottom: 56px;
-        color: #7a838a;
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-        font-size: 13px;
-        left: 0;
-        letter-spacing: 0.02em;
-        position: fixed;
-        right: 0;
-        text-align: center;
-        transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1);
-        user-select: none;
-      }
-      .boot-stage-swapping {
-        opacity: 0;
-        transition-duration: 140ms;
-      }
-      .boot-stage-step {
-        color: #9aa2a8;
-        font-variant-numeric: tabular-nums;
-        margin-right: 7px;
-      }
-      .boot-progress {
-        background: rgba(122, 131, 138, 0.18);
-        border-radius: 999px;
-        bottom: 84px;
-        height: 3px;
-        left: 50%;
-        overflow: hidden;
-        position: fixed;
-        transform: translateX(-50%);
-        width: 200px;
-      }
-      .boot-progress-fill {
-        background: #7a838a;
-        border-radius: 999px;
-        height: 100%;
-        transition: width 320ms cubic-bezier(0.23, 1, 0.32, 1);
-      }
-      .boot-dots .dot {
-        animation: boot-dot 1.4s cubic-bezier(0.23, 1, 0.32, 1) infinite;
-        display: inline-block;
-      }
-      .boot-dots .dot:nth-child(2) { animation-delay: 0.2s; }
-      .boot-dots .dot:nth-child(3) { animation-delay: 0.4s; }
-      @keyframes boot-dot {
-        0%, 60%, 100% { opacity: 0.25; }
-        30% { opacity: 1; }
-      }
-    </style>
-  </head>
-  <body>
-    <video
-      id="splash"
-      autoplay
-      muted
-      playsinline
-      disablepictureinpicture
-      src="${SPLASH_VIDEO_DATA_URL}"
-    ></video>
-    <div class="boot-progress" aria-hidden="true">
-      <div class="boot-progress-fill" id="boot-progress-fill" data-pct="${initialPct}" style="width: ${initialPct}%;"></div>
-    </div>
-    <div class="boot-stage" id="boot-stage" aria-live="polite">
-      <span class="boot-stage-step" id="boot-stage-step">${start.step}/${start.total}</span><span id="boot-stage-text">${start.label}</span><span class="boot-dots" aria-hidden="true"><span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></span>
-    </div>
-    <script>
-      (function () {
-        var video = document.getElementById("splash");
-        if (!video) return;
-        var play = function () {
-          var attempt = video.play();
-          if (attempt && typeof attempt.catch === "function") attempt.catch(function () {});
-        };
-        video.addEventListener("loadedmetadata", function () { video.currentTime = 0; });
-        video.addEventListener("loadeddata", play);
-        play();
-      })();
-      // Accepts the structured { step, total, label } payload (and tolerates a
-      // bare label string for back-compat). The step counter + progress bar give
-      // a slow cold boot a sense of how far along it is; the bar only ever grows
-      // so a re-asserted earlier stage cannot make it lurch backwards.
-      window.__odSplashSetStage = function (info) {
-        var data = (typeof info === "string") ? { label: info } : (info || {});
-        var wrap = document.getElementById("boot-stage");
-        var text = document.getElementById("boot-stage-text");
-        var stepEl = document.getElementById("boot-stage-step");
-        var fill = document.getElementById("boot-progress-fill");
-        if (!wrap || !text) return;
-        var step = (typeof data.step === "number") ? data.step : null;
-        var total = (typeof data.total === "number" && data.total > 0) ? data.total : null;
-        if (fill && step != null && total != null) {
-          var pct = Math.max(0, Math.min(100, Math.round((step / total) * 100)));
-          var prev = parseFloat(fill.getAttribute("data-pct")) || 0;
-          if (pct >= prev) {
-            fill.style.width = pct + "%";
-            fill.setAttribute("data-pct", String(pct));
-          }
-        }
-        var label = (typeof data.label === "string") ? data.label : null;
-        var stepText = (step != null && total != null) ? (step + "/" + total) : null;
-        var labelSame = (label == null) || text.textContent === label;
-        var stepSame = (stepText == null) || !stepEl || stepEl.textContent === stepText;
-        if (labelSame && stepSame) return;
-        wrap.classList.add("boot-stage-swapping");
-        setTimeout(function () {
-          if (label != null) text.textContent = label;
-          if (stepEl && stepText != null) stepEl.textContent = stepText;
-          wrap.classList.remove("boot-stage-swapping");
-        }, 140);
-      };
-    </script>
-  </body>
-</html>`)}`;
+  const theme = resolveSplashTheme(nativeTheme.shouldUseDarkColors);
+  return createSplashDataUrl({
+    initialPct: Math.max(0, Math.min(100, Math.round((start.step / start.total) * 100))),
+    label: start.label,
+    step: start.step,
+    theme,
+    total: start.total,
+  });
 }
 
 /**
@@ -1301,7 +1167,7 @@ const SPLASH_STAGE_SEQUENCE: readonly SplashBootStage[] = [
 ];
 
 const SPLASH_STAGE_LABELS: Record<SplashBootStage, string> = {
-  starting: "Starting Substrate",
+  starting: "Starting Plyxl",
   engine: "Starting the local engine",
   engineReady: "Local engine ready",
   interface: "Preparing the interface",
@@ -1404,8 +1270,8 @@ export type SplashWindowHandle = {
 };
 
 /**
- * Create and immediately show the light brand-splash window. The packaged entry
- * calls this BEFORE awaiting the daemon/web sidecars so the animation masks the
+ * Create and immediately show the cinematic brand-splash window. The packaged entry
+ * calls this BEFORE awaiting the daemon/web sidecars so the lockup masks the
  * whole cold boot (no black no-window gap); the desktop runtime then adopts it
  * via `DesktopRuntimeOptions.splashWindow` + `splashStartedAt` and closes it
  * once the real app has mounted in the (initially hidden) main window. Frameless
@@ -1414,14 +1280,15 @@ export type SplashWindowHandle = {
 export function createSplashWindow(): SplashWindowHandle {
   // Stamp creation time at the instant the window appears (see SplashWindowHandle).
   const startedAt = Date.now();
+  const theme = resolveSplashTheme(nativeTheme.shouldUseDarkColors);
   const splash = new BrowserWindow({
     autoHideMenuBar: true,
-    backgroundColor: "#f2f4f5",
+    backgroundColor: splashWindowBackground(theme),
     frame: false,
     height: 900,
     resizable: false,
     show: true,
-    title: "Substrate",
+    title: "Plyxl",
     width: 1280,
     webPreferences: {
       contextIsolation: true,
@@ -2117,7 +1984,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
 
   const consoleEntries: DesktopConsoleEntry[] = [];
   const petWindow = createDesktopPetWindow(preloadPath, options.osLocale);
-  const windowTitle = options.windowTitle ?? "Substrate";
+  const windowTitle = options.windowTitle ?? "Plyxl";
   const window = new BrowserWindow({
     height: 900,
     icon: resolveDesktopIconPath(),
@@ -2130,7 +1997,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     // Starts hidden: the splash window is what the user sees while the real web
     // app loads in here. We reveal this window only once the app has actually
     // mounted (see `revealWhenReady` below), so there is never a flash of the
-    // web's own "Loading Substrate…" shell.
+    // web's own "Loading Plyxl…" shell.
     show: false,
     title: windowTitle,
     autoHideMenuBar: true,
@@ -2620,8 +2487,8 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
 
   // Hold the splash until BOTH (a) the web bundle reports it has mounted — it
   // sets `data-od-app-mounted="1"` on first paint of the real UI — so we never
-  // reveal the web's own dark "Loading Substrate…" shell, and (b) the splash
-  // has been up at least MIN_SPLASH_MS so the brand clip plays through. A hard
+  // reveal the web's own dark "Loading Plyxl…" shell, and (b) the splash
+  // has been up at least MIN_SPLASH_MS so the brand lockup is on screen. A hard
   // ceiling guarantees the user is never stranded on the splash if the mount
   // signal never arrives.
   const revealWhenReady = async (): Promise<void> => {

@@ -82,6 +82,7 @@ describe('BYOK credential service', () => {
       dataDir,
       backend,
       readEnvOpenAiApiKey: () => apiKey,
+      readEnvAnthropicApiKey: () => '',
     });
 
     const status = await service.status();
@@ -101,6 +102,43 @@ describe('BYOK credential service', () => {
     expect(resolved?.apiKey).toBe(apiKey);
     expect(await service.has('byok-env-openai')).toBe(true);
     expect(await service.delete('byok-env-openai')).toBe(false);
+  });
+
+  it('exposes ANTHROPIC_API_KEY as a virtual profile when OS secret storage is down', async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'od-byok-credentials-'));
+    roots.push(dataDir);
+    const backend = new MemorySecretBackend();
+    backend.available = async () => false;
+    const apiKey = 'sk-ant-env-test-secret-not-for-disk';
+    const service = new ByokCredentialService({
+      dataDir,
+      backend,
+      readEnvOpenAiApiKey: () => '',
+      readEnvAnthropicApiKey: () => apiKey,
+    });
+
+    const status = await service.status();
+    expect(status.available).toBe(false);
+    expect(status.backend).toBe('env-anthropic');
+
+    const profiles = await service.list();
+    expect(profiles).toEqual([expect.objectContaining({
+      id: 'byok-env-anthropic',
+      protocol: 'anthropic',
+      configured: true,
+      keyTail: 'disk',
+    })]);
+    expect(JSON.stringify(profiles)).not.toContain(apiKey);
+
+    const resolved = await service.resolve('byok-env-anthropic');
+    expect(resolved?.apiKey).toBe(apiKey);
+    expect(resolved?.provider).toMatchObject({
+      protocol: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-sonnet-4-5',
+    });
+    expect(await service.has('byok-env-anthropic')).toBe(true);
+    expect(await service.delete('byok-env-anthropic')).toBe(false);
   });
 
   it('fails closed when no secure backend is available', async () => {
@@ -167,6 +205,7 @@ describe('BYOK credential service', () => {
       dataDir,
       backend: new MemorySecretBackend(),
       readEnvOpenAiApiKey: () => '',
+      readEnvAnthropicApiKey: () => '',
     });
 
     await Promise.all([

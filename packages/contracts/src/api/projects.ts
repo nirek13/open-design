@@ -223,6 +223,8 @@ export interface ProjectMetadata {
     title: string;
     icon?: string | null;
   };
+  /** Organization the agent tools should act in (Pages, workspace data). */
+  workspaceId?: string;
 }
 
 export interface Project {

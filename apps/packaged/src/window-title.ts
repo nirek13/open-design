@@ -4,7 +4,7 @@ import {
   releaseInstallIdentity,
 } from "@open-design/release";
 
-const DEFAULT_WINDOW_TITLE = "Substrate";
+const DEFAULT_WINDOW_TITLE = "Plyxl";
 
 export function resolvePackagedWindowTitle(config: { appVersion: string | null; namespace: string }): string {
   const channel =

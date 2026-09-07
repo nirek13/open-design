@@ -20,6 +20,6 @@ describe("resolvePackagedWindowTitle", () => {
   });
 
   it("keeps ad hoc namespaces on the default window title", () => {
-    expect(resolvePackagedWindowTitle({ appVersion: null, namespace: "beta-local-flow" })).toBe("Substrate");
+    expect(resolvePackagedWindowTitle({ appVersion: null, namespace: "beta-local-flow" })).toBe("Plyxl");
   });
 });

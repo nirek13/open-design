@@ -2,7 +2,26 @@
 // uploaded files onto a preview kind, and pull an accent from a signup
 // design system so Slack can wear the company's colors.
 
-export type ChatFileKind = 'image' | 'video' | 'audio' | 'pdf' | 'file';
+export type ChatFileKind =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'pdf'
+  | 'markdown'
+  | 'html'
+  | 'csv'
+  | 'json'
+  | 'code'
+  | 'text'
+  | 'font'
+  | 'file';
+
+/** Cap inline text previews so a 20 MB log does not freeze the composer. */
+export const CHAT_TEXT_PREVIEW_MAX_BYTES = 400_000;
+
+const CODE_EXT =
+  /\.(bash|c|cc|cjs|cpp|cs|css|dart|diff|go|graphql|h|hpp|java|js|jsonc|jsx|kt|kts|lua|mjs|patch|php|ps1|py|r|rb|rs|scala|sh|sql|svelte|swift|toml|ts|tsx|vue|xml|yaml|yml|zig|zsh)$/i;
+const TEXT_EXT = /\.(cfg|conf|env|ics|ini|log|rtf|txt|vcf|vcard)$/i;
 
 export interface ChatAccent {
   sidebar: string;
@@ -64,7 +83,7 @@ export function splitMessageText(
 }
 
 export function chatFileKind(mimeType?: string, fileName?: string): ChatFileKind {
-  const mime = (mimeType ?? '').toLowerCase();
+  const mime = (mimeType ?? '').toLowerCase().split(';')[0]!.trim();
   const name = (fileName ?? '').toLowerCase();
   // Browsers cannot preview these image containers inline; treat them as files.
   if (mime === 'image/heic' || mime === 'image/heif' || /\.(heic|heif)$/i.test(name)) return 'file';
@@ -72,7 +91,125 @@ export function chatFileKind(mimeType?: string, fileName?: string): ChatFileKind
   if (mime.startsWith('video/') || /\.(3gp|avi|m4v|mkv|mov|mp4|ogv|webm|wmv)$/i.test(name)) return 'video';
   if (mime.startsWith('audio/') || /\.(aac|flac|m4a|mp3|oga|ogg|wav|wma)$/i.test(name)) return 'audio';
   if (mime === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
+  if (mime === 'text/markdown' || mime === 'text/x-markdown' || /\.mdx?$/i.test(name)) return 'markdown';
+  if (mime === 'text/html' || mime === 'application/xhtml+xml' || /\.(html?|xhtml)$/i.test(name)) {
+    return 'html';
+  }
+  if (mime === 'text/csv' || mime === 'text/tab-separated-values' || /\.(csv|tsv)$/i.test(name)) {
+    return 'csv';
+  }
+  if (
+    mime === 'application/json'
+    || mime === 'application/jsonl'
+    || mime === 'text/json'
+    || /\.(json|jsonl|ndjson)$/i.test(name)
+  ) {
+    return 'json';
+  }
+  if (
+    mime.startsWith('font/')
+    || mime === 'application/font-woff'
+    || mime === 'application/font-woff2'
+    || mime === 'application/x-font-ttf'
+    || /\.(woff2?|ttf|otf)$/i.test(name)
+  ) {
+    return 'font';
+  }
+  if (
+    mime === 'text/css'
+    || mime === 'text/javascript'
+    || mime === 'application/javascript'
+    || mime === 'application/x-javascript'
+    || mime === 'application/typescript'
+    || mime.startsWith('text/x-')
+    || CODE_EXT.test(name)
+  ) {
+    return 'code';
+  }
+  if (mime.startsWith('text/') || TEXT_EXT.test(name)) return 'text';
   return 'file';
+}
+
+export function chatFileNeedsText(kind: ChatFileKind): boolean {
+  return kind === 'markdown'
+    || kind === 'html'
+    || kind === 'csv'
+    || kind === 'json'
+    || kind === 'code'
+    || kind === 'text';
+}
+
+export async function readChatPreviewText(input: {
+  url: string;
+  byteSize?: number;
+  file?: File;
+}): Promise<{ text: string; truncated: boolean }> {
+  const max = CHAT_TEXT_PREVIEW_MAX_BYTES;
+  if (input.file) {
+    const truncated = input.file.size > max;
+    const text = await input.file.slice(0, max).text();
+    return { text, truncated };
+  }
+  if (typeof input.byteSize === 'number' && input.byteSize > 2 * 1024 * 1024) {
+    throw new Error('too large');
+  }
+  const res = await fetch(input.url);
+  if (!res.ok) throw new Error('preview failed');
+  const text = await res.text();
+  if (text.length > max) return { text: text.slice(0, max), truncated: true };
+  return { text, truncated: false };
+}
+
+/** Split a CSV/TSV blob into rows for the built-in table preview. */
+export function parseChatCsv(text: string, delimiter = ','): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  const pushCell = () => {
+    row.push(cell);
+    cell = '';
+  };
+  const pushRow = () => {
+    rows.push(row.slice(0, 40));
+    row = [];
+  };
+  for (let i = 0; i < text.length && rows.length < 200; i++) {
+    const ch = text[i]!;
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      quoted = true;
+      continue;
+    }
+    if (ch === delimiter) {
+      pushCell();
+      continue;
+    }
+    if (ch === '\n') {
+      pushCell();
+      pushRow();
+      continue;
+    }
+    if (ch === '\r') continue;
+    cell += ch;
+  }
+  if (cell.length > 0 || row.length > 0) {
+    pushCell();
+    pushRow();
+  }
+  return rows;
 }
 
 /** Collect files from a drag, drop, or paste. Prefer `files` when the browser

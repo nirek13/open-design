@@ -163,11 +163,11 @@ import {
   SUGGESTED_MODELS_BY_PROTOCOL,
 } from '../state/apiProtocols';
 import {
-  applyDefaultOpenAiByokProfile,
+  applyDefaultEnvByokProfile,
   applySavedByokCredentialProfile,
   defaultKnownProviderModel,
   fetchByokCredentialProfilesFromDaemon,
-  findEnvOpenAiByokProfile,
+  findEnvDefaultByokProfile,
   KNOWN_PROVIDERS,
 } from '../state/config';
 import type { KnownProvider } from '../state/config';
@@ -1514,7 +1514,7 @@ function OnboardingView({
     let cancelled = false;
     void fetchByokCredentialProfilesFromDaemon().then((response) => {
       if (cancelled) return;
-      const profile = findEnvOpenAiByokProfile(response?.profiles);
+      const profile = findEnvDefaultByokProfile(response?.profiles);
       setDefaultByokProfile(profile);
       if (profile) setByokKeySource('default');
     });
@@ -2050,8 +2050,8 @@ function OnboardingView({
       if (usingDefaultByokKey && defaultByokProfile) {
         setByokPersistPending(true);
         try {
-          onApiProtocolChange('openai');
-          await onConfigPersist(applyDefaultOpenAiByokProfile(config, defaultByokProfile));
+          onApiProtocolChange(defaultByokProfile.protocol === 'anthropic' ? 'anthropic' : 'openai');
+          await onConfigPersist(applyDefaultEnvByokProfile(config, defaultByokProfile));
           emitOnboardingClick('continue', 'continue');
           setStep(1);
         } catch (error) {
@@ -2065,7 +2065,7 @@ function OnboardingView({
               model: defaultByokProfile.model,
               detail: error instanceof Error
                 ? error.message
-                : 'Default OpenAI key could not be applied',
+                : 'Default API key could not be applied',
             },
           });
         } finally {
@@ -2917,7 +2917,11 @@ function OnboardingView({
                   setRuntime('byok');
                   onModeChange('api');
                   setByokKeySource(defaultByokProfile ? 'default' : 'own');
-                  if (defaultByokProfile) onApiProtocolChange('openai');
+                  if (defaultByokProfile) {
+                    onApiProtocolChange(
+                      defaultByokProfile.protocol === 'anthropic' ? 'anthropic' : 'openai',
+                    );
+                  }
                   setConnectExpanded('byok');
                 }}
               >
@@ -2967,7 +2971,9 @@ function OnboardingView({
                       className={byokKeySource === 'default' ? 'is-selected' : undefined}
                       onClick={() => {
                         setByokKeySource('default');
-                        onApiProtocolChange('openai');
+                        onApiProtocolChange(
+                          defaultByokProfile.protocol === 'anthropic' ? 'anthropic' : 'openai',
+                        );
                       }}
                     >
                       {t('settings.onboardingDefaultKeyAction')}

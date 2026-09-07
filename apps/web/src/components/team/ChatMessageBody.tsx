@@ -1,14 +1,10 @@
-import type { CSSProperties } from 'react';
 import type { TeamChatAttachment } from '@open-design/contracts';
 import { Badge } from '@open-design/components';
 import { looksLikeUrl, resolveRichEmbed } from '../../runtime/rich-embed';
-import {
-  chatFileKind,
-  extractMessageUrls,
-  formatChatFileSize,
-} from '../../runtime/chat-media';
+import { extractMessageUrls } from '../../runtime/chat-media';
 import { parseChatBlocks, parseChatInline } from '../../runtime/chat-format';
 import { RichEmbed } from '../pages/RichEmbed';
+import { attachmentFileSource, ChatFilePreview } from './ChatFileViewer';
 import styles from './ChatMessageBody.module.css';
 
 interface Props {
@@ -69,12 +65,28 @@ export function ChatMessageBody({ body, attachments, onOpenAttachment }: Props) 
 
       {files.length > 0 ? (
         <div className={styles.media}>
-          {files.map((attachment, index) => (
-            <ChatFilePreview
-              key={`${attachment.kind}-${attachment.id}-${index}`}
-              attachment={attachment}
-            />
-          ))}
+          {files.map((attachment, index) => {
+            const key = `${attachment.kind}-${attachment.id}-${index}`;
+            if (attachment.kind === 'link' && attachment.url) {
+              return (
+                <div key={key} className={styles.unfurl} data-testid={`team-file-${attachment.id}`}>
+                  <RichEmbed url={attachment.url} compact />
+                </div>
+              );
+            }
+            const source = attachmentFileSource(attachment);
+            return source ? (
+              <ChatFilePreview
+                key={key}
+                source={source}
+                testId={`team-file-${attachment.id}`}
+              />
+            ) : (
+              <Badge key={key} tone="info">
+                {attachment.label}
+              </Badge>
+            );
+          })}
         </div>
       ) : null}
 
@@ -106,77 +118,6 @@ export function ChatMessageBody({ body, attachments, onOpenAttachment }: Props) 
       ) : null}
     </div>
   );
-}
-
-function ChatFilePreview({ attachment }: { attachment: TeamChatAttachment }) {
-  const url = attachment.url;
-  if (!url) return <Badge tone="info">{attachment.label}</Badge>;
-  if (attachment.kind === 'link') {
-    return (
-      <div className={styles.unfurl} data-testid={`team-file-${attachment.id}`}>
-        <RichEmbed url={url} compact />
-      </div>
-    );
-  }
-  const kind = chatFileKind(attachment.mimeType, attachment.fileName ?? attachment.label);
-  const name = attachment.fileName ?? attachment.label;
-  const size = formatChatFileSize(attachment.byteSize);
-
-  if (kind === 'image') {
-    return (
-      <a className={styles.imageLink} href={url} target="_blank" rel="noreferrer" data-testid={`team-file-${attachment.id}`}>
-        <img className={styles.image} src={url} alt={name} />
-      </a>
-    );
-  }
-  if (kind === 'video') {
-    return (
-      <video className={styles.video} src={url} controls playsInline data-testid={`team-file-${attachment.id}`}>
-        <a href={url}>{name}</a>
-      </video>
-    );
-  }
-  if (kind === 'audio') {
-    return (
-      <div className={styles.audioCard} data-testid={`team-file-${attachment.id}`}>
-        <span className={styles.fileName}>{name}</span>
-        <audio className={styles.audio} src={url} controls />
-      </div>
-    );
-  }
-  if (kind === 'pdf') {
-    return (
-      <div className={styles.pdfCard} data-testid={`team-file-${attachment.id}`}>
-        <iframe className={styles.pdf} title={name} src={url} />
-        <a className={styles.fileOpen} href={url} target="_blank" rel="noreferrer">
-          {name}
-        </a>
-      </div>
-    );
-  }
-  return (
-    <a
-      className={styles.fileCard}
-      href={url}
-      target="_blank"
-      rel="noreferrer"
-      data-testid={`team-file-${attachment.id}`}
-      style={{ '--embed-accent': 'var(--chat-accent, #1164a3)' } as CSSProperties}
-    >
-      <span className={styles.fileGlyph} aria-hidden>
-        {extensionGlyph(name)}
-      </span>
-      <span className={styles.fileCopy}>
-        <strong>{name}</strong>
-        <em>{[attachment.mimeType, size].filter(Boolean).join(' · ')}</em>
-      </span>
-    </a>
-  );
-}
-
-function extensionGlyph(name: string): string {
-  const ext = name.split('.').pop()?.slice(0, 4).toUpperCase() ?? 'FILE';
-  return ext || 'FILE';
 }
 
 function Inline({ text }: { text: string }) {

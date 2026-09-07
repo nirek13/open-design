@@ -30,7 +30,6 @@ import {
   reportChatRunFeedback,
   streamViaDaemon,
 } from '../providers/daemon';
-import { streamMessage } from '../providers/anthropic';
 import { publishProjectNow } from '../providers/auto-publish';
 import { normalizeCustomReason } from '@open-design/contracts/analytics';
 import {
@@ -55,9 +54,7 @@ import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
 import {
   type AmrWalletSnapshot,
   type ByokMediaDefaults,
-  type ByokChatProtocol,
   type ResearchOptions,
-  composeSystemPrompt,
 } from '@open-design/contracts';
 import {
   anonymizeArtifactId,
@@ -84,7 +81,12 @@ import {
   trackOnboardingFirstPromptSent,
   trackOnboardingFirstGenerationCompleted,
 } from '../analytics/events';
-import { byokPreflightBlockReason } from './byok/preflight';
+import {
+  BEDROCK_BYOK_UNSUPPORTED_MESSAGE,
+  BYOK_PROVIDER_REQUIRED_MESSAGE,
+  byokOpenCodeProfileIdFromConfig,
+  byokPreflightBlockReason,
+} from './byok/preflight';
 import {
   clearOnboardingSessionId,
   peekOnboardingSessionId,
@@ -272,7 +274,7 @@ import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { effectiveMaxTokens } from '../state/maxTokens';
 import { effectiveAgentModelChoice } from './agentModelSelection';
 import { mediaExecutionPolicyForProjectMetadata } from '../media/execution-policy';
-import { mediaModelProviderId } from '../media/models';
+import { DEFAULT_IMAGE_MODEL, mediaModelProviderId } from '../media/models';
 import {
   useByokImageModelOptions,
   useByokVideoModelOptions,
@@ -486,12 +488,6 @@ const MAX_CHAT_PANEL_WIDTH = 720;
 const COMMENT_INSPECTOR_PANEL_WIDTH = 320;
 const MIN_WORKSPACE_PANEL_WIDTH = 400;
 const SPLIT_RESIZE_HANDLE_WIDTH = 8;
-const BYOK_OPENCODE_UNAVAILABLE_MESSAGE =
-  'BYOK API runs require OpenCode. Install OpenCode, then rescan local agents in Settings before retrying.';
-const BYOK_PROVIDER_REQUIRED_MESSAGE =
-  'BYOK OpenCode requires a provider, API key, and model. Complete BYOK settings before starting a run.';
-const BEDROCK_BYOK_UNSUPPORTED_MESSAGE =
-  'AWS Bedrock BYOK chat requires AWS credential signing and is not supported by the current API-key proxy.';
 const CHAT_PANEL_KEYBOARD_STEP = 16;
 const DESIGN_SYSTEM_AUDIT_AUTO_REPAIR_ATTEMPTS = 2;
 // Trailing-debounce window for the canonical (daemon + SQLite) tab-state write.
@@ -1216,6 +1212,7 @@ function byokMediaDefaultsForRun(input: {
     input.imageModelOverride,
     input.config.byokImageModel,
     input.imageModelOptions[0]?.id,
+    DEFAULT_IMAGE_MODEL,
   );
   const videoModel = firstNonBlank(
     input.videoModelOverride,
@@ -1226,6 +1223,7 @@ function byokMediaDefaultsForRun(input: {
     input.speechModelOverride,
     input.config.byokSpeechModel,
     input.speechModelOptions[0]?.id,
+    'gpt-4o-mini-tts',
   );
   const speechVoice = firstNonBlank(
     input.speechVoiceOverride,
@@ -1237,29 +1235,6 @@ function byokMediaDefaultsForRun(input: {
     ...(speechModel ? { speechModel } : {}),
     ...(speechVoice ? { speechVoice } : {}),
   };
-}
-
-function byokOpenCodeProfileIdFromConfig(
-  config: AppConfig,
-): string | undefined {
-  if (!isOpenCodeByokChatProtocol(config.apiProtocol)) return undefined;
-  if (byokPreflightBlockReason(config) !== null) return undefined;
-  if (!config.byokCredentialConfigured) return undefined;
-  return config.byokProfileId?.trim() || undefined;
-}
-
-function isOpenCodeByokChatProtocol(
-  protocol: AppConfig['apiProtocol'],
-): protocol is ByokChatProtocol {
-  return (
-    protocol === 'anthropic' ||
-    protocol === 'openai' ||
-    protocol === 'azure' ||
-    protocol === 'google' ||
-    protocol === 'ollama' ||
-    protocol === 'senseaudio' ||
-    protocol === 'aihubmix'
-  );
 }
 
 function projectEventToAgentEvent(evt: ProjectEvent): LiveArtifactEventItem['event'] | null {
@@ -5854,11 +5829,6 @@ export function ProjectView({
           return true;
         }
         const choice = effectiveSelectedAgentChoice;
-        const daemonByokOpenCode = config.agentId === 'byok-opencode';
-        if (daemonByokOpenCode && !agentsById.get('byok-opencode')?.available) {
-          handlers.onError(new Error(BYOK_OPENCODE_UNAVAILABLE_MESSAGE));
-          return true;
-        }
         // v2 analytics: when the active project is a DS workspace
         // (created by `prepareCreatedDesignSystemProject`, identifiable
         // by `metadata.importedFrom === 'design-system'`), every run
@@ -6033,24 +6003,6 @@ export function ProjectView({
             // chat. The daemon's SSE bus will catch up the Memory tab
             // on the next event.
           }
-        }
-        if (!agentsById.get('byok-opencode')?.available) {
-          pushEvent({ kind: 'status', label: 'requesting', detail: config.model });
-          const system = composeSystemPrompt({
-            streamFormat: 'plain',
-            sessionMode: runSessionMode,
-            metadata: project.metadata,
-            locale,
-          });
-          void streamMessage(
-            config,
-            system,
-            nextHistory,
-            controller.signal,
-            handlers,
-            { projectId: project.id },
-          );
-          return true;
         }
         // Mirror the daemon chat-route memory hook for BYOK chats. The
         // CLI path runs `extractFromMessage` BEFORE composing the prompt

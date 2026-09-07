@@ -108,6 +108,7 @@ describe('TeamChatView', () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    window.localStorage.clear();
   });
 
   it('sets up default channels when the workspace is empty', async () => {
@@ -354,9 +355,32 @@ describe('TeamChatView', () => {
         ],
       },
     });
-    expect(await screen.findByText('pack.zip')).toBeTruthy();
-    expect(screen.getByText('brief.pdf')).toBeTruthy();
-    expect(screen.getByText('clip.mp4')).toBeTruthy();
+    expect(await screen.findByTestId('team-pending-pack.zip')).toBeTruthy();
+    expect(screen.getByTestId('team-pending-brief.pdf')).toBeTruthy();
+    expect(screen.getByTestId('team-pending-clip.mp4')).toBeTruthy();
+  });
+
+  it('previews a markdown file in the composer and opens the built-in viewer', async () => {
+    vi.spyOn(registry, 'fetchChatChannels').mockResolvedValue({
+      channels: [CHANNEL],
+      totalUnread: 0,
+    });
+    vi.spyOn(registry, 'fetchChatMessages').mockResolvedValue({
+      messages: [MESSAGE],
+      nextBefore: null,
+    });
+    vi.spyOn(registry, 'markChatChannelRead').mockResolvedValue(CHANNEL);
+
+    renderChat();
+    const input = await screen.findByTestId('team-file-input');
+    fireEvent.change(input, {
+      target: {
+        files: [new File(['# Brief\n\nHello'], 'brief.md', { type: 'text/markdown' })],
+      },
+    });
+    expect(await screen.findByRole('heading', { name: 'Brief' })).toBeTruthy();
+    fireEvent.click(screen.getByTestId('team-pending-brief.md'));
+    expect(await screen.findByTestId('team-file-viewer')).toBeTruthy();
   });
 
   it('opens the activity inbox from the Slack sidebar', async () => {
@@ -420,6 +444,37 @@ describe('TeamChatView', () => {
     fireEvent.click(await screen.findByTestId('team-unreads'));
     expect(await screen.findByTestId('team-unreads-list')).toBeTruthy();
     expect(screen.getByTestId('team-unreads-list').textContent).toContain('Sales');
+  });
+
+  it('lists recently opened conversations in History', async () => {
+    const sales: ChatChannel = {
+      ...CHANNEL,
+      id: 'chn-2',
+      slug: 'sales',
+      displayName: 'Sales',
+      lastMessageAt: 50,
+    };
+    vi.spyOn(registry, 'fetchChatChannels').mockResolvedValue({
+      channels: [CHANNEL, sales],
+      totalUnread: 0,
+    });
+    vi.spyOn(registry, 'fetchChatMessages').mockResolvedValue({
+      messages: [MESSAGE],
+      nextBefore: null,
+    });
+    vi.spyOn(registry, 'markChatChannelRead').mockResolvedValue(CHANNEL);
+    vi.spyOn(registry, 'fetchChatStatuses').mockResolvedValue({ statuses: [] });
+    vi.spyOn(registry, 'fetchChatPins').mockResolvedValue({ pins: [] });
+    vi.spyOn(registry, 'fetchChatBookmarks').mockResolvedValue({ bookmarks: [] });
+    vi.spyOn(registry, 'fetchChatChannelMembers').mockResolvedValue([]);
+
+    renderChat();
+    fireEvent.click(await screen.findByTestId('team-channel-sales'));
+    fireEvent.click(await screen.findByTestId('team-history'));
+    const list = await screen.findByTestId('team-history-list');
+    expect(list.textContent).toContain('Sales');
+    expect(list.textContent).toContain('General');
+    expect(list.textContent?.indexOf('Sales')).toBeLessThan(list.textContent?.indexOf('General') ?? 0);
   });
 });
 

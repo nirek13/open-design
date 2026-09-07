@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ChatSessionMode } from '@open-design/contracts';
 import { streamViaDaemon } from '../../providers/daemon';
 import { listMessages, saveMessage } from '../../state/projects';
 import { appendErrorStatusEvent, runFailureFieldsFromError } from '../../runtime/chat-events';
 import { agentModelDisplayName } from '../../utils/agentLabels';
+import { apiProtocolAgentId, apiProtocolModelLabel } from '../../utils/apiProtocol';
+import { effectiveExecutionMode } from '../../utils/local-cli-usage';
 import { randomUUID } from '../../utils/uuid';
+import { DEFAULT_IMAGE_MODEL } from '../../media/models';
 import { effectiveAgentModelChoice } from '../agentModelSelection';
+import {
+  BEDROCK_BYOK_UNSUPPORTED_MESSAGE,
+  BYOK_PROVIDER_REQUIRED_MESSAGE,
+  byokOpenCodeProfileIdFromConfig,
+} from '../byok/preflight';
 import {
   createBufferedTextUpdates,
   finalizeActiveAssistantMessagesOnStop,
@@ -19,7 +28,6 @@ import type {
   ChatCommentAttachment,
   ChatMessage,
 } from '../../types';
-import type { ChatSessionMode } from '@open-design/contracts';
 
 // ---------------------------------------------------------------------------
 // useConversationChat — drives a secondary ChatPane bound to a single
@@ -28,22 +36,19 @@ import type { ChatSessionMode } from '@open-design/contracts';
 // ProjectView owns the primary conversation's send/stream loop. That loop is
 // deeply entangled with queueing, plugin snapshots, live-artifact parsing,
 // design-system auditing, notifications, and route sync — extracting it wholesale
-// would gut ProjectView. Instead this hook reuses the SAME daemon primitive the
-// primary loop runs on (`streamViaDaemon`) plus the SAME persistence helpers
-// (`listMessages` / `saveMessage`), so a side chat behaves like the main chat
-// ("chat 和我们已有的 chat 对齐即可"): create a run against the conversation, stream
-// deltas into the live assistant message, push tool/status events, persist, and
-// finalize on done / error / stop. It deliberately omits the primary loop's
-// extras (no live-artifact viewer wiring, no queueing) because a side chat is a
-// lightweight scratch conversation.
+// would gut ProjectView. Instead this hook reuses the SAME primitives the primary
+// loop runs on (`streamViaDaemon` for local CLI / BYOK OpenCode) plus the SAME
+// persistence helpers (`listMessages` / `saveMessage`), so a side chat behaves
+// like the main chat: create a run against the conversation, stream deltas into
+// the live assistant message, push tool/status events, persist, and finalize on
+// done / error / stop. BYOK text uses Claude; image/speech defaults stay on
+// OpenAI (`gpt-image-2`, `gpt-4o-mini-tts`) so `od media generate` can write
+// files. The daemon live-resolves the OpenCode binary; a stale agent scan
+// must not block the run.
 // ---------------------------------------------------------------------------
 
 function isTerminalRunStatus(status: ChatMessage['runStatus']): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'canceled';
-}
-
-function isActiveRunStatus(status: ChatMessage['runStatus']): boolean {
-  return status === 'queued' || status === 'running';
 }
 
 export interface ConversationChatContext {
@@ -152,11 +157,18 @@ export function useConversationChat(
         locale: loc,
         sessionMode,
       } = ctxRef.current;
-      if (cfg.mode !== 'daemon') {
-        setError('Side Chat needs a local agent. Pick one in the top bar.');
-        return;
-      }
-      if (!cfg.agentId) {
+      const useByok = effectiveExecutionMode(cfg.mode) === 'api';
+      const byokProfileId = useByok ? byokOpenCodeProfileIdFromConfig(cfg) : undefined;
+      if (useByok) {
+        if (cfg.apiProtocol === 'bedrock') {
+          setError(BEDROCK_BYOK_UNSUPPORTED_MESSAGE);
+          return;
+        }
+        if (!byokProfileId) {
+          setError(BYOK_PROVIDER_REQUIRED_MESSAGE);
+          return;
+        }
+      } else if (!cfg.agentId) {
         setError('Pick a local agent first (top bar).');
         return;
       }
@@ -167,13 +179,22 @@ export function useConversationChat(
       if (retryOfAssistantId && !retryTarget) return;
 
       const startedAt = Date.now();
-      const selectedAgent = agents.get(cfg.agentId) ?? null;
-      const choice = effectiveAgentModelChoice(selectedAgent, cfg.agentModels?.[cfg.agentId]);
-      const assistantAgentName = agentModelDisplayName(
-        cfg.agentId,
-        selectedAgent?.name,
-        choice?.model,
+      const selectedAgent =
+        !useByok && cfg.agentId ? agents.get(cfg.agentId) ?? null : null;
+      const choice = effectiveAgentModelChoice(
+        selectedAgent,
+        cfg.agentId ? cfg.agentModels?.[cfg.agentId] : undefined,
       );
+      const assistantAgentId = useByok
+        ? apiProtocolAgentId(cfg.apiProtocol)
+        : cfg.agentId ?? undefined;
+      const assistantAgentName = useByok
+        ? apiProtocolModelLabel(cfg.apiProtocol, cfg.model)
+        : agentModelDisplayName(
+            cfg.agentId,
+            selectedAgent?.name,
+            choice?.model,
+          );
 
       const userMsg: ChatMessage = retryTarget
         ? retryTarget.userMsg
@@ -190,11 +211,11 @@ export function useConversationChat(
         id: assistantId,
         role: 'assistant',
         content: '',
-        agentId: cfg.agentId,
+        agentId: assistantAgentId,
         agentName: assistantAgentName,
         events: [],
         createdAt: retryTarget?.failedAssistant.createdAt ?? startedAt,
-        runStatus: 'running',
+        runStatus: useByok ? undefined : 'running',
         startedAt,
       };
 
@@ -280,7 +301,7 @@ export function useConversationChat(
       };
 
       void streamViaDaemon({
-        agentId: cfg.agentId,
+        agentId: useByok ? 'byok-opencode' : cfg.agentId!,
         history,
         signal: controller.signal,
         cancelSignal: cancelController.signal,
@@ -294,9 +315,24 @@ export function useConversationChat(
         designSystemId: cfg.designSystemId ?? null,
         attachments: (userMsg.attachments ?? []).map((a) => a.path),
         commentAttachments: userMsg.commentAttachments ?? [],
-        model: choice?.model ?? null,
-        reasoning: choice?.reasoning ?? null,
-        serviceTier: choice?.serviceTier ?? null,
+        model: useByok ? cfg.model : choice?.model ?? null,
+        reasoning: useByok ? null : choice?.reasoning ?? null,
+        serviceTier: useByok ? null : choice?.serviceTier ?? null,
+        ...(byokProfileId ? { byokProfileId } : {}),
+        ...(useByok
+          ? {
+              byokMediaDefaults: {
+                imageModel: cfg.byokImageModel?.trim() || DEFAULT_IMAGE_MODEL,
+                speechModel: cfg.byokSpeechModel?.trim() || 'gpt-4o-mini-tts',
+                ...(cfg.byokVideoModel?.trim()
+                  ? { videoModel: cfg.byokVideoModel.trim() }
+                  : {}),
+                ...(cfg.byokSpeechVoice?.trim()
+                  ? { speechVoice: cfg.byokSpeechVoice.trim() }
+                  : {}),
+              },
+            }
+          : {}),
         locale: loc,
         sessionMode,
         onRunCreated: (runId) => {

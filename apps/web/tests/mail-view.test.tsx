@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MailView } from '../src/components/mail/MailView';
@@ -261,5 +261,89 @@ describe('MailView', () => {
       consoleError.mock.calls.some((call) =>
         call.some((arg) => String(arg).includes('same key'))),
     ).toBe(false);
+  });
+
+  it('sends a composed message using a bare recipient address', async () => {
+    vi.spyOn(registry, 'fetchOrgMailStatus').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 0, threadsTotal: 0 },
+      labels: [],
+    });
+    vi.spyOn(registry, 'fetchOrgMailMessages').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 0, threadsTotal: 0 },
+      messages: [],
+      nextPageToken: null,
+      resultSizeEstimate: 0,
+    });
+    const send = vi.spyOn(registry, 'sendOrgMail').mockResolvedValue({ id: 's1', threadId: 't9' });
+
+    renderMail();
+    fireEvent.click(await screen.findByTestId('mail-compose'));
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: 'Pat <pat@example.com>' } });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Hello' } });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Hi there' } });
+    fireEvent.click(screen.getByTestId('mail-send'));
+    await waitFor(() => {
+      expect(send).toHaveBeenCalledWith('ws-1', {
+        to: ['pat@example.com'],
+        cc: [],
+        bcc: [],
+        subject: 'Hello',
+        body: 'Hi there',
+      });
+    });
+  });
+
+  it('replies to the thread sender with a bare email address', async () => {
+    vi.spyOn(registry, 'fetchOrgMailStatus').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 12, threadsTotal: 8 },
+      labels: [{ id: 'INBOX', name: 'INBOX', type: 'system', messagesUnread: 1, messagesTotal: 12 }],
+    });
+    vi.spyOn(registry, 'fetchOrgMailMessages').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 12, threadsTotal: 8 },
+      messages: [MESSAGE],
+      nextPageToken: null,
+      resultSizeEstimate: 1,
+    });
+    vi.spyOn(registry, 'fetchOrgMailThread').mockResolvedValue({
+      thread: { id: 't1', messages: [{ ...MESSAGE, unread: false, html: null }] },
+    });
+    const reply = vi.spyOn(registry, 'replyOrgMail').mockResolvedValue({ id: 'r1', threadId: 't1' });
+
+    renderMail();
+    fireEvent.click(await screen.findByText('Q3 budget'));
+    const textarea = await screen.findByLabelText('Reply');
+    fireEvent.change(textarea, { target: { value: 'Will do.' } });
+    fireEvent.click(screen.getByTestId('mail-reply-send'));
+    await waitFor(() => {
+      expect(reply).toHaveBeenCalledWith('ws-1', 't1', { to: ['ada@example.com'], body: 'Will do.' });
+    });
+  });
+
+  it('keeps compose open and shows the send error in the composer', async () => {
+    vi.spyOn(registry, 'fetchOrgMailStatus').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 0, threadsTotal: 0 },
+      labels: [],
+    });
+    vi.spyOn(registry, 'fetchOrgMailMessages').mockResolvedValue({
+      connected: true,
+      profile: { emailAddress: 'ada@example.com', messagesTotal: 0, threadsTotal: 0 },
+      messages: [],
+      nextPageToken: null,
+      resultSizeEstimate: 0,
+    });
+    vi.spyOn(registry, 'sendOrgMail').mockRejectedValue(new Error('Connect Gmail under Integrations first'));
+
+    renderMail();
+    fireEvent.click(await screen.findByTestId('mail-compose'));
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: 'pat@example.com' } });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Hello' } });
+    fireEvent.click(screen.getByTestId('mail-send'));
+    const dialog = await screen.findByLabelText('Compose');
+    expect(within(dialog).getByRole('alert').textContent).toMatch(/Connect Gmail/);
   });
 });

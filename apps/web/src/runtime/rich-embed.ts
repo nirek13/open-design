@@ -349,6 +349,13 @@ export function resolveRichEmbed(raw: string): RichEmbedModel | null {
   });
 }
 
+/** Local `/raw` HTML must not inherit the parent origin, so its iframe sandbox
+ * omits `allow-same-origin`. Those navigations cannot send `od_session`; load
+ * them through an authenticated parent fetch + srcDoc instead. */
+export function isOpaqueLocalHtmlEmbed(model: RichEmbedModel): boolean {
+  return model.kind === 'iframe' && !model.sandbox.split(/\s+/).includes('allow-same-origin');
+}
+
 export function iframeSnippet(model: RichEmbedModel): string {
   const src = model.kind === 'card' ? model.openUrl : model.src;
   const height = model.aspect === 'auto' ? 480 : Math.round(aspectHeight(model.aspect));

@@ -2002,7 +2002,7 @@ test('[P1] BYOK OpenCode keyless vLLM run keeps auth fields out of the daemon co
   });
 });
 
-test('[P1] BYOK OpenCode unavailable blocks the project run before daemon routing', async ({ page }) => {
+test('[P1] BYOK OpenCode still routes the project run when the cached agent scan is stale', async ({ page }) => {
   const byokConfig = {
     mode: 'api',
     apiKey: 'sk-openai-e2e',
@@ -2044,25 +2044,29 @@ test('[P1] BYOK OpenCode unavailable blocks the project run before daemon routin
       models: [],
     },
   ]);
-
-  const runRequests = await routeSuccessfulRuns(page, {
-    runIdPrefix: 'byok-opencode-unavailable-should-not-start',
-    events: false,
+  await page.route('**/api/memory/extract', async (route) => {
+    await route.fulfill({ json: { ok: true, extracted: [] } });
+  });
+  const runRequestBodies: Array<Record<string, unknown>> = [];
+  await routeSuccessfulRuns(page, {
+    bodies: runRequestBodies,
+    runIdPrefix: 'byok-opencode-stale-scan-run',
   });
 
   await page.goto('/');
-  await createProject(page, 'BYOK OpenCode unavailable contract');
+  await createProject(page, 'BYOK OpenCode stale scan contract');
   await expectWorkspaceReady(page);
 
   const input = page.getByTestId('chat-composer-input');
-  await input.fill('Create a landing page with unavailable OpenCode.');
-  await page.getByTestId('chat-send').click();
+  await input.fill('Create a landing page with a stale OpenCode scan.');
+  await Promise.all([
+    page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
+    page.getByTestId('chat-send').click(),
+  ]);
 
-  await expect(page.locator('.run-error__description')).toContainText(
-    /BYOK API runs require OpenCode/i,
-  );
-  await runRequests.expectNone({
-    message: 'unavailable BYOK OpenCode should fail preflight before POST /api/runs',
+  await expect.poll(() => runRequestBodies.length).toBe(1);
+  expect(runRequestBodies[0]).toMatchObject({
+    agentId: 'byok-opencode',
   });
 });
 

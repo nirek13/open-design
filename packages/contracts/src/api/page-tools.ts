@@ -256,16 +256,41 @@ function parseDecision(raw: Record<string, unknown>): DecisionTool {
   };
 }
 
+function goalProgressFromStatus(status: string, target: number): number {
+  const normalized = status.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (
+    normalized === 'done'
+    || normalized === 'complete'
+    || normalized === 'completed'
+    || normalized === 'achieved'
+  ) {
+    return target;
+  }
+  if (
+    normalized === 'in_progress'
+    || normalized === 'doing'
+    || normalized === 'started'
+  ) {
+    return Math.round(target / 2);
+  }
+  return 0;
+}
+
 function parseGoals(raw: Record<string, unknown>): GoalsTool {
-  const items = asList(raw.items).map((entry) => {
+  const rows = asList(raw.items).length > 0 ? asList(raw.items) : asList(raw.goals);
+  const items = rows.map((entry) => {
     const item = asRecord(entry);
     const target = Math.max(asNumber(item.target, 100), 1);
+    const titled = asString(item.title) || asString(item.text) || asString(item.name);
+    const current = Object.prototype.hasOwnProperty.call(item, 'current')
+      ? Math.max(asNumber(item.current), 0)
+      : goalProgressFromStatus(asString(item.status), target);
     return {
       id: asString(item.id) || newPageToolId(),
-      title: asString(item.title),
-      current: Math.max(asNumber(item.current), 0),
+      title: titled,
+      current,
       target,
-      unit: asString(item.unit),
+      unit: asString(item.unit, '%'),
     };
   });
   return {

@@ -1284,9 +1284,10 @@ export function createAgentRuntimeToolPrompt(
         '- The organization has a Notion-shaped wiki: nested pages with typed blocks. This is the durable file system for notes, handbooks, and docs — not project HTML files. Prefer `tools pages` over inventing markdown files when the user wants a wiki, knowledge base, handbook, document page, or nested notes.',
         '- Discover first: `"$OD_NODE_BIN" "$OD_BIN" tools pages list --tree`, then `tools pages search --query <text>` and `tools pages get --page <id>`. Reuse existing pages before creating parallel ones.',
         '- Scaffold a whole tree in one call: `tools pages scaffold --input tree.json` with nested `{title, icon, blocks, children}`. Creating a child with `parentPageId` also embeds it on the parent (a page-in-a-page) unless `linkOnParent` is false.',
-        '- Write content with `tools pages upsert --input page.json` (create or replace) or `tools pages append --page <id> --input blocks.json`. Block types: paragraph, heading_1/2/3, bulleted_list_item, numbered_list_item, to_do, toggle, callout, quote, code, divider, bookmark, embed, image, video, audio, file, pdf, equation, table_of_contents, breadcrumb, column_list, column, table, database, artifact, page, record, board, checklist, assigner, poll, timeline, decision, goals. Page tools (`board` kanban, `checklist`, `assigner`, `poll`, `timeline`, `decision`, `goals`) store state in the block `content` object (`kind` plus columns/items/tasks/options). Headings can be collapsible with `props.toggle`. Page appearance is `style: { font, smallText, fullWidth, locked }`.',
-        '- Embed inside a page with `tools pages embed --page <id> --type page|database|record|artifact|bookmark|embed|image|video|audio|file|pdf` plus `--target` (page id), `--table`, `--record`, `--path`, or `--url`. Use `type=embed --url` for a live YouTube, Figma, Notion, Google Doc, or any preview — including apps, pictures, videos, and HTML slides you created, via `--url /api/projects/<projectId>/raw/<file>`; nested pages (`type=page`) put pages inside pages; `database` embeds a live workspace table; `artifact` can use that same `/raw/` path.',
-        '- When asked to make a unique app, picture, video, or slides for a page, generate the file in this project (customize it — do not reuse a generic template unchanged) and embed it with `tools pages embed --page <id> --type embed --url /api/projects/<this project id>/raw/<file>`. Do not stop at a description.',
+        '- Write content with `tools pages upsert --input page.json` (create or replace) or `tools pages append --page <id> --input blocks.json`. Block types: paragraph, heading_1/2/3, bulleted_list_item, numbered_list_item, to_do, toggle, callout, quote, code, divider, bookmark, embed, image, video, audio, file, pdf, equation, table_of_contents, breadcrumb, column_list, column, table, database, artifact, page, record, board, checklist, assigner, poll, timeline, decision, goals. Prefer native page tools over generated HTML artifacts: `board` (kanban), `checklist`, `assigner`, `poll`, `timeline`, `decision`, `goals`. When the user wants a tool, tracker, dashboard, kanban, checklist, assignment board, poll, timeline, decision log, or goals, append that block with a filled `content` object (`kind` plus columns/items/tasks/options) — do not generate HTML/JS and embed it. Headings can be collapsible with `props.toggle`. Page appearance is `style: { font, smallText, fullWidth, locked }`.',
+        '- Embed inside a page with `tools pages embed --page <id> --type page|database|record|artifact|bookmark|embed|image|video|audio|file|pdf` plus `--target` (page id), `--table`, `--record`, `--path`, or `--url`. Use `type=embed --url` for a live YouTube, Figma, Notion, Google Doc, or PDF; nested pages (`type=page`) put pages inside pages; `database` embeds a live workspace table.',
+        '- Generate a project file and embed it only when native page tools cannot express the request (a picture, video, slide deck, chart, diagram, or a custom interactive app whose UI is not a board/checklist/assigner/poll/timeline/decision/goals). Then customize the file — do not reuse a generic template unchanged — and embed it with `tools pages embed --page <id> --type embed --url /api/projects/$OD_PROJECT_ID/raw/<file>`. A file that only exists as a project file is unfinished. `$OD_PROJECT_ID` is this chat project.',
+        '- Put every user-visible change on a page they can see in the notes tab bar (open page tabs at the top of Pages): the current page from `pageContext`, another open tab, or a NEW page you create as its child (or a new root if there is no current page). The new page will open as a tab. Do not edit other existing pages. A generated file is unfinished until it is embedded on that visible page.',
         '- Duplicate with `tools pages duplicate --page <id> [--recursive]`. Archive with `tools pages archive --page <id>`. See `tools pages --help` for payload shapes.',
       ].join('\n')
     : '';
@@ -3906,6 +3907,8 @@ export async function startServer({
   const composeDaemonSystemPrompt = async ({
     agentId,
     projectId,
+    project: preloadedProject,
+    appConfig: preloadedAppConfig,
     skillId,
     skillIds,
     designSystemId,
@@ -3920,14 +3923,18 @@ export async function startServer({
     platformHintSignal,
   }) => {
     const project =
-      typeof projectId === 'string' && projectId
+      preloadedProject !== undefined
+        ? preloadedProject
+        : typeof projectId === 'string' && projectId
         ? getProject(db, projectId)
         : null;
-    let appConfigForPrompt = null;
-    try {
-      appConfigForPrompt = await readAppConfig(RUNTIME_DATA_DIR);
-    } catch (err) {
-      console.warn('[app-config] readAppConfig failed', err);
+    let appConfigForPrompt = preloadedAppConfig ?? null;
+    if (preloadedAppConfig === undefined) {
+      try {
+        appConfigForPrompt = await readAppConfig(RUNTIME_DATA_DIR);
+      } catch (err) {
+        console.warn('[app-config] readAppConfig failed', err);
+      }
     }
     let pluginDesignSystemId = null;
     if (
@@ -4170,29 +4177,31 @@ export async function startServer({
     // memory the user just edited in settings shows up on the very next
     // run. composeMemoryBody returns '' when memory is disabled or
     // empty; the composer drops the block on a falsy value.
-    let memoryBody = '';
-    try {
-      memoryBody = await composeMemoryBody(RUNTIME_DATA_DIR);
-    } catch (err) {
-      console.warn('[memory] composeMemoryBody failed', err);
-    }
-
     // Per-hook switches for the two-loop memory feature. Read alongside the
     // memory body so the composer can gate the PRE intent-gateway brief and
     // the POST self-verify scorecard on the same config the settings panel
     // writes. Read failure falls through to undefined hooks, which the
     // composer treats as on-by-default — matching the config's default-on
     // semantics.
+    let memoryBody = '';
     let memoryHooks: { profile?: boolean; rewrite?: boolean; verify?: boolean } | undefined;
-    try {
-      const memCfg = await readMemoryConfig(RUNTIME_DATA_DIR);
+    const [memoryBodyResult, memoryConfigResult] = await Promise.allSettled([
+      composeMemoryBody(RUNTIME_DATA_DIR),
+      readMemoryConfig(RUNTIME_DATA_DIR),
+    ]);
+    if (memoryBodyResult.status === 'fulfilled') {
+      memoryBody = memoryBodyResult.value;
+    } else {
+      console.warn('[memory] composeMemoryBody failed', memoryBodyResult.reason);
+    }
+    if (memoryConfigResult.status === 'fulfilled') {
       memoryHooks = {
-        profile: memCfg.profileEnabled,
-        rewrite: memCfg.rewriteEnabled,
-        verify: memCfg.verifyEnabled,
+        profile: memoryConfigResult.value.profileEnabled,
+        rewrite: memoryConfigResult.value.rewriteEnabled,
+        verify: memoryConfigResult.value.verifyEnabled,
       };
-    } catch (err) {
-      console.warn('[memory] readMemoryConfig failed', err);
+    } else {
+      console.warn('[memory] readMemoryConfig failed', memoryConfigResult.reason);
     }
 
     // User-level custom instructions from app-config.json.
@@ -4790,23 +4799,29 @@ export async function startServer({
     // doesn't exist yet). Without one we don't pass cwd to spawn — the
     // agent then runs in whatever inherited dir, which still lets API
     // mode work but loses file-tool addressability.
+    // App config is independent of project discovery, so begin its read now
+    // and overlap it with the recursive Design Files scan below.
+    const appConfigForRunPromise = readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
     // Project directory resolution lives in projects.ts so sandbox mode can
     // consistently reject imported-folder metadata that has no managed copy.
     let cwd = null;
     let existingProjectFiles = [];
     let existingProjectFolders = [];
+    let projectRecord = null;
     if (typeof projectId === 'string' && projectId) {
       try {
-        const chatProject = getProject(db, projectId);
-        const chatMeta = chatProject?.metadata;
+        projectRecord = getProject(db, projectId);
+        const chatMeta = projectRecord?.metadata;
         // ensureProject/resolveProjectDir now resolve external baseDir folders
         // internally (and assertSandboxProjectRootAvailable rejects imported
         // folders with no managed copy in sandbox mode), so we pass chatMeta
         // through instead of branching on baseDir here.
         assertSandboxProjectRootAvailable(chatMeta);
         cwd = await ensureProject(PROJECTS_DIR, projectId, chatMeta);
-        existingProjectFiles = await listFiles(PROJECTS_DIR, projectId, { metadata: chatMeta });
-        existingProjectFolders = await listProjectFolders(PROJECTS_DIR, projectId, { metadata: chatMeta });
+        [existingProjectFiles, existingProjectFolders] = await Promise.all([
+          listFiles(PROJECTS_DIR, projectId, { metadata: chatMeta }),
+          listProjectFolders(PROJECTS_DIR, projectId, { metadata: chatMeta }),
+        ]);
       } catch (err) {
         if (err instanceof SandboxImportedProjectError) {
           return design.runs.fail(run, 'BAD_REQUEST', err.message);
@@ -4857,11 +4872,7 @@ export async function startServer({
     // systemPrompt. We also stitch in the cwd hint so the agent knows
     // where its file tools should write, and the attachment list so it
     // doesn't have to guess what the user just dropped in.
-    const projectRecord =
-      typeof projectId === 'string' && projectId
-        ? getProject(db, projectId)
-        : null;
-    const appConfigForRun = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
+    const appConfigForRun = await appConfigForRunPromise;
     const runContext = applyToolAccess(
       normalizeRunContextSelection(context),
       appConfigForRun.disabledTools,
@@ -4872,9 +4883,6 @@ export async function startServer({
       const v = validateLinkedDirs(projectRecord.metadata.linkedDirs);
       return v.dirs ?? [];
     })();
-    const cwdHint = cwd
-      ? formatDesignFilesWorkspaceHint(cwd, existingProjectFiles, existingProjectFolders)
-      : '';
     const linkedDirsHint = linkedDirs.length > 0
       ? `\n\nLinked code folders (read-only reference code the user wants you to see):\n${
           linkedDirs.map((d) => `- \`${d}\``).join('\n')
@@ -4966,7 +4974,7 @@ export async function startServer({
       runScopedServers: runScopedMcpServers,
       sandboxMode: SANDBOX_RUNTIME.enabled,
     });
-    const mcpDisabledTools = (await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}))).disabledTools;
+    const mcpDisabledTools = appConfigForRun.disabledTools;
     const enabledExternalMcp = enabledExternalMcpRaw.filter((server) =>
       isToolEnabled(mcpToolId(server.id), mcpDisabledTools),
     );
@@ -5059,6 +5067,8 @@ export async function startServer({
       await composeDaemonSystemPrompt({
         agentId,
         projectId,
+        project: projectRecord,
+        appConfig: appConfigForRun,
         skillId,
         skillIds,
         designSystemId,
@@ -5444,6 +5454,14 @@ export async function startServer({
           invalidationReason: null,
         }
       : resolvedAgentResumeCtx;
+    const cwdHint = cwd
+      ? formatDesignFilesWorkspaceHint(
+          cwd,
+          existingProjectFiles,
+          existingProjectFolders,
+          { compact: agentResumeCtx.isResuming },
+        )
+      : '';
     const publishNativeSessionRecoveryMetadata = () => {
       if (!run.nativeSessionRecovery) return;
       design.runs.emit(run, 'diagnostic', {

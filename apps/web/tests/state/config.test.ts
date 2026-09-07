@@ -16,7 +16,8 @@ import {
   loadConfig,
   migrateLegacyByokCredentialsToDaemon,
   mergeDaemonConfig,
-  findEnvOpenAiByokProfile,
+  findEnvAnthropicByokProfile,
+  findEnvDefaultByokProfile,
   mergeByokCredentialProfiles,
   mergeDaemonMediaProviders,
   persistByokCredentialProfileToDaemon,
@@ -1379,8 +1380,12 @@ describe('loadConfig', () => {
     expect(loadConfig()).toEqual(DEFAULT_CONFIG);
   });
 
-  it('sets an explicit apiProtocol for new default configs', () => {
-    expect(DEFAULT_CONFIG.apiProtocol).toBe('openai');
+  it('sets Claude as the default text protocol and OpenAI models for media', () => {
+    expect(DEFAULT_CONFIG.apiProtocol).toBe('anthropic');
+    expect(DEFAULT_CONFIG.baseUrl).toBe('https://api.anthropic.com');
+    expect(DEFAULT_CONFIG.model).toBe('claude-sonnet-4-5');
+    expect(DEFAULT_CONFIG.byokImageModel).toBe('gpt-image-2');
+    expect(DEFAULT_CONFIG.byokSpeechModel).toBe('gpt-4o-mini-tts');
     expect(DEFAULT_CONFIG.mode).toBe('api');
     expect(DEFAULT_CONFIG.configMigrationVersion).toBe(2);
     expect(DEFAULT_CONFIG.accentColor).toBe('#c96442');
@@ -1953,5 +1958,128 @@ describe('secure BYOK profiles', () => {
       byokProfileId: 'byok-env-openai',
       apiProtocol: 'openai',
     });
+  });
+
+  const anthropicEnvProfiles = {
+    available: false,
+    backend: 'env-anthropic',
+    profiles: [{
+      id: 'byok-env-anthropic',
+      label: 'Default Anthropic key',
+      protocol: 'anthropic' as const,
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-sonnet-4-5',
+      requiresApiKey: true,
+      configured: true,
+      keyTail: 'test',
+      createdAt: 0,
+      updatedAt: 0,
+    }],
+  };
+
+  const bothEnvProfiles = {
+    available: false,
+    backend: 'env-openai',
+    profiles: [
+      {
+        id: 'byok-env-openai',
+        label: 'Default OpenAI key',
+        protocol: 'openai' as const,
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o-mini',
+        requiresApiKey: true,
+        configured: true,
+        keyTail: 'test',
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      ...anthropicEnvProfiles.profiles,
+    ],
+  };
+
+  it('binds a host Anthropic env profile when the active protocol is Anthropic', () => {
+    const merged = mergeByokCredentialProfiles({
+      ...DEFAULT_CONFIG,
+      apiProtocol: 'anthropic',
+      onboardingCompleted: true,
+    }, bothEnvProfiles);
+
+    expect(merged).toMatchObject({
+      mode: 'api',
+      byokProfileId: 'byok-env-anthropic',
+      byokCredentialConfigured: true,
+      apiProtocol: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-sonnet-4-5',
+    });
+  });
+
+  it('does not snap an Anthropic session back to the OpenAI env profile', () => {
+    const merged = mergeByokCredentialProfiles({
+      ...DEFAULT_CONFIG,
+      apiProtocol: 'anthropic',
+      onboardingCompleted: true,
+    }, bothEnvProfiles);
+
+    expect(merged.byokProfileId).toBe('byok-env-anthropic');
+    expect(merged.apiProtocol).toBe('anthropic');
+  });
+
+  it('falls back to an Anthropic env profile when no OpenAI env key is present', () => {
+    const merged = mergeByokCredentialProfiles({
+      ...DEFAULT_CONFIG,
+      onboardingCompleted: true,
+    }, anthropicEnvProfiles);
+
+    expect(merged).toMatchObject({
+      mode: 'api',
+      byokProfileId: 'byok-env-anthropic',
+      apiProtocol: 'anthropic',
+      model: 'claude-sonnet-4-5',
+    });
+  });
+
+  it('finds a configured Anthropic env profile by official host', () => {
+    expect(findEnvAnthropicByokProfile(anthropicEnvProfiles.profiles)?.id).toBe(
+      'byok-env-anthropic',
+    );
+    expect(findEnvAnthropicByokProfile(bothEnvProfiles.profiles)?.id).toBe(
+      'byok-env-anthropic',
+    );
+  });
+
+  it('prefers Claude for chat when both host env keys exist', () => {
+    expect(findEnvDefaultByokProfile(bothEnvProfiles.profiles)?.id).toBe(
+      'byok-env-anthropic',
+    );
+
+    const merged = mergeByokCredentialProfiles({
+      ...DEFAULT_CONFIG,
+      apiProtocol: 'openai',
+      onboardingCompleted: true,
+    }, bothEnvProfiles);
+
+    expect(merged).toMatchObject({
+      mode: 'api',
+      byokProfileId: 'byok-env-anthropic',
+      apiProtocol: 'anthropic',
+      model: 'claude-sonnet-4-5',
+      byokImageModel: 'gpt-image-2',
+      byokSpeechModel: 'gpt-4o-mini-tts',
+    });
+  });
+
+  it('moves a previously auto-bound OpenAI env chat profile onto Claude when both keys exist', () => {
+    const merged = mergeByokCredentialProfiles({
+      ...DEFAULT_CONFIG,
+      apiProtocol: 'openai',
+      byokProfileId: 'byok-env-openai',
+      byokCredentialConfigured: true,
+      onboardingCompleted: true,
+    }, bothEnvProfiles);
+
+    expect(merged.byokProfileId).toBe('byok-env-anthropic');
+    expect(merged.apiProtocol).toBe('anthropic');
+    expect(merged.model).toBe('claude-sonnet-4-5');
   });
 });

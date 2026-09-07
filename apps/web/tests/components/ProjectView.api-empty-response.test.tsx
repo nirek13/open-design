@@ -525,9 +525,11 @@ describe('ProjectView API empty response handling', () => {
     expect(userMessage?.content).toContain('Second line');
   });
 
-  it('fails BYOK API sends before daemon routing when OpenCode is unavailable', async () => {
-    const fetchMock = vi.fn(async () => Response.json({}));
-    vi.stubGlobal('fetch', fetchMock);
+  it('still routes BYOK API sends through the daemon when the cached OpenCode scan is stale', async () => {
+    mockedStreamViaDaemon.mockImplementation(async (options: DaemonStreamOptions) => {
+      options.handlers.onDelta('ok');
+      options.handlers.onDone('ok');
+    });
     renderProjectView(project, [
       {
         id: 'byok-opencode',
@@ -540,13 +542,9 @@ describe('ProjectView API empty response handling', () => {
 
     await sendTestPrompt();
 
-    await waitFor(() =>
-      expect(screen.getAllByText(/BYOK API runs require OpenCode/i).length).toBeGreaterThan(0),
-    );
-    expect(mockedStreamViaDaemon).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      '/api/memory/extract',
-      expect.any(Object),
+    await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalledTimes(1));
+    expect(mockedStreamViaDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'byok-opencode' }),
     );
   });
 

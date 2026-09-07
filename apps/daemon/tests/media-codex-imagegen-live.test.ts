@@ -10,6 +10,7 @@ const liveCodexImagegenEnabled = process.env.OD_LIVE_CODEX_IMAGEGEN === '1';
 const liveDescribe = liveCodexImagegenEnabled ? describe : describe.skip;
 
 const OPENAI_ENV_KEYS = [
+  'OD_DEFAULT_OPENAI_API_KEY',
   'OD_OPENAI_API_KEY',
   'OPENAI_API_KEY',
   'AZURE_API_KEY',

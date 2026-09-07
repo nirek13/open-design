@@ -14,6 +14,7 @@ import {
   type SetPageBlocksRequest,
   type UpdatePageRequest,
 } from '@open-design/contracts';
+import { getProject } from '../db.js';
 import { sendApiError } from '../http/response.js';
 import type { RouteDeps } from '../server-context.js';
 import type { IdentityService } from '../auth/identity.js';
@@ -23,7 +24,7 @@ import {
   assertMemberRole,
   getActiveMemberForUser,
   getOrganization,
-  listOrganizationsForUser,
+  listOrganizations,
 } from '../workspace-data/tenancy.js';
 import {
   appendPageBlocks,
@@ -59,7 +60,28 @@ export interface RegisterPagesRoutesDeps extends RouteDeps<'db' | 'auth'> {
 export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) {
   const { manager, identity } = ctx.pages;
   const { authorizeToolRequest } = ctx.auth;
+  const appDb = ctx.db;
   const directory = () => manager.directoryExecutor;
+
+  /** Agent pages tools act in the chat project's organization. Never
+   * `user-local-owner` — Clerk-mode runs have no memberships for that id, so
+   * list/embed would 404 even when the page the person is editing exists. */
+  async function orgIdForGrant(grant: { projectId: string }): Promise<string> {
+    const project = getProject(appDb, grant.projectId);
+    const fromColumn = typeof project?.orgId === 'string' ? project.orgId.trim() : '';
+    const pinned = (project?.metadata as { workspaceId?: unknown } | undefined)?.workspaceId;
+    const fromMetadata = typeof pinned === 'string' ? pinned.trim() : '';
+    const orgId = fromColumn || fromMetadata;
+    if (orgId) {
+      await getOrganization(directory(), orgId);
+      return orgId;
+    }
+    const first = (await listOrganizations(directory()))[0];
+    if (!first) {
+      throw new WorkspaceDataError('ORG_NOT_FOUND', 404, 'no organization to act in');
+    }
+    return first.id;
+  }
 
   function fail(res: Response, err: unknown): void {
     if (err instanceof WorkspaceDataError) {
@@ -265,9 +287,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, 'pages:list');
       if (!grant) return;
-      const orgs = await listOrganizationsForUser(directory(), 'user-local-owner');
-      const orgId = (req.body?.orgId as string) || orgs[0]?.id;
-      if (!orgId) throw new WorkspaceDataError('ORG_NOT_FOUND', 404, 'no organization to act in');
+      const orgId = await orgIdForGrant(grant);
       const db = manager.workspaceExecutor(orgId);
       const tree = req.body?.tree === true;
       if (tree) {
@@ -289,9 +309,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, 'pages:get');
       if (!grant) return;
-      const orgs = await listOrganizationsForUser(directory(), 'user-local-owner');
-      const orgId = (req.body?.orgId as string) || orgs[0]?.id;
-      if (!orgId) throw new WorkspaceDataError('ORG_NOT_FOUND', 404, 'no organization to act in');
+      const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
       res.json({ page: await getPage(manager.workspaceExecutor(orgId), orgId, pageId) });
@@ -303,9 +321,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, 'pages:upsert');
       if (!grant) return;
-      const orgs = await listOrganizationsForUser(directory(), 'user-local-owner');
-      const orgId = (req.body?.orgId as string) || orgs[0]?.id;
-      if (!orgId) throw new WorkspaceDataError('ORG_NOT_FOUND', 404, 'no organization to act in');
+      const orgId = await orgIdForGrant(grant);
       const page = await upsertPageFromAgent(
         manager.workspaceExecutor(orgId),
         orgId,
@@ -323,19 +339,12 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     }),
   );
 
-  async function toolOrgId(req: Request): Promise<string> {
-    const orgs = await listOrganizationsForUser(directory(), 'user-local-owner');
-    const orgId = (req.body?.orgId as string) || orgs[0]?.id;
-    if (!orgId) throw new WorkspaceDataError('ORG_NOT_FOUND', 404, 'no organization to act in');
-    return orgId;
-  }
-
   app.post(
     '/api/tools/pages/search',
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, 'pages:search');
       if (!grant) return;
-      const orgId = await toolOrgId(req);
+      const orgId = await orgIdForGrant(grant);
       const query = String(req.body?.query ?? req.body?.q ?? '');
       const limit = typeof req.body?.limit === 'number' ? req.body.limit : 25;
       res.json({
@@ -350,7 +359,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, 'pages:append');
       if (!grant) return;
-      const orgId = await toolOrgId(req);
+      const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
       const page = await appendPageBlocks(
@@ -368,7 +377,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, 'pages:archive');
       if (!grant) return;
-      const orgId = await toolOrgId(req);
+      const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
       const page = await archivePage(manager.workspaceExecutor(orgId), orgId, pageId);
@@ -381,7 +390,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, 'pages:duplicate');
       if (!grant) return;
-      const orgId = await toolOrgId(req);
+      const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
       const page = await duplicatePage(manager.workspaceExecutor(orgId), orgId, grant.runId, pageId, {
@@ -396,7 +405,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, 'pages:scaffold');
       if (!grant) return;
-      const orgId = await toolOrgId(req);
+      const orgId = await orgIdForGrant(grant);
       const result = await scaffoldPages(manager.workspaceExecutor(orgId), orgId, grant.runId, {
         parentPageId: req.body?.parentPageId ?? null,
         pages: req.body?.pages ?? [],
@@ -410,7 +419,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     handle(async (req, res) => {
       const grant = authorizeToolRequest(req, res, 'pages:embed');
       if (!grant) return;
-      const orgId = await toolOrgId(req);
+      const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
       const page = await embedInPage(manager.workspaceExecutor(orgId), orgId, pageId, {

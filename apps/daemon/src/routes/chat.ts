@@ -39,6 +39,10 @@ import { googleStreamGenerateContentUrl } from '../integrations/google-models.js
 import { createRoleMarkerGuard } from '../role-marker-guard.js';
 import { authorizeReasoningEgress, sendReasoningEgressDenial } from '../reasoning-egress.js';
 import {
+  isOfficialAnthropicBaseUrl,
+  readEnvAnthropicApiKey,
+} from '../byok/env-anthropic.js';
+import {
   isOfficialOpenAiBaseUrl,
   readEnvOpenAiApiKey,
 } from '../byok/env-openai.js';
@@ -463,7 +467,9 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     });
   };
 
-  const resolveOpenAiProxyApiKey = async (proxyBody: Record<string, unknown>): Promise<string> => {
+  const resolveProxyApiKeyFromBody = async (
+    proxyBody: Record<string, unknown>,
+  ): Promise<string> => {
     const fromBody = typeof proxyBody.apiKey === 'string' ? proxyBody.apiKey.trim() : '';
     if (fromBody) return fromBody;
     const profileId = typeof proxyBody.byokProfileId === 'string'
@@ -473,9 +479,25 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       const resolved = await byokCredentials.resolve(profileId);
       if (resolved?.apiKey?.trim()) return resolved.apiKey.trim();
     }
+    return '';
+  };
+
+  const resolveOpenAiProxyApiKey = async (proxyBody: Record<string, unknown>): Promise<string> => {
+    const fromProfile = await resolveProxyApiKeyFromBody(proxyBody);
+    if (fromProfile) return fromProfile;
     const baseUrl = typeof proxyBody.baseUrl === 'string' ? proxyBody.baseUrl : '';
     if (isOfficialOpenAiBaseUrl(baseUrl)) {
       return readEnvOpenAiApiKey();
+    }
+    return '';
+  };
+
+  const resolveAnthropicProxyApiKey = async (proxyBody: Record<string, unknown>): Promise<string> => {
+    const fromProfile = await resolveProxyApiKeyFromBody(proxyBody);
+    if (fromProfile) return fromProfile;
+    const baseUrl = typeof proxyBody.baseUrl === 'string' ? proxyBody.baseUrl : '';
+    if (isOfficialAnthropicBaseUrl(baseUrl)) {
+      return readEnvAnthropicApiKey();
     }
     return '';
   };
@@ -963,8 +985,9 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     /** @type {Partial<ProxyStreamRequest>} */
     const proxyBody = req.body || {};
     if (rejectProxyPluginContext(proxyBody, res)) return;
-    const { baseUrl, apiKey, model, systemPrompt, messages, maxTokens } =
+    const { baseUrl, model, systemPrompt, messages, maxTokens } =
       proxyBody;
+    const apiKey = await resolveAnthropicProxyApiKey(proxyBody as Record<string, unknown>);
     if (!baseUrl || !apiKey || !model) {
       return sendApiError(
         res,

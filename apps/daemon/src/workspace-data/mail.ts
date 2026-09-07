@@ -13,10 +13,10 @@ import type {
   SendMailRequest,
   SendMailResponse,
 } from '@open-design/contracts';
-import { classifyMailMessages, mailTriageHasWork } from '@open-design/contracts';
+import { classifyMailMessages, extractMailAddresses, mailTriageHasWork } from '@open-design/contracts';
 import type { BoundedJsonObject } from '../live-artifacts/schema.js';
 import { composioConnectorProvider } from '../connectors/composio.js';
-import type { ConnectorCredentialMaterial } from '../connectors/service.js';
+import { ConnectorServiceError, type ConnectorCredentialMaterial } from '../connectors/service.js';
 import { WorkspaceDataError } from './errors.js';
 
 export const GMAIL_CONNECTOR_ID = 'gmail';
@@ -347,8 +347,28 @@ export function normalizeMailMessage(value: unknown): MailMessage | null {
   };
 }
 
+function composioDetail(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed.slice(0, 280) : null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  const rec = value as Record<string, unknown>;
+  for (const key of ['message', 'error', 'detail', 'description', 'reason']) {
+    const nested = composioDetail(rec[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
 function gmailFailure(err: unknown, fallback: string): never {
-  const message = err instanceof Error ? err.message : fallback;
+  let message = fallback;
+  if (err instanceof ConnectorServiceError) {
+    const detail = composioDetail(err.details?.error);
+    message = detail && !err.message.includes(detail) ? `${err.message}: ${detail}` : (detail || err.message || fallback);
+  } else if (err instanceof Error && err.message.trim()) {
+    message = err.message;
+  }
   throw new WorkspaceDataError('CONNECTOR_EXECUTION_FAILED', 502, message);
 }
 
@@ -412,21 +432,35 @@ export async function getMailThread(exec: GmailExecutor, threadId: string): Prom
   }
 }
 
-export async function sendMail(exec: GmailExecutor, input: SendMailRequest): Promise<SendMailResponse> {
-  const to = input.to.filter(Boolean);
-  if (to.length === 0) {
+function gmailRecipientPayload(input: { to: string[]; cc?: string[]; bcc?: string[] }): {
+  recipient_email: string;
+  extra_recipients?: string[];
+  cc?: string[];
+  bcc?: string[];
+} {
+  const [recipientEmail, ...extraRecipients] = extractMailAddresses(input.to);
+  const cc = extractMailAddresses(input.cc ?? []);
+  const bcc = extractMailAddresses(input.bcc ?? []);
+  if (!recipientEmail) {
     throw new WorkspaceDataError('WORKSPACE_VALIDATION_FAILED', 422, 'at least one recipient is required');
   }
+  return {
+    recipient_email: recipientEmail,
+    ...(extraRecipients.length > 0 ? { extra_recipients: extraRecipients } : {}),
+    ...(cc.length > 0 ? { cc } : {}),
+    ...(bcc.length > 0 ? { bcc } : {}),
+  };
+}
+
+export async function sendMail(exec: GmailExecutor, input: SendMailRequest): Promise<SendMailResponse> {
+  const recipients = gmailRecipientPayload(input);
   if (!input.subject.trim() && !input.body.trim()) {
     throw new WorkspaceDataError('WORKSPACE_VALIDATION_FAILED', 422, 'subject or body is required');
   }
   try {
     const payload = await exec.execute('GMAIL_SEND_EMAIL', {
       user_id: 'me',
-      recipient_email: to[0],
-      extra_recipients: to.slice(1),
-      cc: input.cc ?? [],
-      bcc: input.bcc ?? [],
+      ...recipients,
       subject: input.subject,
       body: input.body,
       is_html: Boolean(input.isHtml),
@@ -442,18 +476,12 @@ export async function replyToThread(
   threadId: string,
   input: ReplyMailRequest,
 ): Promise<SendMailResponse> {
-  const to = input.to.filter(Boolean);
-  if (to.length === 0) {
-    throw new WorkspaceDataError('WORKSPACE_VALIDATION_FAILED', 422, 'at least one recipient is required');
-  }
+  const recipients = gmailRecipientPayload(input);
   try {
     const payload = await exec.execute('GMAIL_REPLY_TO_THREAD', {
       user_id: 'me',
       thread_id: threadId,
-      recipient_email: to[0],
-      extra_recipients: to.slice(1),
-      cc: input.cc ?? [],
-      bcc: input.bcc ?? [],
+      ...recipients,
       message_body: input.body,
       is_html: Boolean(input.isHtml),
     }, 'write');
@@ -517,9 +545,11 @@ export async function triageMailMessages(
 }
 
 export function parseAddressList(value: unknown): string[] {
-  if (Array.isArray(value)) return value.flatMap((item) => parseAddressList(item));
+  if (Array.isArray(value)) {
+    return extractMailAddresses(value.flatMap((item) => (typeof item === 'string' ? [item] : parseAddressList(item))));
+  }
   if (typeof value !== 'string') return [];
-  return value.split(/[,;]/).map((part) => part.trim()).filter((part) => part.includes('@'));
+  return extractMailAddresses(value);
 }
 
 function escapeHtml(value: string): string {

@@ -109,6 +109,21 @@ describe('composeSystemPrompt', () => {
     expect(prompt).toContain('show progress through the Todo card');
   });
 
+  it('tells the wiki agent to prefer native page tools over HTML artifacts', () => {
+    const prompt = composeSystemPrompt({
+      sessionMode: 'chat',
+      metadata: {
+        kind: 'other',
+        pageContext: { pageId: 'page-1', title: 'Handbook', icon: '📘' },
+      } as any,
+    });
+
+    expect(prompt).toContain('pageContext');
+    expect(prompt).toContain('Prefer native page tools');
+    expect(prompt).toContain('board, checklist, assigner, poll, timeline, decision, goals');
+    expect(prompt).toContain('over generating HTML artifacts to embed');
+  });
+
   it('injects the converged verification policy (no mid-build screenshot looping)', () => {
     const prompt = composeSystemPrompt({});
 

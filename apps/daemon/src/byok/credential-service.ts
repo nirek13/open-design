@@ -8,6 +8,13 @@ import type {
   UpsertByokCredentialProfileRequest,
 } from '@open-design/contracts';
 import {
+  ENV_ANTHROPIC_BYOK_LABEL,
+  ENV_ANTHROPIC_BYOK_PROFILE_ID,
+  ENV_ANTHROPIC_DEFAULT_BASE_URL,
+  ENV_ANTHROPIC_DEFAULT_MODEL,
+  readEnvAnthropicApiKey,
+} from './env-anthropic.js';
+import {
   ENV_OPENAI_BYOK_LABEL,
   ENV_OPENAI_BYOK_PROFILE_ID,
   ENV_OPENAI_DEFAULT_BASE_URL,
@@ -15,6 +22,7 @@ import {
   readEnvOpenAiApiKey,
 } from './env-openai.js';
 
+export { ENV_ANTHROPIC_BYOK_PROFILE_ID } from './env-anthropic.js';
 export { ENV_OPENAI_BYOK_PROFILE_ID } from './env-openai.js';
 
 const PROFILE_ID_PATTERN = /^byok-[a-z0-9][a-z0-9._-]{2,95}$/u;
@@ -49,6 +57,7 @@ export interface ByokCredentialServiceOptions {
     document: { version: 1; profiles: readonly unknown[] },
   ) => Promise<void>;
   readEnvOpenAiApiKey?: () => string;
+  readEnvAnthropicApiKey?: () => string;
 }
 
 export class ByokCredentialService {
@@ -59,6 +68,7 @@ export class ByokCredentialService {
     ByokCredentialServiceOptions['persistMetadata']
   >;
   private readonly readEnvOpenAiApiKey: () => string;
+  private readonly readEnvAnthropicApiKey: () => string;
 
   constructor(options: ByokCredentialServiceOptions) {
     this.backend = options.backend ?? createPlatformByokSecretBackend(
@@ -68,18 +78,20 @@ export class ByokCredentialService {
     this.metadataPath = path.join(options.dataDir, 'byok', 'profiles.json');
     this.persistMetadata = options.persistMetadata ?? writeMetadataDocument;
     this.readEnvOpenAiApiKey = options.readEnvOpenAiApiKey ?? (() => readEnvOpenAiApiKey());
+    this.readEnvAnthropicApiKey = options.readEnvAnthropicApiKey ?? (() => readEnvAnthropicApiKey());
   }
 
   async status(): Promise<{ available: boolean; backend: string }> {
     const backendAvailable = await this.backend.available();
-    const envConfigured = Boolean(this.envOpenAiSecret());
     return {
       available: backendAvailable,
       backend: backendAvailable
         ? this.backend.kind
-        : envConfigured
+        : this.envOpenAiSecret()
           ? 'env-openai'
-          : this.backend.kind,
+          : this.envAnthropicSecret()
+            ? 'env-anthropic'
+            : this.backend.kind,
     };
   }
 
@@ -88,18 +100,27 @@ export class ByokCredentialService {
     const stored = await Promise.all(
       document.profiles.map((profile) => this.toPublicProfile(profile)),
     );
-    const envProfile = await this.envOpenAiPublicProfile();
-    if (!envProfile) return stored;
-    if (stored.some((profile) => profile.id === ENV_OPENAI_BYOK_PROFILE_ID)) {
-      return stored;
+    const storedIds = new Set(stored.map((profile) => profile.id));
+    const envProfiles: ByokCredentialProfile[] = [];
+    const openaiEnv = await this.envOpenAiPublicProfile();
+    if (openaiEnv && !storedIds.has(ENV_OPENAI_BYOK_PROFILE_ID)) {
+      envProfiles.push(openaiEnv);
     }
-    return [envProfile, ...stored];
+    const anthropicEnv = await this.envAnthropicPublicProfile();
+    if (anthropicEnv && !storedIds.has(ENV_ANTHROPIC_BYOK_PROFILE_ID)) {
+      envProfiles.push(anthropicEnv);
+    }
+    return envProfiles.length > 0 ? [...envProfiles, ...stored] : stored;
   }
 
   async get(profileId: string): Promise<ByokCredentialProfile | null> {
     assertProfileId(profileId);
     if (profileId === ENV_OPENAI_BYOK_PROFILE_ID) {
       const envProfile = await this.envOpenAiPublicProfile();
+      if (envProfile) return envProfile;
+    }
+    if (profileId === ENV_ANTHROPIC_BYOK_PROFILE_ID) {
+      const envProfile = await this.envAnthropicPublicProfile();
       if (envProfile) return envProfile;
     }
     const stored = (await this.readDocument()).profiles.find((profile) => profile.id === profileId);
@@ -116,6 +137,9 @@ export class ByokCredentialService {
     if (profileId === ENV_OPENAI_BYOK_PROFILE_ID && this.envOpenAiSecret()) {
       return true;
     }
+    if (profileId === ENV_ANTHROPIC_BYOK_PROFILE_ID && this.envAnthropicSecret()) {
+      return true;
+    }
     return (await this.readDocument()).profiles.some((profile) => profile.id === profileId);
   }
 
@@ -129,6 +153,11 @@ export class ByokCredentialService {
     if (input.id === ENV_OPENAI_BYOK_PROFILE_ID) {
       throw new Error(
         'The environment OpenAI profile is provided by OPENAI_API_KEY and cannot be overwritten.',
+      );
+    }
+    if (input.id === ENV_ANTHROPIC_BYOK_PROFILE_ID) {
+      throw new Error(
+        'The environment Anthropic profile is provided by ANTHROPIC_API_KEY and cannot be overwritten.',
       );
     }
     const available = await this.backend.available();
@@ -183,6 +212,10 @@ export class ByokCredentialService {
       const envResolved = this.envOpenAiResolved();
       if (envResolved) return envResolved;
     }
+    if (profileId === ENV_ANTHROPIC_BYOK_PROFILE_ID) {
+      const envResolved = this.envAnthropicResolved();
+      if (envResolved) return envResolved;
+    }
     const stored = (await this.readDocument()).profiles.find((profile) => profile.id === profileId);
     if (!stored) return null;
     const apiKey = stored.requiresApiKey ? (await this.backend.get(profileId))?.trim() ?? '' : '';
@@ -209,6 +242,9 @@ export class ByokCredentialService {
   private async deleteUnlocked(profileId: string): Promise<boolean> {
     assertProfileId(profileId);
     if (profileId === ENV_OPENAI_BYOK_PROFILE_ID && this.envOpenAiSecret()) {
+      return false;
+    }
+    if (profileId === ENV_ANTHROPIC_BYOK_PROFILE_ID && this.envAnthropicSecret()) {
       return false;
     }
     const document = await this.readDocument();
@@ -269,8 +305,43 @@ export class ByokCredentialService {
   }
 
   private envOpenAiResolved(): ResolvedByokCredentialProfile | null {
-    const stored = this.envOpenAiStoredProfile();
-    const apiKey = this.envOpenAiSecret();
+    return this.envResolved(this.envOpenAiStoredProfile(), this.envOpenAiSecret(), 'openai');
+  }
+
+  private envAnthropicSecret(): string {
+    return this.readEnvAnthropicApiKey().trim();
+  }
+
+  private envAnthropicStoredProfile(): StoredProfile | null {
+    if (!this.envAnthropicSecret()) return null;
+    return {
+      id: ENV_ANTHROPIC_BYOK_PROFILE_ID,
+      label: ENV_ANTHROPIC_BYOK_LABEL,
+      protocol: 'anthropic',
+      baseUrl: ENV_ANTHROPIC_DEFAULT_BASE_URL,
+      model: ENV_ANTHROPIC_DEFAULT_MODEL,
+      requiresApiKey: true,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  }
+
+  private async envAnthropicPublicProfile(): Promise<ByokCredentialProfile | null> {
+    const stored = this.envAnthropicStoredProfile();
+    const secret = this.envAnthropicSecret();
+    if (!stored || !secret) return null;
+    return this.toPublicProfile(stored, secret);
+  }
+
+  private envAnthropicResolved(): ResolvedByokCredentialProfile | null {
+    return this.envResolved(this.envAnthropicStoredProfile(), this.envAnthropicSecret(), 'anthropic');
+  }
+
+  private envResolved(
+    stored: StoredProfile | null,
+    apiKey: string,
+    protocol: 'openai' | 'anthropic',
+  ): ResolvedByokCredentialProfile | null {
     if (!stored || !apiKey) return null;
     return {
       profile: {
@@ -280,7 +351,7 @@ export class ByokCredentialService {
       },
       apiKey,
       provider: {
-        protocol: 'openai',
+        protocol,
         apiKey,
         baseUrl: stored.baseUrl,
         model: stored.model,

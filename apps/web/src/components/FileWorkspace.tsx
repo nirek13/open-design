@@ -6854,8 +6854,7 @@ function DesignSystemInlinePreview({
     return (
       <iframe
         title={file.name}
-        src={srcDocReady && srcDoc ? undefined : url}
-        srcDoc={srcDoc ?? undefined}
+        srcDoc={srcDocReady && srcDoc ? srcDoc : undefined}
         sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"
       />
     );

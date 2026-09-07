@@ -7,6 +7,7 @@ import { Button, EmptyState, Input, Skeleton, Textarea } from '@open-design/comp
 import {
   classifyMailMessage,
   draftMailReply,
+  extractMailAddresses,
   senderDisplayName,
   summarizeMailThread,
   type MailLabel,
@@ -93,7 +94,7 @@ async function waitForGmailConnected(signal: AbortSignal): Promise<boolean> {
 }
 
 function splitAddresses(value: string): string[] {
-  return value.split(/[,;]/).map((part) => part.trim()).filter((part) => part.includes('@'));
+  return extractMailAddresses(value);
 }
 
 function displayName(from: string): string {
@@ -1023,7 +1024,7 @@ export function MailView({ active, initialThreadId }: Props) {
                   />
                   <div className={styles.replyActions}>
                     <span className={styles.kbdHint}>{t('mail.sendHint')}</span>
-                    <Button type="submit" disabled={sending || !replyBody.trim()}>
+                    <Button type="submit" disabled={sending || !replyBody.trim()} data-testid="mail-reply-send">
                       {sending ? t('mail.replying') : t('mail.reply')}
                     </Button>
                   </div>
@@ -1123,8 +1124,20 @@ export function MailView({ active, initialThreadId }: Props) {
             if (event.target === event.currentTarget) setCompose(null);
           }}
         >
-          <div className={styles.modal} role="dialog" aria-modal="true" aria-label={t('mail.compose')}>
+          <form
+            className={styles.modal}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('mail.compose')}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onSend();
+            }}
+          >
             <h3 className={styles.modalTitle}>{t('mail.compose')}</h3>
+            {error ? (
+              <div className={styles.errorBanner} role="alert">{error}</div>
+            ) : null}
             <label className={styles.field}>
               <span>{t('mail.to')}</span>
               <Input
@@ -1151,7 +1164,7 @@ export function MailView({ active, initialThreadId }: Props) {
                 </label>
               </>
             ) : (
-              <Button variant="ghost" onClick={() => setCompose({ ...compose, showCc: true })}>
+              <Button type="button" variant="ghost" onClick={() => setCompose({ ...compose, showCc: true })}>
                 {t('mail.showCc')}
               </Button>
             )}
@@ -1172,15 +1185,16 @@ export function MailView({ active, initialThreadId }: Props) {
             </label>
             <div className={styles.modalActions}>
               <span className={styles.kbdHint}>{t('mail.sendHint')}</span>
-              <Button variant="ghost" onClick={() => setCompose(null)}>{t('mail.cancel')}</Button>
+              <Button type="button" variant="ghost" onClick={() => setCompose(null)}>{t('mail.cancel')}</Button>
               <Button
+                type="submit"
                 disabled={sending || splitAddresses(compose.to).length === 0}
-                onClick={() => void onSend()}
+                data-testid="mail-send"
               >
                 {sending ? t('mail.sending') : t('mail.send')}
               </Button>
             </div>
-          </div>
+          </form>
         </div>
       ) : null}
     </div>

@@ -40,10 +40,19 @@ Block types:
   database, artifact, page, record,
   board, checklist, assigner, poll, timeline, decision, goals.
 
+Prefer native page tools over generated HTML artifacts. Use board / checklist /
+assigner / poll / timeline / decision / goals when they fit a tracker, dashboard,
+kanban, poll, roadmap, decision log, or goals request. Only embed a created file
+for pictures, videos, slides, or custom apps those tools cannot express.
+
 Page tools store their working state in the block content object, e.g.
   {"type":"board","content":{"kind":"board","columns":[{"id":"c1","title":"To do","cards":[]}]}}
   {"type":"checklist","content":{"kind":"checklist","items":[{"id":"i1","text":"Ship","checked":false}]}}
   {"type":"assigner","content":{"kind":"assigner","tasks":[{"id":"t1","title":"Write brief","assigneeId":null,"assigneeName":null,"status":"todo"}]}}
+  {"type":"poll","content":{"kind":"poll","question":"Ship Friday?","options":[{"id":"o1","label":"Yes","voterIds":[]}]}}
+  {"type":"timeline","content":{"kind":"timeline","items":[{"id":"m1","title":"Launch","date":"2026-10-01","done":false}]}}
+  {"type":"decision","content":{"kind":"decision","question":"Host?","options":[{"id":"o1","label":"Vercel"}],"chosenId":null,"notes":""}}
+  {"type":"goals","content":{"kind":"goals","items":[{"id":"g1","title":"NPS","current":40,"target":70,"unit":""}]}}
 
 Embeds:
   page       props.pageId     — nested page / wiki link
@@ -51,9 +60,10 @@ Embeds:
   record     props.recordId   — one ERP / workspace row
   artifact   props.path       — project design file
   bookmark   props.url        — external URL card
-  embed      props.url        — live YouTube / Figma / Notion / created apps, pictures, videos, slides / any URL
-               For something you built, use /api/projects/<projectId>/raw/<file>
-               To make something unique for a page, generate the file then embed it with --type embed --url /api/projects/<projectId>/raw/<file>
+  embed      props.url        — live YouTube / Figma / Notion / PDFs / any URL
+               For a picture, video, slides, or custom app native tools cannot express,
+               use /api/projects/$OD_PROJECT_ID/raw/<file>
+               Do not generate HTML and embed it when a native page tool fits.
 
 Creating a child page with parentPageId also appends a page embed on the parent
 unless you set linkOnParent: false.

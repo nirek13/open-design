@@ -884,10 +884,22 @@ export function formatDesignFilesWorkspaceHint(
   cwd: string | null | undefined,
   files: DesignFilesHintEntry[] = [],
   folders: DesignFilesHintEntry[] = [],
+  options: { compact?: boolean } = {},
 ) {
   if (typeof cwd !== 'string' || cwd.trim().length === 0) return '';
   const safeFolders = Array.isArray(folders) ? folders : [];
   const safeFiles = Array.isArray(files) ? files : [];
+  const totalFolders = safeFolders.length;
+  const totalFiles = safeFiles.length;
+  if (options.compact === true) {
+    return [
+      '',
+      '',
+      '## Design Files workspace refresh',
+      `The active workspace is still \`${cwd}\` and currently contains ${totalFolders} folder${totalFolders === 1 ? '' : 's'}, ${totalFiles} file${totalFiles === 1 ? '' : 's'}.`,
+      'Your native session already has the workspace contract and earlier snapshot. When the request depends on project state, inspect/search/read the workspace for the current files before answering or editing; do not rely on the earlier listing.',
+    ].join('\n');
+  }
   const folderLines = safeFolders
     .slice(0, DESIGN_FILES_HINT_FOLDER_LIMIT)
     .map((folder) => formatDesignFilesEntryLine(folder, 'folder'))
@@ -896,8 +908,6 @@ export function formatDesignFilesWorkspaceHint(
     .slice(0, DESIGN_FILES_HINT_FILE_LIMIT)
     .map((file) => formatDesignFilesEntryLine(file, file.kind || 'file'))
     .filter((line): line is string => Boolean(line));
-  const totalFolders = safeFolders.length;
-  const totalFiles = safeFiles.length;
   const omittedFolders = Math.max(0, totalFolders - folderLines.length);
   const omittedFiles = Math.max(0, totalFiles - fileLines.length);
 

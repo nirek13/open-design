@@ -66,4 +66,38 @@ describe('formatDesignFilesWorkspaceHint', () => {
     expect(hint).toContain('Files:\n- `slides/pitch.html` (html, 2 KB)');
     expect(hint).toContain('- `image.png` (image, 192 KB)');
   });
+
+  it('uses a compact workspace refresh for native session resumes', () => {
+    const files = Array.from({ length: 80 }, (_, index) => ({
+      name: `screens/screen-${index}.html`,
+      path: `screens/screen-${index}.html`,
+      kind: 'html',
+      size: 2048,
+    }));
+    const folders = Array.from({ length: 40 }, (_, index) => ({
+      name: `section-${index}`,
+      path: `section-${index}`,
+      type: 'dir',
+      size: 0,
+    }));
+
+    const full = formatDesignFilesWorkspaceHint(
+      '/tmp/open-design/project-1',
+      files,
+      folders,
+    );
+    const compact = formatDesignFilesWorkspaceHint(
+      '/tmp/open-design/project-1',
+      files,
+      folders,
+      { compact: true },
+    );
+
+    expect(compact).toContain('## Design Files workspace refresh');
+    expect(compact).toContain('40 folders, 80 files');
+    expect(compact).toContain('inspect/search/read the workspace');
+    expect(compact).not.toContain('screen-0.html');
+    expect(compact).not.toContain('section-0');
+    expect(compact.length).toBeLessThan(full.length / 4);
+  });
 });

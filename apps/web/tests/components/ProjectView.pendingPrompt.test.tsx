@@ -255,7 +255,15 @@ function renderProjectView(
       project={currentProject}
       routeFileName={null}
       config={config}
-      agents={[] as AgentInfo[]}
+      agents={[
+        {
+          id: 'byok-opencode',
+          name: 'BYOK OpenCode',
+          bin: 'opencode',
+          available: true,
+          models: [],
+        } as AgentInfo,
+      ]}
       skills={[] as SkillSummary[]}
       designTemplates={[] as SkillSummary[]}
       designSystems={[] as DesignSystemSummary[]}

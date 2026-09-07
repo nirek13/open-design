@@ -98,6 +98,36 @@ export function senderDisplayName(from: string): string {
   return local || from;
 }
 
+/** Bare `user@domain` Gmail will accept. Display names like `Ada <ada@x.com>` fail send. */
+const MAIL_ADDRESS = /[^\s<>",;]+@[^\s<>",;]+/;
+
+export function extractMailAddress(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const angled = trimmed.match(/<([^<>]+)>/);
+  const candidate = (angled?.[1] ?? trimmed).trim();
+  const match = candidate.match(MAIL_ADDRESS);
+  if (!match) return null;
+  return match[0].replace(/[>,;]+$/, '');
+}
+
+export function extractMailAddresses(value: string | readonly string[]): string[] {
+  const parts = typeof value === 'string'
+    ? value.split(/[,;]/)
+    : value.flatMap((item) => item.split(/[,;]/));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of parts) {
+    const address = extractMailAddress(part);
+    if (!address) continue;
+    const key = address.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(address);
+  }
+  return out;
+}
+
 export function senderFirstName(from: string): string {
   const name = senderDisplayName(from);
   const first = name.split(/\s+/)[0]?.replace(/[,.]$/, '') ?? '';
@@ -247,7 +277,7 @@ export function draftMailReply(
   if (!latest) {
     return { to: [], body: '', reason: 'No messages in this thread.' };
   }
-  const to = latest.from.includes('@') ? [latest.from] : [];
+  const to = extractMailAddresses(latest.from);
   const drafted = defaultDraftBody(latest, options?.instruction);
   return { to, ...drafted };
 }

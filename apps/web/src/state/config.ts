@@ -68,16 +68,17 @@ export const DEFAULT_ORBIT: OrbitConfig = {
 export const DEFAULT_CONFIG: AppConfig = {
   mode: 'api',
   apiKey: '',
-  baseUrl: 'https://api.openai.com/v1',
-  model: 'gpt-4o-mini',
-  // New configs should be explicit. loadConfig() still detects parsed legacy
-  // saved configs that did not have this field and migrates those from their
-  // saved baseUrl/model before applying the current migration version.
-  apiProtocol: 'openai',
+  baseUrl: 'https://api.anthropic.com',
+  model: 'claude-sonnet-4-5',
+  // Text chat defaults to Claude. Image / speech generation still uses
+  // OpenAI (gpt-image-2, gpt-4o-mini-tts) via media-config / env keys.
+  apiProtocol: 'anthropic',
   apiVersion: '',
   apiProtocolConfigs: {},
   configMigrationVersion: CONFIG_MIGRATION_VERSION,
-  apiProviderBaseUrl: 'https://api.openai.com/v1',
+  apiProviderBaseUrl: 'https://api.anthropic.com',
+  byokImageModel: 'gpt-image-2',
+  byokSpeechModel: 'gpt-4o-mini-tts',
   agentId: null,
   skillId: null,
   designSystemId: null,
@@ -869,6 +870,23 @@ export function findEnvOpenAiByokProfile(
   ) ?? null;
 }
 
+export function findEnvAnthropicByokProfile(
+  profiles: readonly ByokCredentialProfile[] | undefined,
+): ByokCredentialProfile | null {
+  if (!profiles) return null;
+  return profiles.find((candidate) =>
+    candidate.configured
+    && candidate.protocol === 'anthropic'
+    && /api\.anthropic\.com/i.test(candidate.baseUrl),
+  ) ?? null;
+}
+
+export function findEnvDefaultByokProfile(
+  profiles: readonly ByokCredentialProfile[] | undefined,
+): ByokCredentialProfile | null {
+  return findEnvAnthropicByokProfile(profiles) ?? findEnvOpenAiByokProfile(profiles);
+}
+
 export class ByokCredentialProfileHttpError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -1223,20 +1241,36 @@ export async function migrateLegacyByokCredentialsToDaemon(
   }
 }
 
-export function applyDefaultOpenAiByokProfile(
+export function applyDefaultEnvByokProfile(
   config: AppConfig,
   profile: ByokCredentialProfile,
 ): AppConfig {
+  const protocol: ApiProtocol = profile.protocol === 'anthropic' ? 'anthropic' : 'openai';
+  const fallbackModel = protocol === 'anthropic' ? 'claude-sonnet-4-5' : 'gpt-4o-mini';
+  const providerBaseUrl = protocol === 'anthropic'
+    ? 'https://api.anthropic.com'
+    : 'https://api.openai.com/v1';
   return {
     ...applySavedByokCredentialProfile(config, profile),
     mode: 'api',
     apiKey: '',
     baseUrl: profile.baseUrl,
-    model: profile.model || config.model || 'gpt-4o-mini',
-    apiProtocol: 'openai',
-    apiProviderBaseUrl: 'https://api.openai.com/v1',
+    model: profile.model || config.model || fallbackModel,
+    apiProtocol: protocol,
+    apiProviderBaseUrl: providerBaseUrl,
     agentId: null,
+    // Chat credentials follow the bound profile (Claude by default).
+    // Image / speech stay on OpenAI even when text is Anthropic.
+    byokImageModel: config.byokImageModel?.trim() || DEFAULT_CONFIG.byokImageModel,
+    byokSpeechModel: config.byokSpeechModel?.trim() || DEFAULT_CONFIG.byokSpeechModel,
   };
+}
+
+export function applyDefaultOpenAiByokProfile(
+  config: AppConfig,
+  profile: ByokCredentialProfile,
+): AppConfig {
+  return applyDefaultEnvByokProfile(config, profile);
 }
 
 /** Local CLI is not a user-facing runtime; keep saved configs on BYOK. */
@@ -1247,8 +1281,8 @@ export function applyHiddenLocalCliPolicy(config: AppConfig): AppConfig {
 
 /**
  * Reconciles a locally selected non-secret profile reference with the daemon.
- * After onboarding, bind a configured OpenAI (api.openai.com) profile so a
- * host-provided default key is used without another setup step. When Local CLI
+ * After onboarding, bind a host-provided env key for the active protocol so
+ * OpenAI or Anthropic can be used without another setup step. When Local CLI
  * usage is hidden, bind that key during first-run as well.
  */
 export function mergeByokCredentialProfiles(
@@ -1266,14 +1300,30 @@ export function mergeByokCredentialProfiles(
     if (localCliSelected) {
       return config;
     }
-    // When Local CLI is hidden, bind the host OpenAI key even during
-    // first-run so the user is not asked to pick a runtime.
+    // When Local CLI is hidden, bind the host key even during first-run
+    // so the user is not asked to pick a runtime. Prefer Claude for text.
     if (isLocalCliUsageEnabled() && !config.onboardingCompleted) return config;
+    const anthropicProfile = findEnvAnthropicByokProfile(response.profiles);
+    if (anthropicProfile) {
+      return applyDefaultEnvByokProfile(config, anthropicProfile);
+    }
     const openAiProfile = findEnvOpenAiByokProfile(response.profiles);
     if (openAiProfile) {
       return applyDefaultOpenAiByokProfile(config, openAiProfile);
     }
     return config;
+  }
+
+  const openAiProfile = findEnvOpenAiByokProfile(response.profiles);
+  const anthropicProfile = findEnvAnthropicByokProfile(response.profiles);
+  // Host-provided OpenAI was previously the chat default. When Claude is
+  // also available, move text onto Anthropic and leave OpenAI for media.
+  if (
+    anthropicProfile
+    && openAiProfile
+    && config.byokProfileId === openAiProfile.id
+  ) {
+    return applyDefaultEnvByokProfile(config, anthropicProfile);
   }
 
   const profile = response.profiles.find((candidate) => candidate.id === config.byokProfileId);
@@ -1314,6 +1364,18 @@ export function mergeByokCredentialProfiles(
     byokCredentialTail: profile.keyTail,
     model: profile.model,
   });
+}
+
+/** Bind a host env BYOK profile after a protocol switch that cleared the saved profile id. */
+export async function bindEnvByokProfileIfNeeded(
+  config: AppConfig,
+): Promise<AppConfig> {
+  if (config.byokProfileId || config.apiKey?.trim()) return config;
+  if (config.apiProtocol !== 'anthropic' && config.apiProtocol !== 'openai') {
+    return config;
+  }
+  const response = await fetchByokCredentialProfilesFromDaemon();
+  return mergeByokCredentialProfiles(config, response);
 }
 
 interface PublicMediaProviderConfigEntry {

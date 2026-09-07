@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { OrgApp, Project, ProjectFile } from '@open-design/contracts';
 import {
   classifyCreatedFile,
+  collectPageEmbedUrls,
   createdFileUrl,
   loadCreatedEmbedItems,
+  mergeMissingMediaBlocks,
+  selectProjectFilesToEmbed,
 } from '../../src/runtime/created-embed';
 
 function file(partial: Partial<ProjectFile> & Pick<ProjectFile, 'name'>): ProjectFile {
@@ -25,7 +28,104 @@ describe('classifyCreatedFile', () => {
     expect(classifyCreatedFile(file({ name: 'q3.html', kind: 'html', artifactKind: 'deck' }))).toBe(
       'slides',
     );
-    expect(classifyCreatedFile(file({ name: 'notes.md', kind: 'text' }))).toBeNull();
+    expect(classifyCreatedFile(file({ name: 'revenue-chart.html', kind: 'html' }))).toBe('app');
+    expect(classifyCreatedFile(file({ name: 'funnel.svg', kind: 'sketch' }))).toBe('image');
+  });
+});
+
+describe('selectProjectFilesToEmbed', () => {
+  it('picks a chart html file that is not yet on the notes page', () => {
+    const projectId = 'proj-chart';
+    const chart = file({
+      name: 'revenue-chart.html',
+      path: 'revenue-chart.html',
+      kind: 'html',
+      mime: 'text/html',
+      size: 2048,
+    });
+    const pending = selectProjectFilesToEmbed({
+      files: [chart, file({ name: 'notes.md', kind: 'text', size: 12 })],
+      projectId,
+      alreadySeen: new Set(),
+      pageUrls: collectPageEmbedUrls([{ type: 'paragraph', text: 'Welcome', props: {} }]),
+    });
+    expect(pending).toEqual([
+      {
+        url: createdFileUrl(projectId, 'revenue-chart.html'),
+        key: createdFileUrl(projectId, 'revenue-chart.html'),
+        rel: 'revenue-chart.html',
+      },
+    ]);
+  });
+
+  it('picks a nested chart html file that is not yet on the notes page', () => {
+    const projectId = 'proj-chart';
+    const pending = selectProjectFilesToEmbed({
+      files: [
+        file({
+          name: 'charts/revenue.html',
+          path: 'charts/revenue.html',
+          kind: 'html',
+          mime: 'text/html',
+          size: 2048,
+        }),
+      ],
+      projectId,
+      alreadySeen: new Set(),
+      pageUrls: new Set(),
+    });
+    expect(pending[0]?.url).toBe(createdFileUrl(projectId, 'charts/revenue.html'));
+  });
+
+  it('does not treat a paragraph that mentions the file as already embedded', () => {
+    const url = createdFileUrl('proj-chart', 'revenue-chart.html');
+    const pending = selectProjectFilesToEmbed({
+      files: [
+        file({
+          name: 'revenue-chart.html',
+          path: 'revenue-chart.html',
+          kind: 'html',
+          mime: 'text/html',
+          size: 2048,
+        }),
+      ],
+      projectId: 'proj-chart',
+      alreadySeen: new Set(),
+      pageUrls: collectPageEmbedUrls([{ type: 'paragraph', text: `See ${url}`, props: {} }]),
+    });
+    expect(pending).toHaveLength(1);
+  });
+
+  it('skips files already embedded on the page', () => {
+    const projectId = 'proj-chart';
+    const url = createdFileUrl(projectId, 'revenue-chart.html');
+    const pending = selectProjectFilesToEmbed({
+      files: [
+        file({
+          name: 'revenue-chart.html',
+          path: 'revenue-chart.html',
+          kind: 'html',
+          mime: 'text/html',
+          size: 2048,
+        }),
+      ],
+      projectId,
+      alreadySeen: new Set(),
+      pageUrls: collectPageEmbedUrls([{ type: 'embed', text: url, props: { url } }]),
+    });
+    expect(pending).toEqual([]);
+  });
+});
+
+describe('mergeMissingMediaBlocks', () => {
+  it('appends a live chart embed that a stale draft snapshot omitted', () => {
+    const chartUrl = createdFileUrl('proj-chart', 'revenue-chart.html');
+    const merged = mergeMissingMediaBlocks(
+      [{ type: 'paragraph', text: 'Welcome', props: {} }],
+      [{ type: 'embed', text: chartUrl, props: { url: chartUrl } }],
+    );
+    expect(merged).toHaveLength(2);
+    expect(merged[1]).toMatchObject({ type: 'embed', props: { url: chartUrl } });
   });
 });
 

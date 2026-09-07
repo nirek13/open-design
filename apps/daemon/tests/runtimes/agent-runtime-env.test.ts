@@ -198,6 +198,11 @@ describe('agent runtime tool environment', () => {
     expect(prompt).toContain('`OD_TOOL_TOKEN` is available');
     expect(prompt).toContain('do not print, persist, or override it');
     expect(prompt).toContain('tools pages');
+    expect(prompt).toContain('$OD_PROJECT_ID');
+    expect(prompt).toContain('tools pages embed');
+    expect(prompt).toContain('Prefer native page tools');
+    expect(prompt).toContain('do not generate HTML/JS and embed it');
+    expect(prompt).toContain('notes tab bar');
     expect(prompt).toContain('tools data');
     expect(prompt).toContain('tools team');
     expect(prompt).toContain('tools mail');

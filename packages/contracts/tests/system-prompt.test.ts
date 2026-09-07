@@ -207,4 +207,19 @@ describe('composeSystemPrompt', () => {
     expect(prompt).not.toContain('<question-form id="discovery"');
     expect(prompt).toContain('## Media generation contract');
   });
+
+  it('tells the wiki agent to prefer native page tools over HTML artifacts', () => {
+    const prompt = composeSystemPrompt({
+      sessionMode: 'chat',
+      metadata: {
+        kind: 'other',
+        pageContext: { pageId: 'page-1', title: 'Handbook', icon: '📘' },
+      } as any,
+    });
+
+    expect(prompt).toContain('pageContext');
+    expect(prompt).toContain('Prefer native page tools');
+    expect(prompt).toContain('board, checklist, assigner, poll, timeline, decision, goals');
+    expect(prompt).toContain('over generating HTML artifacts to embed');
+  });
 });

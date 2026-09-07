@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   iframeSnippet,
+  isOpaqueLocalHtmlEmbed,
   looksLikeUrl,
   parseEmbedUrl,
   resolveRichEmbed,
@@ -52,10 +53,15 @@ describe('resolveRichEmbed', () => {
     expect(app?.kind).toBe('iframe');
     expect(app?.provider).toBe('App');
     expect(app?.sandbox).not.toContain('allow-same-origin');
+    expect(isOpaqueLocalHtmlEmbed(app!)).toBe(true);
 
     const slides = resolveRichEmbed('/api/projects/p1/raw/pitch-deck.html');
     expect(slides?.kind).toBe('iframe');
     expect(slides?.provider).toBe('Slides');
+    expect(isOpaqueLocalHtmlEmbed(slides!)).toBe(true);
+
+    const youtube = resolveRichEmbed('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(isOpaqueLocalHtmlEmbed(youtube!)).toBe(false);
   });
 
   it('falls back to a rich card for ordinary websites', () => {

@@ -83,10 +83,8 @@ import {
 import { navigate } from '../../router';
 import {
   chatAccentCssVars,
-  chatFileKind,
   DEFAULT_CHAT_ACCENT,
   filesFromTransfer,
-  formatChatFileSize,
   parseChatAccent,
   type ChatAccent,
 } from '../../runtime/chat-media';
@@ -95,6 +93,12 @@ import { CHAT_EMOJI_GROUPS, QUICK_REACTIONS } from '../../runtime/chat-emoji';
 import { Icon } from '../Icon';
 import { WorkspacePage } from '../workspace/WorkspacePage';
 import { ChatMessageBody } from './ChatMessageBody';
+import {
+  attachmentFileSource,
+  ChatFileLightbox,
+  PendingChatFile,
+  type ChatFileSource,
+} from './ChatFileViewer';
 import styles from './TeamChatView.module.css';
 
 interface Props {
@@ -105,8 +109,28 @@ interface Props {
 
 const POLL_MS = 5_000;
 const DRAFT_PREFIX = 'od:chat-draft:';
+const HISTORY_PREFIX = 'od:chat-history:';
+const HISTORY_LIMIT = 40;
 
-type ChatPane = 'channel' | 'unreads' | 'dms' | 'activity' | 'later' | 'browse' | 'reminders' | 'scheduled';
+type ChatPane = 'channel' | 'unreads' | 'dms' | 'activity' | 'later' | 'history' | 'browse' | 'reminders' | 'scheduled';
+
+function readChatHistory(orgId: string): string[] {
+  try {
+    const raw = window.localStorage.getItem(`${HISTORY_PREFIX}${orgId}`);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === 'string' && item.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function rememberChatHistory(orgId: string, slug: string): string[] {
+  const next = [slug, ...readChatHistory(orgId).filter((item) => item !== slug)].slice(0, HISTORY_LIMIT);
+  window.localStorage.setItem(`${HISTORY_PREFIX}${orgId}`, JSON.stringify(next));
+  return next;
+}
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -172,17 +196,6 @@ function lookupPerson(people: OrgMember[], token: string): OrgMember | undefined
   );
 }
 
-function PendingThumb({ file }: { file: File }) {
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => {
-    const url = URL.createObjectURL(file);
-    setSrc(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
-  if (!src) return null;
-  return <img src={src} alt="" className={styles.pendingThumb} />;
-}
-
 export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Props) {
   const t = useT();
   const org = useOptionalOrg() ?? NO_ORG_CONTEXT;
@@ -213,6 +226,7 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [viewingFile, setViewingFile] = useState<ChatFileSource | null>(null);
   const [dropping, setDropping] = useState(false);
   const [accent, setAccent] = useState<ChatAccent>(DEFAULT_CHAT_ACCENT);
   const [pane, setPane] = useState<ChatPane>('channel');
@@ -247,6 +261,7 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   const [hideStarred, setHideStarred] = useState(false);
   const [hideChannels, setHideChannels] = useState(false);
   const [hideDms, setHideDms] = useState(false);
+  const [historySlugs, setHistorySlugs] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mainComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const threadComposerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -320,6 +335,16 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     () => channels.filter((channel) => channel.starred && channel.joined),
     [channels],
   );
+  const historyRooms = useMemo(() => {
+    const bySlug = new Map(channels.map((channel) => [channel.slug, channel]));
+    const fromRecents = historySlugs
+      .map((slug) => bySlug.get(slug))
+      .filter((channel): channel is ChatChannel => Boolean(channel));
+    if (fromRecents.length > 0) return fromRecents;
+    return [...channels]
+      .filter((channel) => channel.joined && channel.lastMessageAt)
+      .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
+  }, [channels, historySlugs]);
   const current = channels.find((channel) => channel.slug === currentSlug || channel.id === currentSlug) ?? null;
   const parentInThread = messages.find((message) => message.id === threadId) ?? threadMessages[0] ?? null;
 
@@ -442,6 +467,19 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     const timer = window.setInterval(() => void tick(), POLL_MS);
     return () => window.clearInterval(timer);
   }, [active, activeOrgId, currentSlug, threadId, loadChannels, myMemberId, people, current?.displayName]);
+
+  useEffect(() => {
+    if (!activeOrgId) {
+      setHistorySlugs([]);
+      return;
+    }
+    setHistorySlugs(readChatHistory(activeOrgId));
+  }, [activeOrgId]);
+
+  useEffect(() => {
+    if (!active || !activeOrgId || !currentSlug) return;
+    setHistorySlugs(rememberChatHistory(activeOrgId, currentSlug));
+  }, [active, activeOrgId, currentSlug]);
 
   useEffect(() => {
     if (!activeOrgId || !currentSlug) return;
@@ -865,27 +903,12 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           {pendingFiles.length > 0 ? (
             <ul className={styles.pending}>
               {pendingFiles.map((file, index) => (
-                <li key={`${file.name}-${index}`} className={styles.pendingChip}>
-                  {chatFileKind(file.type, file.name) === 'image' ? (
-                    <PendingThumb file={file} />
-                  ) : (
-                    <span className={styles.pendingGlyph} aria-hidden>
-                      {file.name.split('.').pop()?.slice(0, 4).toUpperCase() ?? 'FILE'}
-                    </span>
-                  )}
-                  <span className={styles.pendingCopy}>
-                    <strong>{file.name}</strong>
-                    <em>{formatChatFileSize(file.size)}</em>
-                  </span>
-                  <button
-                    type="button"
-                    className={styles.pendingRemove}
-                    aria-label={t('team.removeAttachment')}
-                    onClick={() => setPendingFiles((prev) => prev.filter((_, i) => i !== index))}
-                  >
-                    ×
-                  </button>
-                </li>
+                <PendingChatFile
+                  key={`${file.name}-${index}`}
+                  file={file}
+                  removeLabel={t('team.removeAttachment')}
+                  onRemove={() => setPendingFiles((prev) => prev.filter((_, i) => i !== index))}
+                />
               ))}
             </ul>
           ) : null}
@@ -1556,12 +1579,16 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           <Icon name="bookmark" size={12} />
           <span className={styles.channelName}>{t('team.later')}</span>
         </button>
+        <button type="button" className={`${styles.channelButton}${pane === 'history' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('history')} data-testid="team-history">
+          <Icon name="history" size={12} />
+          <span className={styles.channelName}>{t('team.history')}</span>
+        </button>
         <button type="button" className={`${styles.channelButton}${pane === 'reminders' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('reminders')} data-testid="team-reminders">
           <Icon name="bell" size={12} />
           <span className={styles.channelName}>{t('team.reminders')}</span>
         </button>
         <button type="button" className={`${styles.channelButton}${pane === 'scheduled' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('scheduled')}>
-          <Icon name="history" size={12} />
+          <Icon name="send" size={12} />
           <span className={styles.channelName}>{t('team.scheduled')}</span>
         </button>
         <button type="button" className={`${styles.channelButton}${pane === 'browse' ? ` ${styles.channelActive}` : ''}`} onClick={() => setPane('browse')}>
@@ -1775,6 +1802,18 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
                 <button key={hit.message.id} type="button" className={styles.activityItem} onClick={() => selectChannel(hit.channelSlug)}>
                   <strong>#{hit.channelName}</strong>
                   <em>{hit.message.body}</em>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : pane === 'history' ? (
+          <>
+            <header className={styles.channelHead}><h2 className={styles.channelTitle}>{t('team.history')}</h2></header>
+            <div className={styles.transcript} data-testid="team-history-list">
+              {historyRooms.length === 0 ? <p className={styles.emptyTranscript}>{t('team.noHistory')}</p> : historyRooms.map((channel) => (
+                <button key={channel.id} type="button" className={styles.activityItem} onClick={() => selectChannel(channel.slug)}>
+                  <strong>{isDirect(channel) ? '' : '#'}{channel.displayName}</strong>
+                  <em>{channel.topic || formatClock(channel.lastMessageAt ?? channel.updatedAt)}</em>
                 </button>
               ))}
             </div>
@@ -2037,9 +2076,24 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             {detailsTab === 'files' ? (
               channelFiles.length === 0 ? <p>{t('team.noFiles')}</p> : (
                 <ul className={styles.memberList}>
-                  {channelFiles.map((file) => (
-                    <li key={file.id}><a href={file.url} target="_blank" rel="noreferrer">{file.label}</a></li>
-                  ))}
+                  {channelFiles.map((file) => {
+                    const source = attachmentFileSource(file);
+                    return (
+                      <li key={file.id}>
+                        {source ? (
+                          <button
+                            type="button"
+                            className={styles.fileOpen}
+                            onClick={() => setViewingFile(source)}
+                          >
+                            {file.label}
+                          </button>
+                        ) : (
+                          <a href={file.url} target="_blank" rel="noreferrer">{file.label}</a>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )
             ) : null}
@@ -2081,6 +2135,10 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           </div>
           {composerForm(threadDraft, setThreadDraft, threadId, t('team.replyInThread'))}
         </aside>
+      ) : null}
+
+      {viewingFile ? (
+        <ChatFileLightbox source={viewingFile} onClose={() => setViewingFile(null)} />
       ) : null}
     </div>
   );

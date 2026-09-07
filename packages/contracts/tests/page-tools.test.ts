@@ -52,6 +52,26 @@ describe('page tools', () => {
     }
   });
 
+  it('accepts agent goals payloads that use a goals array and status', () => {
+    const tool = parsePageTool('goals', {
+      kind: 'goals',
+      goals: [
+        { id: 'g1', title: 'Ship pages agent', status: 'not_started' },
+        { id: 'g2', title: 'Hire designer', status: 'in_progress' },
+        { id: 'g3', title: 'Launch beta', status: 'done' },
+      ],
+    });
+    expect(tool.kind).toBe('goals');
+    if (tool.kind !== 'goals') return;
+    expect(tool.items.map((item) => item.title)).toEqual([
+      'Ship pages agent',
+      'Hire designer',
+      'Launch beta',
+    ]);
+    expect(tool.items.map((item) => item.current)).toEqual([0, 50, 100]);
+    expect(tool.items.map((item) => item.target)).toEqual([100, 100, 100]);
+  });
+
   it('flattens tool text for search and markdown', () => {
     const text = pageToolPlainText({
       kind: 'assigner',

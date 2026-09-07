@@ -16,6 +16,7 @@ import {
 const TEST_NANOBANANA_BASE_URL = 'https://nano-banana-gateway.example.test';
 
 const OPENAI_ENV_KEYS = [
+  'OD_DEFAULT_OPENAI_API_KEY',
   'OD_OPENAI_API_KEY',
   'OPENAI_API_KEY',
   'AZURE_API_KEY',

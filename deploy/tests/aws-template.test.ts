@@ -38,7 +38,8 @@ test('performance mode maxes CPU, memory, disk, ALB idle timeout, and log retent
   const src = await readTemplate();
   assert.match(src, /IsPerformance:\s*!Equals \[!Ref OperatingMode, performance\]/);
   assert.match(src, /xlarge:\n\s+Cpu: '4096'\n\s+Memory: '16384'/);
-  assert.match(src, /!If \[IsPerformance, xlarge, !Ref TaskSize\]/);
+  assert.match(src, /!FindInMap \[TaskSizes, xlarge, Cpu\]/);
+  assert.match(src, /!FindInMap \[TaskSizes, !Ref TaskSize, Cpu\]/);
   assert.match(src, /SizeInGiB:\s*!If \[IsPerformance, 100, 21\]/);
   assert.match(src, /idle_timeout\.timeout_seconds/);
   assert.match(src, /!If \[IsPerformance, '4000', '600'\]/);

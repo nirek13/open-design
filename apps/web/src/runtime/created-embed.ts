@@ -120,6 +120,117 @@ export async function loadCreatedEmbedItems(
   return items;
 }
 
+export function normalizeEmbedUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  try {
+    return decodeURIComponent(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+const PAGE_MEDIA_EMBED_TYPES = new Set([
+  'embed',
+  'image',
+  'video',
+  'audio',
+  'file',
+  'pdf',
+  'bookmark',
+  'artifact',
+]);
+
+export type PageMediaBlock = {
+  type?: string;
+  text?: string;
+  content?: unknown;
+  props?: Record<string, unknown>;
+  children?: unknown[];
+};
+
+function blockEmbedUrl(block: PageMediaBlock): string {
+  const props = block.props ?? {};
+  const raw = props.url ?? props.path ?? block.text ?? (typeof block.content === 'string' ? block.content : '');
+  return String(raw).trim();
+}
+
+export function isPageMediaBlock(block: PageMediaBlock): boolean {
+  return Boolean(block.type && PAGE_MEDIA_EMBED_TYPES.has(block.type));
+}
+
+/** Media/embed blocks that already have a URL (top-level and nested). */
+export function pageMediaBlocks<T extends PageMediaBlock>(blocks: T[]): T[] {
+  const out: T[] = [];
+  const walk = (list: T[]) => {
+    for (const block of list) {
+      if (isPageMediaBlock(block) && normalizeEmbedUrl(blockEmbedUrl(block))) out.push(block);
+      if (Array.isArray(block.children) && block.children.length > 0) {
+        walk(block.children as T[]);
+      }
+    }
+  };
+  walk(blocks);
+  return out;
+}
+
+/** Keep live embeds that a stale autosave snapshot would otherwise drop. */
+export function mergeMissingMediaBlocks<T extends PageMediaBlock>(base: T[], extras: T[]): T[] {
+  const have = collectPageEmbedUrls(base);
+  const add = extras.filter((block) => {
+    if (!isPageMediaBlock(block)) return false;
+    const url = normalizeEmbedUrl(blockEmbedUrl(block));
+    return Boolean(url) && !have.has(url);
+  });
+  return add.length === 0 ? base : [...base, ...add];
+}
+
+/** URLs already live on a notes page (embed, image, artifact, …). */
+export function collectPageEmbedUrls(blocks: PageMediaBlock[]): Set<string> {
+  const urls = new Set<string>();
+  const walk = (list: PageMediaBlock[]) => {
+    for (const block of list) {
+      if (isPageMediaBlock(block)) {
+        const url = normalizeEmbedUrl(blockEmbedUrl(block));
+        if (url) urls.add(url);
+      }
+      if (Array.isArray(block.children) && block.children.length > 0) {
+        walk(block.children as PageMediaBlock[]);
+      }
+    }
+  };
+  walk(blocks);
+  return urls;
+}
+
+export interface ProjectFileEmbed {
+  url: string;
+  key: string;
+  rel: string;
+}
+
+/** Displayable project files that are not yet on the open notes page. */
+export function selectProjectFilesToEmbed(input: {
+  files: ProjectFile[];
+  projectId: string;
+  alreadySeen: Set<string>;
+  pageUrls: Set<string>;
+}): ProjectFileEmbed[] {
+  const pending: ProjectFileEmbed[] = [];
+  for (const file of input.files) {
+    if (file.type === 'dir') continue;
+    if (typeof file.size === 'number' && file.size <= 0) continue;
+    if (!classifyCreatedFile(file)) continue;
+    const rel = (file.path || file.name || '').trim();
+    if (!rel) continue;
+    const url = createdFileUrl(input.projectId, rel);
+    const key = normalizeEmbedUrl(url);
+    if (input.alreadySeen.has(key) || input.pageUrls.has(key)) continue;
+    pending.push({ url, key, rel });
+  }
+  return pending;
+}
+
 function titleFromPath(path: string): string {
   const base = path.split('/').filter(Boolean).at(-1) ?? path;
   const stem = base.replace(/\.[^.]+$/, '');

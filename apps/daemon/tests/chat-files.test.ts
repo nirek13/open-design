@@ -39,6 +39,8 @@ describe('chat-files', () => {
     expect(sniffChatFileMime(Buffer.from('not-magic'), 'pack.zip')).toBe('application/zip');
     expect(sniffChatFileMime(Buffer.from('not-magic'), 'invite.ics')).toBe('text/calendar');
     expect(sniffChatFileMime(Buffer.from('not-magic'), 'clip.mkv')).toBe('video/x-matroska');
+    expect(sniffChatFileMime(Buffer.from('export {}'), 'util.ts')).toBe('text/plain; charset=utf-8');
+    expect(sniffChatFileMime(Buffer.from('Ag'), 'brand.ttf')).toBe('font/ttf');
     expect(chatFileContentDisposition('text/html', 'note.html')).toContain('attachment');
     expect(chatFileContentDisposition('image/png', 'logo.png')).toContain('inline');
   });
