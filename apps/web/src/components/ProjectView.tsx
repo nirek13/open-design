@@ -488,6 +488,8 @@ const MAX_CHAT_PANEL_WIDTH = 720;
 const COMMENT_INSPECTOR_PANEL_WIDTH = 320;
 const MIN_WORKSPACE_PANEL_WIDTH = 400;
 const SPLIT_RESIZE_HANDLE_WIDTH = 8;
+const BYOK_OPENCODE_UNAVAILABLE_MESSAGE =
+  'BYOK API runs require OpenCode. Install OpenCode, then rescan local agents in Settings before retrying.';
 const CHAT_PANEL_KEYBOARD_STEP = 16;
 const DESIGN_SYSTEM_AUDIT_AUTO_REPAIR_ATTEMPTS = 2;
 // Trailing-debounce window for the canonical (daemon + SQLite) tab-state write.
@@ -5829,6 +5831,11 @@ export function ProjectView({
           return true;
         }
         const choice = effectiveSelectedAgentChoice;
+        const daemonByokOpenCode = config.agentId === 'byok-opencode';
+        if (daemonByokOpenCode && !agentsById.get('byok-opencode')?.available) {
+          handlers.onError(new Error(BYOK_OPENCODE_UNAVAILABLE_MESSAGE));
+          return true;
+        }
         // v2 analytics: when the active project is a DS workspace
         // (created by `prepareCreatedDesignSystemProject`, identifiable
         // by `metadata.importedFrom === 'design-system'`), every run

@@ -183,7 +183,7 @@ export function ToolBuilder({ onClose, onCreated, onReload, onAskProject, initia
         pendingPrompt: composePagesWikiPrompt({ request: description.trim() }),
         skillId: null,
         designSystemId: activeOrg?.defaultDesignSystemId ?? null,
-        ...(activeOrgId ? { metadata: { workspaceId: activeOrgId } } : {}),
+        ...(activeOrgId ? { metadata: { kind: 'other' as const, workspaceId: activeOrgId } } : {}),
       });
       if (created?.project) {
         navigate({

@@ -828,7 +828,7 @@ export function PagesView({
         skillId: null,
         designSystemId: null,
         metadata: {
-          ...(makeKind ? { kind: pageMakeAction(makeKind).projectKind } : currentId ? { kind: 'other' as const } : {}),
+          kind: makeKind ? pageMakeAction(makeKind).projectKind : 'other',
           ...(activeOrgId ? { workspaceId: activeOrgId } : {}),
           ...(currentId
             ? {
