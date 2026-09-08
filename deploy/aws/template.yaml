@@ -436,6 +436,10 @@ Resources:
               Value: "127.0.0.1"
             - Name: OD_PORT
               Value: "7456"
+            - Name: OD_CLERK_ISSUER
+              Value: "https://clean-jay-54.clerk.accounts.dev"
+            - Name: OD_CLERK_PUBLISHABLE_KEY
+              Value: "pk_test_Y2xlYW4tamF5LTU0LmNsZXJrLmFjY291bnRzLmRldiQ"
           Secrets:
             - Name: OD_API_TOKEN
               ValueFrom: !Ref ApiTokenSecret

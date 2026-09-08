@@ -46,6 +46,12 @@ test('performance mode maxes CPU, memory, disk, ALB idle timeout, and log retent
   assert.match(src, /RetentionInDays:\s*!If \[IsPerformance, 14, 3\]/);
 });
 
+test('app task ships Clerk issuer and publishable key so AuthGate can render sign-in', async () => {
+  const src = await readTemplate();
+  assert.match(src, /Name:\s*OD_CLERK_ISSUER/);
+  assert.match(src, /Name:\s*OD_CLERK_PUBLISHABLE_KEY/);
+});
+
 test('DesiredCount cannot exceed 1 (SQLite single-writer)', async () => {
   const src = await readTemplate();
   assert.match(src, /DesiredCount:/);

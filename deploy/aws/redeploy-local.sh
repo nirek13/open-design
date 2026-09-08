@@ -159,6 +159,8 @@ redeploy_once() {
     PROXY_COMMAND="$PROXY_COMMAND" APP_COMMAND="$APP_COMMAND" \
     PROXY_READ_TIMEOUT="$proxy_timeout" \
     OPENAI_SECRET_ARN="${OPENAI_SECRET_ARN:-}" \
+    OD_CLERK_ISSUER="${OD_CLERK_ISSUER:-https://clean-jay-54.clerk.accounts.dev}" \
+    OD_CLERK_PUBLISHABLE_KEY="${OD_CLERK_PUBLISHABLE_KEY:-pk_test_Y2xlYW4tamF5LTU0LmNsZXJrLmFjY291bnRzLmRldiQ}" \
     python3 -c '
 import json, os, sys
 
@@ -200,6 +202,20 @@ for c in td["containerDefinitions"]:
         }
         env["OD_SITES_DOMAIN"] = {"name": "OD_SITES_DOMAIN", "value": "sites.nirekshetty.com"}
         env["OD_SQLITE_JOURNAL_MODE"] = {"name": "OD_SQLITE_JOURNAL_MODE", "value": "delete"}
+        env["OD_CLERK_ISSUER"] = {
+            "name": "OD_CLERK_ISSUER",
+            "value": os.environ.get(
+                "OD_CLERK_ISSUER",
+                "https://clean-jay-54.clerk.accounts.dev",
+            ).strip(),
+        }
+        env["OD_CLERK_PUBLISHABLE_KEY"] = {
+            "name": "OD_CLERK_PUBLISHABLE_KEY",
+            "value": os.environ.get(
+                "OD_CLERK_PUBLISHABLE_KEY",
+                "pk_test_Y2xlYW4tamF5LTU0LmNsZXJrLmFjY291bnRzLmRldiQ",
+            ).strip(),
+        }
         c["environment"] = list(env.values())
         secrets = {s["name"]: s for s in c.get("secrets") or []}
         openai_from = openai_arn or (secrets.get("OPENAI_API_KEY") or {}).get("valueFrom") or (secrets.get("OD_OPENAI_API_KEY") or {}).get("valueFrom")
