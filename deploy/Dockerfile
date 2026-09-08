@@ -80,9 +80,22 @@ COPY plugins/_official ./plugins/_official
 
 FROM ${RUNTIME_IMAGE}
 
-RUN apk add --no-cache tini poppler-utils bash git && \
+# Hosted BYOK (Claude text + OpenAI media) still needs the OpenCode CLI as
+# the tool loop. Alpine is musl, so use the musl build rather than npm's
+# glibc package.
+ARG OPENCODE_VERSION=1.18.27
+
+RUN apk add --no-cache tini poppler-utils bash git curl tar && \
     addgroup -S -g 1001 open-design && \
-    adduser -S -D -H -u 1001 -G open-design open-design
+    adduser -S -D -H -u 1001 -G open-design open-design && \
+    mkdir -p /tmp/opencode && \
+    curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64-musl.tar.gz" \
+      -o /tmp/opencode.tgz && \
+    tar -xzf /tmp/opencode.tgz -C /tmp/opencode && \
+    install -m 0755 "$(find /tmp/opencode -type f \( -name opencode -o -name opencode-cli \) | head -n 1)" /usr/local/bin/opencode && \
+    ln -sf /usr/local/bin/opencode /usr/local/bin/opencode-cli && \
+    rm -rf /tmp/opencode /tmp/opencode.tgz && \
+    /usr/local/bin/opencode --version
 
 WORKDIR /app
 COPY --from=build --chown=open-design:open-design /app/deploy/daemon ./apps/daemon

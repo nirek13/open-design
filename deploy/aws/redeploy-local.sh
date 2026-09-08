@@ -6,7 +6,8 @@
 #   ./deploy/aws/redeploy-local.sh --watch          # rebuild on source changes
 #   STACK=open-design-stack REGION=us-east-1 ./deploy/aws/redeploy-local.sh
 #
-# Defaults OPENAI_SECRET_ARN to open-design/openai-api-key so ECS can generate images.
+# Defaults OPENAI_SECRET_ARN / ANTHROPIC_SECRET_ARN so hosted BYOK can run
+# Claude for text and OpenAI for images without a laptop CLI install.
 #
 # Keeps the auth-proxy Host/Origin loopback rewrite and disables AMR/Vela bootstrap.
 set -euo pipefail
@@ -108,6 +109,9 @@ NGINX
 
 APP_COMMAND=$(cat <<'APP'
 set -eu
+mkdir -p /app/.od/home /app/.od/agent-home
+export HOME=/app/.od/home
+export OD_AGENT_HOME=/app/.od/agent-home
 rm -rf /app/.od/vela-0.0.27 /home/open-design/.amr || true
 unset VELA_BIN VELA_OPENCODE_BIN VELA_TARBALL_URL || true
 exec node apps/daemon/dist/cli.js --no-open
@@ -159,6 +163,7 @@ redeploy_once() {
     PROXY_COMMAND="$PROXY_COMMAND" APP_COMMAND="$APP_COMMAND" \
     PROXY_READ_TIMEOUT="$proxy_timeout" \
     OPENAI_SECRET_ARN="${OPENAI_SECRET_ARN:-arn:aws:secretsmanager:us-east-1:211125341063:secret:open-design/openai-api-key-gp26Dx}" \
+    ANTHROPIC_SECRET_ARN="${ANTHROPIC_SECRET_ARN:-arn:aws:secretsmanager:us-east-1:211125341063:secret:open-design/anthropic-api-key-TB2kpx}" \
     OD_CLERK_ISSUER="${OD_CLERK_ISSUER:-https://clean-jay-54.clerk.accounts.dev}" \
     OD_CLERK_PUBLISHABLE_KEY="${OD_CLERK_PUBLISHABLE_KEY:-pk_test_Y2xlYW4tamF5LTU0LmNsZXJrLmFjY291bnRzLmRldiQ}" \
     python3 -c '
@@ -171,6 +176,7 @@ proxy_cmd = os.environ["PROXY_COMMAND"]
 app_cmd = os.environ["APP_COMMAND"]
 proxy_timeout = os.environ.get("PROXY_READ_TIMEOUT", "600s")
 openai_arn = os.environ.get("OPENAI_SECRET_ARN", "").strip()
+anthropic_arn = os.environ.get("ANTHROPIC_SECRET_ARN", "").strip()
 
 for key in (
     "taskDefinitionArn", "revision", "status", "requiresAttributes",
@@ -216,6 +222,9 @@ for c in td["containerDefinitions"]:
                 "pk_test_Y2xlYW4tamF5LTU0LmNsZXJrLmFjY291bnRzLmRldiQ",
             ).strip(),
         }
+        env["HOME"] = {"name": "HOME", "value": "/app/.od/home"}
+        env["OD_AGENT_HOME"] = {"name": "OD_AGENT_HOME", "value": "/app/.od/agent-home"}
+        env["OPENCODE_BIN"] = {"name": "OPENCODE_BIN", "value": "/usr/local/bin/opencode-cli"}
         c["environment"] = list(env.values())
         secrets = {s["name"]: s for s in c.get("secrets") or []}
         openai_from = openai_arn or (secrets.get("OPENAI_API_KEY") or {}).get("valueFrom") or (secrets.get("OD_OPENAI_API_KEY") or {}).get("valueFrom")
@@ -223,6 +232,10 @@ for c in td["containerDefinitions"]:
             secrets["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "valueFrom": openai_from}
             secrets["OD_OPENAI_API_KEY"] = {"name": "OD_OPENAI_API_KEY", "valueFrom": openai_from}
             secrets["OD_DEFAULT_OPENAI_API_KEY"] = {"name": "OD_DEFAULT_OPENAI_API_KEY", "valueFrom": openai_from}
+        anthropic_from = anthropic_arn or (secrets.get("ANTHROPIC_API_KEY") or {}).get("valueFrom") or (secrets.get("OD_DEFAULT_ANTHROPIC_API_KEY") or {}).get("valueFrom")
+        if anthropic_from:
+            secrets["ANTHROPIC_API_KEY"] = {"name": "ANTHROPIC_API_KEY", "valueFrom": anthropic_from}
+            secrets["OD_DEFAULT_ANTHROPIC_API_KEY"] = {"name": "OD_DEFAULT_ANTHROPIC_API_KEY", "valueFrom": anthropic_from}
         if secrets:
             c["secrets"] = list(secrets.values())
     elif c["name"] == "auth-proxy":
