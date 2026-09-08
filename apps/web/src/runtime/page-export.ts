@@ -97,6 +97,12 @@ function walkMarkdown(blocks: DraftBlock[], depth = 0): string[] {
       case 'timeline':
       case 'decision':
       case 'goals':
+      case 'spreadsheet':
+      case 'budget':
+      case 'calendar':
+      case 'habit':
+      case 'countdown':
+      case 'schedule':
         lines.push(...toolMarkdown(block, indent));
         break;
       default:
@@ -159,6 +165,28 @@ function toolMarkdown(block: DraftBlock, indent: string): string[] {
         const pct = item.target <= 0 ? 0 : Math.round((item.current / item.target) * 100);
         return `${indent}- ${item.title || 'Goal'}: ${item.current}/${item.target}${item.unit ? ` ${item.unit}` : ''} (${pct}%)`;
       });
+    case 'spreadsheet':
+      return tool.cells
+        .filter((row) => row.some((cell) => cell.trim()))
+        .map((row) => `${indent}| ${row.join(' | ')} |`);
+    case 'budget':
+      return tool.items.map(
+        (item) =>
+          `${indent}- [${item.flow}] ${item.date ? `${item.date} · ` : ''}${item.label || 'Item'}${item.category ? ` (${item.category})` : ''}: ${item.amount}`,
+      );
+    case 'calendar':
+      return tool.events.map((item) => `${indent}- ${item.date ? `${item.date} · ` : ''}${item.title || 'Event'}`);
+    case 'habit':
+      return tool.habits.map(
+        (item) => `${indent}- ${item.title || 'Habit'} (${item.stamps.length}/${tool.days})`,
+      );
+    case 'countdown':
+      return tool.items.map((item) => `${indent}- ${item.title || 'Event'}: ${item.date || 'no date'}`);
+    case 'schedule':
+      return tool.items.map(
+        (item) =>
+          `${indent}- ${item.day} ${item.start}${item.end ? `–${item.end}` : ''} ${item.title || 'Block'}`.trim(),
+      );
   }
 }
 

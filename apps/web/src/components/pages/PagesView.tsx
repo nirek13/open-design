@@ -6,8 +6,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, EmptyState, Skeleton } from '@open-design/components';
-import type { PageFont, PageStyle, PageTreeNode, WorkspacePage, WorkspacePageDetail } from '@open-design/contracts';
-import { DEFAULT_PAGE_STYLE } from '@open-design/contracts';
+import type { PageFont, PageStyle, PageTreeNode, PageVisibility, WorkspacePage, WorkspacePageDetail } from '@open-design/contracts';
+import { DEFAULT_PAGE_STYLE, partitionPageTree } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { NO_ORG_CONTEXT, useOptionalOrg } from '../../org/OrgContext';
 import {
@@ -314,6 +314,7 @@ export function PagesView({
   const [iconOpen, setIconOpen] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -390,6 +391,10 @@ export function PagesView({
     });
   }, [allPages, currentId, icon, openTabIds, page?.parentPageId, title]);
   const visibleTree = useMemo(() => filterTree(tree, query), [tree, query]);
+  const { publicPages: publicTree, privatePages: privateTree } = useMemo(
+    () => partitionPageTree(visibleTree),
+    [visibleTree],
+  );
   const favoritePages = useMemo(
     () => allPages.filter((item) => favorites.includes(item.id)),
     [allPages, favorites],
@@ -597,32 +602,36 @@ export function PagesView({
   );
 
   useEffect(() => {
-    if (!iconOpen && !coverOpen && !moreOpen && !customizeOpen && !moveOpen) return;
+    if (!iconOpen && !coverOpen && !moreOpen && !customizeOpen && !moveOpen && !shareOpen) return;
     const onDoc = (event: MouseEvent) => {
       const el = event.target as HTMLElement | null;
       if (el?.closest('[data-pages-popover]')) return;
       setIconOpen(false);
       setCoverOpen(false);
       setMoreOpen(false);
+      setShareOpen(false);
       setCustomizeOpen(false);
       setMoveOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
-  }, [iconOpen, coverOpen, moreOpen, customizeOpen, moveOpen]);
+  }, [iconOpen, coverOpen, moreOpen, customizeOpen, moveOpen, shareOpen]);
 
   const onCreate = async (
     parentPageId: string | null = null,
-    options: { open?: boolean; linkOnParent?: boolean } = {},
+    options: { open?: boolean; linkOnParent?: boolean; visibility?: PageVisibility } = {},
   ) => {
     if (!activeOrgId) return null;
     const open = options.open !== false;
     setBusy(true);
     try {
+      const parent = parentPageId ? allPages.find((item) => item.id === parentPageId) : null;
+      const visibility = options.visibility ?? parent?.visibility ?? 'public';
       const created = await createWorkspacePage(activeOrgId, {
         title: '',
         parentPageId,
         icon: null,
+        visibility,
         blocks: [{ type: 'paragraph', content: '' }],
         linkOnParent: options.linkOnParent ?? Boolean(parentPageId),
       });
@@ -901,10 +910,29 @@ export function PagesView({
         parentPageId: page.parentPageId,
         icon: iconRef.current,
         cover: coverRef.current,
+        visibility: page.visibility,
         blocks: blocksToServer(draftRef.current),
       });
       await loadTree();
       await openPage(created.id);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setPageVisibility = async (visibility: PageVisibility) => {
+    if (!activeOrgId || !currentId || page?.visibility === visibility) {
+      setShareOpen(false);
+      return;
+    }
+    setBusy(true);
+    try {
+      const saved = await updateWorkspacePage(activeOrgId, currentId, { visibility });
+      setPage(saved);
+      setShareOpen(false);
+      await loadTree();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -1081,16 +1109,66 @@ export function PagesView({
             </section>
           ) : null}
 
-          <section className={styles.section}>
-            <h2 className={styles.sectionTitle}>{t('pages.privatePages')}</h2>
-            {!loaded ? <Skeleton height={120} /> : null}
-            {loaded && visibleTree.length === 0 ? (
+          <section className={styles.section} data-testid="pages-section-public">
+            <div className={styles.sectionHead}>
+              <h2 className={styles.sectionTitle}>{t('pages.publicPages')}</h2>
+              <button
+                type="button"
+                className={styles.sectionAdd}
+                aria-label={t('pages.newPage')}
+                disabled={busy}
+                onClick={() => void onCreate(null, { visibility: 'public' })}
+              >
+                <Icon name="plus" size={12} />
+              </button>
+            </div>
+            {!loaded ? <Skeleton height={80} /> : null}
+            {loaded && publicTree.length === 0 ? (
               <p className={styles.muted}>{query ? t('pages.noMatch') : t('pages.emptyTitle')}</p>
             ) : null}
             {loaded ? (
               <div className={styles.pageList}>
                 <TreeItems
-                  nodes={visibleTree}
+                  nodes={publicTree}
+                  currentId={currentId}
+                  expanded={expanded}
+                  onToggle={(id) =>
+                    setExpanded((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    })
+                  }
+                  onSelect={(id) => void openPage(id).catch((err) => setError(errorMessage(err)))}
+                  onCreateChild={(id) => void onCreate(id)}
+                  onAskAi={(id) => focusAskComposer(id)}
+                  askLabel={t('pages.askAi')}
+                />
+              </div>
+            ) : null}
+          </section>
+
+          <section className={styles.section} data-testid="pages-section-private">
+            <div className={styles.sectionHead}>
+              <h2 className={styles.sectionTitle}>{t('pages.privatePages')}</h2>
+              <button
+                type="button"
+                className={styles.sectionAdd}
+                aria-label={t('pages.newPrivatePage')}
+                disabled={busy}
+                onClick={() => void onCreate(null, { visibility: 'private' })}
+              >
+                <Icon name="plus" size={12} />
+              </button>
+            </div>
+            {loaded && privateTree.length === 0 && query ? (
+              <p className={styles.muted}>{t('pages.noMatch')}</p>
+            ) : null}
+            {loaded ? (
+              <div className={styles.pageList}>
+                <TreeItems
+                  nodes={privateTree}
                   currentId={currentId}
                   expanded={expanded}
                   onToggle={(id) =>
@@ -1232,8 +1310,51 @@ export function PagesView({
                 <button
                   type="button"
                   className={styles.iconGhost}
+                  data-testid="pages-share"
+                  aria-label={t('pages.sharePage')}
+                  title={t('pages.sharePage')}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setShareOpen((open) => !open);
+                  }}
+                >
+                  <Icon name={page?.visibility === 'private' ? 'lock' : 'globe'} size={16} />
+                </button>
+                {shareOpen ? (
+                  <div className={styles.moreMenu} data-testid="pages-visibility" data-pages-popover>
+                    <div className={styles.menuLabel}>{t('pages.visibility')}</div>
+                    <button
+                      type="button"
+                      className={page?.visibility !== 'private' ? styles.visibilityActive : undefined}
+                      disabled={busy}
+                      onClick={() => void setPageVisibility('public')}
+                    >
+                      <span>{t('pages.visibilityPublic')}</span>
+                      <span className={styles.visibilityDetail}>{t('pages.visibilityPublicDetail')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={page?.visibility === 'private' ? styles.visibilityActive : undefined}
+                      disabled={busy}
+                      onClick={() => void setPageVisibility('private')}
+                    >
+                      <span>{t('pages.visibilityPrivate')}</span>
+                      <span className={styles.visibilityDetail}>{t('pages.visibilityPrivateDetail')}</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {currentId ? (
+              <div className={styles.moreWrap} data-pages-popover>
+                <button
+                  type="button"
+                  className={styles.iconGhost}
                   aria-label={t('pages.more')}
-                  onClick={() => setMoreOpen((open) => !open)}
+                  onClick={() => {
+                    setShareOpen(false);
+                    setMoreOpen((open) => !open);
+                  }}
                 >
                   <Icon name="more-horizontal" size={16} />
                 </button>

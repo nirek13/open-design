@@ -5,6 +5,7 @@
 
 import type { Express, Request as ExpressRequest, Response } from 'express';
 import {
+  LOCAL_OWNER_USER_ID,
   createApiError,
   type AppendPageBlocksRequest,
   type CreatePageRequest,
@@ -23,6 +24,7 @@ import { WorkspaceDataError } from '../workspace-data/errors.js';
 import {
   assertMemberRole,
   getActiveMemberForUser,
+  getOrgMember,
   getOrganization,
   listOrganizations,
 } from '../workspace-data/tenancy.js';
@@ -83,6 +85,26 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
     return first.id;
   }
 
+  /** Resolve the member the agent should act as so private pages stay hidden
+   * from everyone except their creator. Falls back to public-only when the
+   * chat project has no membership we can map. */
+  async function viewerIdForGrant(grant: { projectId: string; runId: string }, orgId: string): Promise<string> {
+    const project = getProject(appDb, grant.projectId);
+    const createdBy = typeof project?.createdBy === 'string' ? project.createdBy.trim() : '';
+    if (createdBy) {
+      const asUser = await getActiveMemberForUser(directory(), orgId, createdBy);
+      if (asUser) return asUser.id;
+      try {
+        const asMember = await getOrgMember(directory(), orgId, createdBy);
+        if (asMember.status === 'active') return asMember.id;
+      } catch {
+        // createdBy was not a member id in this org.
+      }
+    }
+    const local = await getActiveMemberForUser(directory(), orgId, LOCAL_OWNER_USER_ID);
+    return local?.id ?? grant.runId;
+  }
+
   function fail(res: Response, err: unknown): void {
     if (err instanceof WorkspaceDataError) {
       sendApiError(
@@ -121,18 +143,19 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
   app.get(
     '/api/orgs/:orgId/pages',
     handle(async (req, res) => {
-      const { orgId, db } = await scope(req);
+      const { orgId, member, db } = await scope(req);
       const parent = typeof req.query.parentPageId === 'string' ? req.query.parentPageId : undefined;
       const includeArchived = req.query.includeArchived === '1' || req.query.includeArchived === 'true';
       const tree = req.query.tree === '1' || req.query.tree === 'true';
       if (tree) {
-        res.json({ tree: await getPageTree(db, orgId) });
+        res.json({ tree: await getPageTree(db, orgId, member.id) });
         return;
       }
       res.json({
         pages: await listPages(db, orgId, {
           ...(parent !== undefined ? { parentPageId: parent } : {}),
           includeArchived,
+          viewerId: member.id,
         }),
       });
     }),
@@ -141,10 +164,10 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
   app.get(
     '/api/orgs/:orgId/pages/search',
     handle(async (req, res) => {
-      const { orgId, db } = await scope(req);
+      const { orgId, member, db } = await scope(req);
       const q = typeof req.query.q === 'string' ? req.query.q : typeof req.query.query === 'string' ? req.query.query : '';
       const limit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 25;
-      res.json({ hits: await searchPages(db, orgId, q, Number.isFinite(limit) ? limit : 25) });
+      res.json({ hits: await searchPages(db, orgId, q, Number.isFinite(limit) ? limit : 25, member.id) });
     }),
   );
 
@@ -160,8 +183,8 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
   app.get(
     '/api/orgs/:orgId/pages/:pageId',
     handle(async (req, res) => {
-      const { orgId, db } = await scope(req);
-      res.json({ page: await getPage(db, orgId, param(req, 'pageId')) });
+      const { orgId, db, member } = await scope(req);
+      res.json({ page: await getPage(db, orgId, param(req, 'pageId'), member.id) });
     }),
   );
 
@@ -178,8 +201,8 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
   app.patch(
     '/api/orgs/:orgId/pages/:pageId',
     handle(async (req, res) => {
-      const { orgId, db } = await scope(req);
-      const page = await updatePage(db, orgId, param(req, 'pageId'), (req.body ?? {}) as UpdatePageRequest);
+      const { orgId, db, member } = await scope(req);
+      const page = await updatePage(db, orgId, param(req, 'pageId'), (req.body ?? {}) as UpdatePageRequest, member.id);
       res.json({ page });
     }),
   );
@@ -187,12 +210,13 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
   app.put(
     '/api/orgs/:orgId/pages/:pageId/blocks',
     handle(async (req, res) => {
-      const { orgId, db } = await scope(req);
+      const { orgId, db, member } = await scope(req);
       const page = await setPageBlocks(
         db,
         orgId,
         param(req, 'pageId'),
         (req.body ?? {}) as SetPageBlocksRequest,
+        member.id,
       );
       res.json({ page });
     }),
@@ -201,8 +225,8 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
   app.post(
     '/api/orgs/:orgId/pages/:pageId/archive',
     handle(async (req, res) => {
-      const { orgId, db } = await scope(req);
-      const page = await archivePage(db, orgId, param(req, 'pageId'));
+      const { orgId, db, member } = await scope(req);
+      const page = await archivePage(db, orgId, param(req, 'pageId'), member.id);
       res.json({ page });
     }),
   );
@@ -210,12 +234,13 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
   app.post(
     '/api/orgs/:orgId/pages/:pageId/blocks/append',
     handle(async (req, res) => {
-      const { orgId, db } = await scope(req);
+      const { orgId, db, member } = await scope(req);
       const page = await appendPageBlocks(
         db,
         orgId,
         param(req, 'pageId'),
         (req.body ?? {}) as AppendPageBlocksRequest,
+        member.id,
       );
       res.json({ page });
     }),
@@ -224,12 +249,13 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
   app.post(
     '/api/orgs/:orgId/pages/:pageId/embed',
     handle(async (req, res) => {
-      const { orgId, db } = await scope(req);
+      const { orgId, db, member } = await scope(req);
       const page = await embedInPage(
         db,
         orgId,
         param(req, 'pageId'),
         (req.body ?? {}) as EmbedPageBlockRequest,
+        member.id,
       );
       res.json({ page });
     }),
@@ -274,8 +300,8 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
   app.get(
     '/api/orgs/:orgId/pages/by-record/:recordId',
     handle(async (req, res) => {
-      const { orgId, db } = await scope(req);
-      const page = await findPageByLinkedRecord(db, orgId, param(req, 'recordId'));
+      const { orgId, db, member } = await scope(req);
+      const page = await findPageByLinkedRecord(db, orgId, param(req, 'recordId'), member.id);
       res.json({ page });
     }),
   );
@@ -288,10 +314,11 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
       const grant = authorizeToolRequest(req, res, 'pages:list');
       if (!grant) return;
       const orgId = await orgIdForGrant(grant);
+      const viewerId = await viewerIdForGrant(grant, orgId);
       const db = manager.workspaceExecutor(orgId);
       const tree = req.body?.tree === true;
       if (tree) {
-        res.json({ orgId, tree: await getPageTree(db, orgId) });
+        res.json({ orgId, tree: await getPageTree(db, orgId, viewerId) });
         return;
       }
       res.json({
@@ -299,6 +326,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
         pages: await listPages(db, orgId, {
           parentPageId: req.body?.parentPageId,
           includeArchived: Boolean(req.body?.includeArchived),
+          viewerId,
         }),
       });
     }),
@@ -312,7 +340,8 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
       const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
-      res.json({ page: await getPage(manager.workspaceExecutor(orgId), orgId, pageId) });
+      const viewerId = await viewerIdForGrant(grant, orgId);
+      res.json({ page: await getPage(manager.workspaceExecutor(orgId), orgId, pageId, viewerId) });
     }),
   );
 
@@ -322,16 +351,18 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
       const grant = authorizeToolRequest(req, res, 'pages:upsert');
       if (!grant) return;
       const orgId = await orgIdForGrant(grant);
+      const viewerId = await viewerIdForGrant(grant, orgId);
       const page = await upsertPageFromAgent(
         manager.workspaceExecutor(orgId),
         orgId,
-        grant.runId,
+        viewerId,
         {
           pageId: req.body?.pageId,
           title: req.body?.title,
           parentPageId: req.body?.parentPageId,
           icon: req.body?.icon,
           cover: req.body?.cover,
+          visibility: req.body?.visibility,
           blocks: req.body?.blocks,
         },
       );
@@ -345,11 +376,12 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
       const grant = authorizeToolRequest(req, res, 'pages:search');
       if (!grant) return;
       const orgId = await orgIdForGrant(grant);
+      const viewerId = await viewerIdForGrant(grant, orgId);
       const query = String(req.body?.query ?? req.body?.q ?? '');
       const limit = typeof req.body?.limit === 'number' ? req.body.limit : 25;
       res.json({
         orgId,
-        hits: await searchPages(manager.workspaceExecutor(orgId), orgId, query, limit),
+        hits: await searchPages(manager.workspaceExecutor(orgId), orgId, query, limit, viewerId),
       });
     }),
   );
@@ -362,11 +394,13 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
       const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
+      const viewerId = await viewerIdForGrant(grant, orgId);
       const page = await appendPageBlocks(
         manager.workspaceExecutor(orgId),
         orgId,
         pageId,
         { blocks: req.body?.blocks ?? [] },
+        viewerId,
       );
       res.json({ page });
     }),
@@ -380,7 +414,8 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
       const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
-      const page = await archivePage(manager.workspaceExecutor(orgId), orgId, pageId);
+      const viewerId = await viewerIdForGrant(grant, orgId);
+      const page = await archivePage(manager.workspaceExecutor(orgId), orgId, pageId, viewerId);
       res.json({ page });
     }),
   );
@@ -393,7 +428,8 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
       const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
-      const page = await duplicatePage(manager.workspaceExecutor(orgId), orgId, grant.runId, pageId, {
+      const viewerId = await viewerIdForGrant(grant, orgId);
+      const page = await duplicatePage(manager.workspaceExecutor(orgId), orgId, viewerId, pageId, {
         recursive: Boolean(req.body?.recursive),
       });
       res.status(201).json({ page });
@@ -406,7 +442,8 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
       const grant = authorizeToolRequest(req, res, 'pages:scaffold');
       if (!grant) return;
       const orgId = await orgIdForGrant(grant);
-      const result = await scaffoldPages(manager.workspaceExecutor(orgId), orgId, grant.runId, {
+      const viewerId = await viewerIdForGrant(grant, orgId);
+      const result = await scaffoldPages(manager.workspaceExecutor(orgId), orgId, viewerId, {
         parentPageId: req.body?.parentPageId ?? null,
         pages: req.body?.pages ?? [],
       });
@@ -422,6 +459,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
       const orgId = await orgIdForGrant(grant);
       const pageId = String(req.body?.pageId ?? '');
       if (!pageId) throw new WorkspaceDataError('PAGE_NOT_FOUND', 404, 'pageId required');
+      const viewerId = await viewerIdForGrant(grant, orgId);
       const page = await embedInPage(manager.workspaceExecutor(orgId), orgId, pageId, {
         type: req.body?.type,
         targetPageId: req.body?.targetPageId,
@@ -429,7 +467,7 @@ export function registerPagesRoutes(app: Express, ctx: RegisterPagesRoutesDeps) 
         recordId: req.body?.recordId,
         path: req.body?.path,
         url: req.body?.url,
-      });
+      }, viewerId);
       res.json({ page });
     }),
   );

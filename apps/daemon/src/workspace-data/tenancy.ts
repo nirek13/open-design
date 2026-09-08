@@ -489,7 +489,7 @@ export async function listOrganizationsForUser(
             w.website_url AS "websiteUrl",
             w.default_design_system_id AS "defaultDesignSystemId",
             w.setup_completed_at AS "setupCompletedAt",
-            m.role,
+            m.role, m.id AS "memberId",
             (SELECT COUNT(*) FROM od_workspace_members mc
               WHERE mc.workspace_id = w.id AND mc.status = 'active') AS "memberCount"
        FROM od_workspaces w
@@ -502,6 +502,7 @@ export async function listOrganizationsForUser(
     ...normalizeOrg(row),
     role: row.role as OrgRole,
     memberCount: num(row.memberCount),
+    ...(typeof row.memberId === 'string' ? { memberId: row.memberId } : {}),
   }));
 }
 

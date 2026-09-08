@@ -946,6 +946,15 @@ const WORKSPACE_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
         ON od_calendar_bookings(booking_type_id, starts_at);
     `);
   },
+
+  // v22 — per-page public (org) vs private (creator-only) visibility.
+  (db) => {
+    db.exec(`
+      ALTER TABLE od_pages ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';
+      CREATE INDEX odx_pages_visibility
+        ON od_pages(workspace_id, visibility, created_by);
+    `);
+  },
 ];
 
 export class WorkspaceDbManager {

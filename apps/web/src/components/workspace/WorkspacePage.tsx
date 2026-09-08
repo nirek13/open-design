@@ -24,7 +24,7 @@ interface Props {
   tabs?: WorkspaceTab[];
   activeTab?: string;
   onTabChange?: (id: string) => void;
-  /** Full-bleed row directly under the header, e.g. the search field. */
+  /** Full-bleed row directly under the header. */
   banner?: ReactNode;
   children: ReactNode;
   testId?: string;
@@ -32,6 +32,8 @@ interface Props {
   fill?: boolean;
   /** Studio wash for the company hub. Other workspace pages stay flat paper. */
   studio?: boolean;
+  /** First-prompt launch: chrome recedes while the composer morphs into the studio. */
+  launching?: boolean;
 }
 
 export function WorkspacePage({
@@ -47,11 +49,13 @@ export function WorkspacePage({
   testId,
   fill = false,
   studio = false,
+  launching = false,
 }: Props) {
   return (
     <div
-      className={`${styles.root}${fill ? ` ${styles.rootFill}` : ''}${studio ? ` ${styles.studio}` : ''}`}
+      className={`${styles.root}${fill ? ` ${styles.rootFill}` : ''}${studio ? ` ${styles.studio}` : ''}${launching ? ` ${styles.launching}` : ''}`}
       data-testid={testId}
+      {...(launching ? { 'data-launching': 'true' } : {})}
     >
       <div className={`${styles.column}${fill ? ` ${styles.columnFill}` : ''}`}>
         <header className={styles.head}>

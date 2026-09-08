@@ -97,6 +97,24 @@ export const DEFAULT_PAGE_STYLE: Required<PageStyle> = {
   locked: false,
 };
 
+/**
+ * Who in the organization can open a page.
+ *
+ * `public` — every active member. `private` — only the creator.
+ * Not internet-public; pages never leave the organization.
+ */
+export const PAGE_VISIBILITIES = ['public', 'private'] as const;
+export type PageVisibility = (typeof PAGE_VISIBILITIES)[number];
+export const DEFAULT_PAGE_VISIBILITY: PageVisibility = 'public';
+
+export function parsePageVisibility(value: unknown): PageVisibility {
+  return value === 'private' ? 'private' : 'public';
+}
+
+export function isPageVisibility(value: unknown): value is PageVisibility {
+  return value === 'public' || value === 'private';
+}
+
 export function parsePageStyle(value: unknown): PageStyle {
   const raw = value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -245,6 +263,42 @@ export const PAGE_BLOCK_CATALOG: ReadonlyArray<{
     hint: 'Track progress toward a target',
     keywords: ['goal', 'okr', 'progress', 'kpi', 'target'],
   },
+  {
+    type: 'spreadsheet',
+    label: 'Spreadsheet',
+    hint: 'Grid with formulas like =SUM(A1:A4)',
+    keywords: ['spreadsheet', 'sheet', 'excel', 'formula', 'cells', 'numbers', 'calc'],
+  },
+  {
+    type: 'budget',
+    label: 'Budget',
+    hint: 'Income and expenses with a running total',
+    keywords: ['budget', 'money', 'expense', 'income', 'finance', 'spend', 'ledger'],
+  },
+  {
+    type: 'calendar',
+    label: 'Calendar',
+    hint: 'A month of dated events',
+    keywords: ['calendar', 'month', 'events', 'dates', 'agenda'],
+  },
+  {
+    type: 'habit',
+    label: 'Habit tracker',
+    hint: 'Daily check-ins for habits',
+    keywords: ['habit', 'streak', 'daily', 'tracker', 'routine'],
+  },
+  {
+    type: 'countdown',
+    label: 'Countdown',
+    hint: 'Days until a date',
+    keywords: ['countdown', 'days', 'until', 'deadline', 'launch'],
+  },
+  {
+    type: 'schedule',
+    label: 'Weekly schedule',
+    hint: 'Plan the week by day and time',
+    keywords: ['schedule', 'week', 'planner', 'timetable', 'slots'],
+  },
 ];
 
 export interface WorkspacePage {
@@ -259,6 +313,8 @@ export interface WorkspacePage {
   linkedTableId: string | null;
   /** Font, width, lock — Notion's "Customize page". */
   style: PageStyle;
+  /** Org-wide (`public`) or creator-only (`private`). */
+  visibility: PageVisibility;
   position: number;
   createdBy: string;
   createdAt: number;
@@ -305,6 +361,8 @@ export interface CreatePageRequest {
   linkedRecordId?: string | null;
   linkedTableId?: string | null;
   style?: PageStyle;
+  /** Defaults to the parent's visibility, or `public` at the root. */
+  visibility?: PageVisibility;
   /** Optional initial block tree. Empty page gets one empty paragraph. */
   blocks?: PageBlockInput[];
   /**
@@ -322,6 +380,7 @@ export interface UpdatePageRequest {
   linkedRecordId?: string | null;
   linkedTableId?: string | null;
   style?: PageStyle;
+  visibility?: PageVisibility;
   position?: number;
 }
 
@@ -346,8 +405,51 @@ export interface ScaffoldPageNode {
   title: string;
   icon?: string | null;
   cover?: string | null;
+  visibility?: PageVisibility;
   blocks?: PageBlockInput[];
   children?: ScaffoldPageNode[];
+}
+
+/** Rebuild a tree, hoisting pages whose parent is missing from the set. */
+export function buildPageTree(pages: WorkspacePage[]): PageTreeNode[] {
+  const ids = new Set(pages.map((page) => page.id));
+  const byParent = new Map<string | null, WorkspacePage[]>();
+  for (const page of pages) {
+    const parentId = page.parentPageId && ids.has(page.parentPageId) ? page.parentPageId : null;
+    const list = byParent.get(parentId) ?? [];
+    list.push(page);
+    byParent.set(parentId, list);
+  }
+  for (const list of byParent.values()) {
+    list.sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
+  }
+  const walk = (parentId: string | null): PageTreeNode[] =>
+    (byParent.get(parentId) ?? []).map((page) => ({ page, children: walk(page.id) }));
+  return walk(null);
+}
+
+function flattenPageTree(nodes: PageTreeNode[]): WorkspacePage[] {
+  const pages: WorkspacePage[] = [];
+  const walk = (list: PageTreeNode[]) => {
+    for (const node of list) {
+      pages.push(node.page);
+      walk(node.children);
+    }
+  };
+  walk(nodes);
+  return pages;
+}
+
+/** Split a mixed tree into Public and Private sidebar sections. */
+export function partitionPageTree(nodes: PageTreeNode[]): {
+  publicPages: PageTreeNode[];
+  privatePages: PageTreeNode[];
+} {
+  const pages = flattenPageTree(nodes);
+  return {
+    publicPages: buildPageTree(pages.filter((page) => page.visibility !== 'private')),
+    privatePages: buildPageTree(pages.filter((page) => page.visibility === 'private')),
+  };
 }
 
 export interface ScaffoldPagesRequest {

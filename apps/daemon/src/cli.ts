@@ -388,9 +388,9 @@ const TEAM_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'private', 'starred', '
 const PAGES_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'title', 'parent', 'icon', 'cover', 'data-file',
   'query', 'q', 'limit', 'type', 'target', 'table', 'record', 'path', 'url',
-  'channel', 'to', 'message', 'team', 'except',
+  'channel', 'to', 'message', 'team', 'except', 'visibility',
 ]);
-const PAGES_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'tree', 'recursive']);
+const PAGES_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'tree', 'recursive', 'private']);
 const CALENDAR_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'from', 'to', 'source', 'file', 'url', 'name', 'color',
   'title', 'starts', 'ends', 'location', 'description', 'prompt-file', 'database-id',
@@ -14388,7 +14388,7 @@ Subcommands:
   get <page-id>                Page with full block tree
   search <query>               Search titles and block text
   create [--title <t>]         Create a page (--parent <id>, --data-file blocks JSON)
-  update <page-id>             Update title/parent/icon (--title, --parent, --icon, --cover)
+  update <page-id>             Update title/parent/icon/visibility (--title, --parent, --icon, --cover, --visibility)
   set-blocks <page-id>         Replace block tree (--data-file <path|->)
   append <page-id>             Append blocks (--data-file <path|->)
   embed <page-id>              Embed a page, table, record, artifact, bookmark, or live URL
@@ -14404,6 +14404,8 @@ Options:
   --parent <page-id>    Parent page (omit for top-level)
   --icon <emoji>        Optional icon
   --cover <id-or-url>   Cover preset id or image URL
+  --visibility <v>      public (organization) or private (only you)
+  --private              Shortcut for --visibility private
   --query <text>        Search query
   --limit <n>           Search hit cap
   --type <kind>         Embed kind: page|database|record|artifact|bookmark|embed|image|video|audio|file|pdf
@@ -14525,8 +14527,9 @@ async function runPages(args) {
     }
     for (const page of data.pages ?? []) {
       const icon = page.icon ? `${page.icon} ` : '';
+      const vis = page.visibility === 'private' ? '\tprivate' : '';
       const parent = page.parentPageId ? `\tparent=${page.parentPageId}` : '';
-      console.log(`${icon}${page.title}\t${page.id}${parent}`);
+      console.log(`${icon}${page.title}\t${page.id}${parent}${vis}`);
     }
     if (!data.pages?.length) console.log('[pages] no pages yet — od pages create --title "Untitled"');
     return;
@@ -14555,6 +14558,9 @@ async function runPages(args) {
       parentPageId: flags.parent ?? file?.parentPageId ?? null,
       icon: flags.icon ?? file?.icon ?? null,
       cover: flags.cover ?? file?.cover ?? null,
+      visibility: flags.private
+        ? 'private'
+        : (flags.visibility ?? file?.visibility ?? undefined),
       blocks: file?.blocks ?? file ?? undefined,
     };
     if (Array.isArray(file)) body.blocks = file;
@@ -14567,7 +14573,7 @@ async function runPages(args) {
   if (sub === 'update') {
     const id = positionals[1];
     if (!id) {
-      console.error('usage: od pages update <page-id> [--title] [--parent] [--icon]');
+      console.error('usage: od pages update <page-id> [--title] [--parent] [--icon] [--visibility public|private]');
       process.exit(2);
     }
     const body = {};
@@ -14575,6 +14581,8 @@ async function runPages(args) {
     if (flags.parent !== undefined) body.parentPageId = flags.parent || null;
     if (flags.icon !== undefined) body.icon = flags.icon || null;
     if (flags.cover !== undefined) body.cover = flags.cover || null;
+    if (flags.private) body.visibility = 'private';
+    else if (flags.visibility !== undefined) body.visibility = flags.visibility;
     const data = await request('PATCH', `${scope}/${encodeURIComponent(id)}`, body);
     if (flags.json) return writeJsonOut(data);
     console.log(`[pages] updated ${data.page.id}\t${data.page.title}`);

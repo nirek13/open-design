@@ -592,7 +592,7 @@ function renderMetadataBlock(
     const title = metadata.pageContext.title?.trim() || 'Untitled';
     const icon = metadata.pageContext.icon?.trim();
     lines.push(
-      `- **pageContext**: organization wiki page ${metadata.pageContext.pageId} (${icon ? `${icon} ` : ''}“${title}”). The user launched this chat from that page, which is open as a tab in the notes tab bar. Put work on that page, or create a new child under it (it will open as a tab), via \`tools pages\`. Prefer native page tools (board, checklist, assigner, poll, timeline, decision, goals) over generating HTML artifacts to embed. Do not edit other existing pages that are not in the tab bar, and do not invent markdown or HTML files for this wiki.`,
+      `- **pageContext**: organization wiki page ${metadata.pageContext.pageId} (${icon ? `${icon} ` : ''}“${title}”). The user launched this chat from that page, which is open as a tab in the notes tab bar. Put work on that page, or create a new child under it (it will open as a tab), via \`tools pages\`. Prefer native page tools (board, checklist, assigner, poll, timeline, decision, goals, spreadsheet, budget, calendar, habit, countdown, schedule) over generating HTML artifacts to embed. Do not edit other existing pages that are not in the tab bar, and do not invent markdown or HTML files for this wiki.`,
     );
   }
   lines.push(...platformLines(metadata));

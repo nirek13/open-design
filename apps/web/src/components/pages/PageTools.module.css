@@ -330,6 +330,185 @@
   font-size: 0.8rem;
 }
 
+.sheetHint {
+  padding: 8px 12px 0;
+  font-size: 0.72rem;
+  color: var(--text-muted, #74716b);
+}
+
+.sheetWrap {
+  overflow: auto;
+  max-width: 100%;
+}
+
+.sheet {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.82rem;
+}
+
+.sheet th,
+.sheet td {
+  border: 1px solid var(--border, #e1e5eb);
+  padding: 0;
+}
+
+.sheet th {
+  background: var(--bg-subtle, #f4f5f7);
+  font-weight: 600;
+  font-size: 0.72rem;
+  color: var(--text-muted, #74716b);
+  text-align: center;
+  min-width: 28px;
+  padding: 4px 6px;
+}
+
+.sheet td {
+  min-width: 88px;
+}
+
+.sheet td[data-formula='true'] .sheetInput {
+  color: var(--text-muted, #74716b);
+  font-variant-numeric: tabular-nums;
+}
+
+.sheetInput,
+.amount {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+}
+
+.rowActions {
+  display: flex;
+  gap: 4px;
+}
+
+.budgetTotals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px 0;
+  font-size: 0.8rem;
+  color: var(--text-muted, #74716b);
+}
+
+.budgetTotals strong {
+  color: var(--text, #1a1916);
+  font-weight: 650;
+}
+
+.budgetTotals span[data-neg='true'] strong {
+  color: #b42318;
+}
+
+.budgetRow {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 100px 72px 88px 22px;
+  gap: 8px;
+  align-items: center;
+}
+
+.amount {
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.monthHead {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px 4px;
+}
+
+.monthGrid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+  padding: 6px 8px;
+}
+
+.monthDow {
+  font-size: 0.68rem;
+  color: var(--text-muted, #74716b);
+  text-align: center;
+  padding: 4px 0;
+}
+
+.monthDay {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 52px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: var(--bg-subtle, #f4f5f7);
+  color: inherit;
+  font: inherit;
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.monthDay[data-out='true'] {
+  opacity: 0.35;
+}
+
+.monthDay em {
+  font-style: normal;
+  font-size: 0.65rem;
+  color: var(--text-muted, #74716b);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.habitHead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(7, 28px) 22px;
+  gap: 8px;
+  align-items: end;
+  padding: 8px 10px 0;
+  font-size: 0.68rem;
+  color: var(--text-muted, #74716b);
+}
+
+.habitDow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1;
+}
+
+.habitRow,
+.countdownRow,
+.scheduleRow {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+}
+
+.countdownRow {
+  grid-template-columns: minmax(0, 1fr) 130px auto 22px;
+}
+
+.scheduleRow {
+  grid-template-columns: 88px 72px 72px minmax(0, 1fr) 22px;
+}
+
 @media (max-width: 720px) {
   .assignRow {
     grid-template-columns: minmax(0, 1fr) 22px;
@@ -353,5 +532,23 @@
   .goal .metric,
   .goal .unit {
     grid-column: 1 / -1;
+  }
+
+  .budgetRow,
+  .countdownRow,
+  .scheduleRow,
+  .habitRow {
+    grid-template-columns: minmax(0, 1fr) 22px;
+  }
+
+  .budgetRow .date,
+  .budgetRow .unit,
+  .budgetRow .select,
+  .budgetRow .amount,
+  .countdownRow .date,
+  .countdownRow .count,
+  .scheduleRow .select,
+  .scheduleRow .date {
+    grid-column: 1;
   }
 }

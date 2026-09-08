@@ -65,6 +65,7 @@ export * from './api/workspace-intent.js';
 export * from './api/workspace-views.js';
 export * from './api/pages.js';
 export * from './api/page-tools.js';
+export * from './api/page-spreadsheet.js';
 export * from './api/calendar.js';
 export * from './api/mail.js';
 export * from './api/mail-agent.js';

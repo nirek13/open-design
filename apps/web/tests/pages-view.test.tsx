@@ -53,6 +53,7 @@ function pageDetail(overrides: Partial<WorkspacePageDetail> = {}): WorkspacePage
     linkedRecordId: null,
     linkedTableId: null,
     style: {},
+    visibility: 'public',
     position: 0,
     createdBy: 'wsm-1',
     createdAt: 1,
@@ -116,7 +117,8 @@ describe('composePagesWikiPrompt', () => {
     expect(prompt).toContain('$OD_PROJECT_ID');
     expect(prompt).toContain('board');
     expect(prompt).toContain('assigner');
-    expect(prompt).toContain('Native tools first');
+    expect(prompt).toContain('spreadsheet');
+    expect(prompt).toContain('budget');
     expect(prompt).toContain('Do not generate HTML/JS');
     expect(prompt).toContain('notes tab bar');
     expect(prompt).toContain('Do not edit other existing pages');
@@ -295,6 +297,48 @@ describe('PagesView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Customize page' }));
     expect(screen.getByTestId('pages-customize')).toBeTruthy();
     expect(screen.getByText('Full width')).toBeTruthy();
+  });
+
+  it('splits public and private notes and lets the owner change visibility', async () => {
+    const handbook = pageDetail();
+    const draft = pageDetail({
+      id: 'page-private',
+      title: 'Salary notes',
+      visibility: 'private',
+    });
+    vi.spyOn(registry, 'fetchPageTree').mockResolvedValue([
+      { page: handbook, children: [] },
+      { page: draft, children: [] },
+    ]);
+    vi.spyOn(registry, 'fetchWorkspacePage').mockImplementation(async (_org, pageId) =>
+      pageId === draft.id ? draft : handbook,
+    );
+    const update = vi.spyOn(registry, 'updateWorkspacePage').mockImplementation(async (_org, pageId, input) => {
+      const base = pageId === draft.id ? draft : handbook;
+      return { ...base, ...input, visibility: input.visibility ?? base.visibility };
+    });
+    const create = vi.spyOn(registry, 'createWorkspacePage').mockResolvedValue(
+      pageDetail({ id: 'page-new-private', title: '', visibility: 'private' }),
+    );
+
+    renderPages();
+    expect(await screen.findByTestId('pages-section-public')).toBeTruthy();
+    expect(screen.getByTestId('pages-section-private')).toBeTruthy();
+    expect(within(screen.getByTestId('pages-section-public')).getByText('Handbook')).toBeTruthy();
+    expect(within(screen.getByTestId('pages-section-private')).getByText('Salary notes')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('pages-share'));
+    expect(screen.getByTestId('pages-visibility')).toBeTruthy();
+    fireEvent.click(within(screen.getByTestId('pages-visibility')).getByText('Private'));
+    await waitFor(() => expect(update).toHaveBeenCalledWith('ws-1', 'page-1', { visibility: 'private' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'New private page' }));
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        'ws-1',
+        expect.objectContaining({ visibility: 'private' }),
+      ),
+    );
   });
 
   it('opens a send picker so the page can go to a teammate', async () => {
@@ -1027,5 +1071,47 @@ describe('BlockEditor', () => {
     fireEvent.change(screen.getByLabelText('Assignee'), { target: { value: 'user-ada' } });
     expect((screen.getByLabelText('Assignee') as HTMLSelectElement).value).toBe('user-ada');
     expect((screen.getByLabelText('Status') as HTMLSelectElement).value).toBe('todo');
+  });
+
+  it('inserts a spreadsheet and evaluates a formula', () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([emptyBlock()]);
+      return <BlockEditor blocks={blocks} onChange={setBlocks} />;
+    }
+    render(<Harness />);
+    const textbox = screen.getByRole('textbox');
+    fireEvent.focus(textbox);
+    fireEvent.input(textbox, { target: { textContent: '/spreadsheet' } });
+    fireEvent.mouseDown(screen.getByRole('option', { name: /Spreadsheet/ }));
+    expect(screen.getByTestId('pages-tool-spreadsheet')).toBeTruthy();
+    const a1 = screen.getByLabelText('A1');
+    fireEvent.focus(a1);
+    fireEvent.change(a1, { target: { value: '2' } });
+    const b1 = screen.getByLabelText('B1');
+    fireEvent.focus(b1);
+    fireEvent.change(b1, { target: { value: '3' } });
+    const c1 = screen.getByLabelText('C1');
+    fireEvent.focus(c1);
+    fireEvent.change(c1, { target: { value: '=A1+B1' } });
+    fireEvent.blur(c1);
+    expect((screen.getByLabelText('C1') as HTMLInputElement).value).toBe('5');
+  });
+
+  it('inserts a budget and totals income against expenses', () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState<DraftBlock[]>([emptyBlock()]);
+      return <BlockEditor blocks={blocks} onChange={setBlocks} />;
+    }
+    render(<Harness />);
+    const textbox = screen.getByRole('textbox');
+    fireEvent.focus(textbox);
+    fireEvent.input(textbox, { target: { textContent: '/budget' } });
+    fireEvent.mouseDown(screen.getByRole('option', { name: /Budget/ }));
+    expect(screen.getByTestId('pages-tool-budget')).toBeTruthy();
+    const amounts = screen.getAllByLabelText('Amount');
+    fireEvent.change(amounts[0]!, { target: { value: '100' } });
+    fireEvent.change(amounts[1]!, { target: { value: '40' } });
+    expect(screen.getByTestId('pages-tool-budget').textContent).toContain('Left');
+    expect(screen.getByTestId('pages-tool-budget').textContent).toContain('$60');
   });
 });

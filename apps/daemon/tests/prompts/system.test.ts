@@ -120,7 +120,7 @@ describe('composeSystemPrompt', () => {
 
     expect(prompt).toContain('pageContext');
     expect(prompt).toContain('Prefer native page tools');
-    expect(prompt).toContain('board, checklist, assigner, poll, timeline, decision, goals');
+    expect(prompt).toContain('board, checklist, assigner, poll, timeline, decision, goals, spreadsheet, budget, calendar, habit, countdown, schedule');
     expect(prompt).toContain('over generating HTML artifacts to embed');
   });
 

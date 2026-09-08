@@ -124,6 +124,7 @@ import {
   amrArtifactUpgradeHomeMockOffer,
   type AmrArtifactUpgradeHomeOffer,
 } from './runtime/amr-artifact-upgrade';
+import { withStudioEnterTransition } from './runtime/studio-enter';
 import {
   createDesignSystemProjectFromProject,
   createProject,
@@ -1890,19 +1891,26 @@ function AppInner() {
           }
         : result.project;
       rememberLocalProject(project.id);
-      flushSync(() => {
-        setProjects((curr) => [
-          project,
-          ...curr.filter((p) => p.id !== project.id),
-        ]);
-      });
       const projectRoute = {
         kind: 'project',
         projectId: project.id,
         fileName: null,
       } as const;
-      openWorkspaceTab(projectRoute);
-      navigate(projectRoute);
+      const revealStudio = () => {
+        flushSync(() => {
+          setProjects((curr) => [
+            project,
+            ...curr.filter((p) => p.id !== project.id),
+          ]);
+        });
+        openWorkspaceTab(projectRoute);
+        navigate(projectRoute);
+      };
+      if (input.autoSendFirstMessage) {
+        await withStudioEnterTransition(revealStudio);
+      } else {
+        revealStudio();
+      }
       if (metadata?.visibility === 'public') {
         void publishProjectNow({
           projectId: project.id,

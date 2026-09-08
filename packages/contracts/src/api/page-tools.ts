@@ -1,8 +1,11 @@
-// Interactive tools that live inside a page block (kanban, checklist, …).
+// Interactive tools that live inside a page block (kanban, checklist,
+// spreadsheet, budget, …).
 //
 // These are Substrate-specific — Notion's equivalent is a database with a
 // board/list view. We keep the payload on the block itself so a page can
 // carry a working tool without standing up a workspace table.
+
+import { padSheet, sheetPlainText } from './page-spreadsheet.js';
 
 export const PAGE_TOOL_TYPES = [
   'board',
@@ -12,6 +15,12 @@ export const PAGE_TOOL_TYPES = [
   'timeline',
   'decision',
   'goals',
+  'spreadsheet',
+  'budget',
+  'calendar',
+  'habit',
+  'countdown',
+  'schedule',
 ] as const;
 
 export type PageToolType = (typeof PAGE_TOOL_TYPES)[number];
@@ -119,6 +128,81 @@ export interface GoalsTool {
   items: GoalItem[];
 }
 
+export interface SpreadsheetTool {
+  kind: 'spreadsheet';
+  cells: string[][];
+}
+
+export const BUDGET_KINDS = ['income', 'expense'] as const;
+export type BudgetKind = (typeof BUDGET_KINDS)[number];
+
+export interface BudgetItem {
+  id: string;
+  date: string;
+  label: string;
+  category: string;
+  amount: number;
+  flow: BudgetKind;
+}
+
+export interface BudgetTool {
+  kind: 'budget';
+  currency: string;
+  items: BudgetItem[];
+}
+
+export interface CalendarEventItem {
+  id: string;
+  date: string;
+  title: string;
+}
+
+export interface CalendarTool {
+  kind: 'calendar';
+  year: number;
+  month: number;
+  events: CalendarEventItem[];
+}
+
+export interface HabitItem {
+  id: string;
+  title: string;
+  stamps: string[];
+}
+
+export interface HabitTool {
+  kind: 'habit';
+  days: number;
+  habits: HabitItem[];
+}
+
+export interface CountdownItem {
+  id: string;
+  title: string;
+  date: string;
+}
+
+export interface CountdownTool {
+  kind: 'countdown';
+  items: CountdownItem[];
+}
+
+export const WEEK_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
+export type WeekDay = (typeof WEEK_DAYS)[number];
+
+export interface ScheduleItem {
+  id: string;
+  day: WeekDay;
+  start: string;
+  end: string;
+  title: string;
+}
+
+export interface ScheduleTool {
+  kind: 'schedule';
+  items: ScheduleItem[];
+}
+
 export type PageToolPayload =
   | BoardTool
   | ChecklistTool
@@ -126,7 +210,13 @@ export type PageToolPayload =
   | PollTool
   | TimelineTool
   | DecisionTool
-  | GoalsTool;
+  | GoalsTool
+  | SpreadsheetTool
+  | BudgetTool
+  | CalendarTool
+  | HabitTool
+  | CountdownTool
+  | ScheduleTool;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -299,6 +389,174 @@ function parseGoals(raw: Record<string, unknown>): GoalsTool {
   };
 }
 
+function parseIsoDateParts(value: string): { y: number; m: number; d: number } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (!Number.isInteger(y) || m < 1 || m > 12 || d < 1 || d > 31) return null;
+  return { y, m, d };
+}
+
+export function formatIsoDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function monthCells(year: number, month: number): Array<{ date: string; inMonth: boolean }> {
+  const first = new Date(year, month - 1, 1);
+  const start = new Date(year, month - 1, 1 - first.getDay());
+  return Array.from({ length: 42 }, (_, i) => {
+    const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    return {
+      date: formatIsoDate(day),
+      inMonth: day.getMonth() === month - 1,
+    };
+  });
+}
+
+export function daysUntil(isoDate: string, now = new Date()): number | null {
+  const parsed = parseIsoDateParts(isoDate);
+  if (!parsed) return null;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const target = new Date(parsed.y, parsed.m - 1, parsed.d).getTime();
+  return Math.round((target - today) / 86_400_000);
+}
+
+export function habitDayRange(days: number, now = new Date()): string[] {
+  const count = Math.min(Math.max(Math.round(days) || 7, 1), 31);
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (count - 1));
+  return Array.from({ length: count }, (_, i) =>
+    formatIsoDate(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i)),
+  );
+}
+
+export function budgetTotals(tool: BudgetTool): { income: number; expense: number; balance: number } {
+  let income = 0;
+  let expense = 0;
+  for (const item of tool.items) {
+    if (item.flow === 'income') income += item.amount;
+    else expense += item.amount;
+  }
+  return { income, expense, balance: income - expense };
+}
+
+function parseBudgetFlow(value: unknown): BudgetKind {
+  if (value === 'income' || value === 'in') return 'income';
+  return 'expense';
+}
+
+function parseWeekDay(value: unknown): WeekDay {
+  return WEEK_DAYS.includes(value as WeekDay) ? (value as WeekDay) : 'mon';
+}
+
+function parseSpreadsheet(raw: Record<string, unknown>): SpreadsheetTool {
+  const cellsRaw = asList(raw.cells);
+  const cells = cellsRaw.map((row) =>
+    (Array.isArray(row) ? row : []).map((cell) => asString(cell)),
+  );
+  const rows = Math.max(asNumber(raw.rows, cells.length), 1);
+  const cols = Math.max(
+    asNumber(raw.cols, cells.reduce((max, row) => Math.max(max, row.length), 0)),
+    1,
+  );
+  return {
+    kind: 'spreadsheet',
+    cells: padSheet(cells.length > 0 ? cells : defaultSpreadsheet().cells, rows, cols),
+  };
+}
+
+function parseBudget(raw: Record<string, unknown>): BudgetTool {
+  const items = asList(raw.items).map((entry) => {
+    const item = asRecord(entry);
+    return {
+      id: asString(item.id) || newPageToolId(),
+      date: asString(item.date),
+      label: asString(item.label) || asString(item.title) || asString(item.name),
+      category: asString(item.category),
+      amount: Math.max(asNumber(item.amount), 0),
+      flow: parseBudgetFlow(item.flow ?? item.kind ?? item.type),
+    };
+  });
+  return {
+    kind: 'budget',
+    currency: asString(raw.currency, '$') || '$',
+    items: items.length > 0 ? items : defaultBudget().items,
+  };
+}
+
+function parseCalendarTool(raw: Record<string, unknown>): CalendarTool {
+  const now = new Date();
+  const events = asList(raw.events).map((entry) => {
+    const item = asRecord(entry);
+    return {
+      id: asString(item.id) || newPageToolId(),
+      date: asString(item.date),
+      title: asString(item.title) || asString(item.label),
+    };
+  });
+  const year = asNumber(raw.year, now.getFullYear());
+  const month = asNumber(raw.month, now.getMonth() + 1);
+  return {
+    kind: 'calendar',
+    year: year >= 1970 && year <= 9999 ? Math.round(year) : now.getFullYear(),
+    month: month >= 1 && month <= 12 ? Math.round(month) : now.getMonth() + 1,
+    events,
+  };
+}
+
+function parseHabit(raw: Record<string, unknown>): HabitTool {
+  const habits = asList(raw.habits).map((entry) => {
+    const item = asRecord(entry);
+    return {
+      id: asString(item.id) || newPageToolId(),
+      title: asString(item.title) || asString(item.text),
+      stamps: asList(item.stamps).map((stamp) => asString(stamp)).filter(Boolean),
+    };
+  });
+  const days = Math.min(Math.max(Math.round(asNumber(raw.days, 7)) || 7, 1), 31);
+  return {
+    kind: 'habit',
+    days,
+    habits: habits.length > 0 ? habits : defaultHabit().habits,
+  };
+}
+
+function parseCountdown(raw: Record<string, unknown>): CountdownTool {
+  const items = asList(raw.items).map((entry) => {
+    const item = asRecord(entry);
+    return {
+      id: asString(item.id) || newPageToolId(),
+      title: asString(item.title) || asString(item.label),
+      date: asString(item.date),
+    };
+  });
+  return {
+    kind: 'countdown',
+    items: items.length > 0 ? items : defaultCountdown().items,
+  };
+}
+
+function parseSchedule(raw: Record<string, unknown>): ScheduleTool {
+  const items = asList(raw.items).map((entry) => {
+    const item = asRecord(entry);
+    return {
+      id: asString(item.id) || newPageToolId(),
+      day: parseWeekDay(item.day),
+      start: asString(item.start),
+      end: asString(item.end),
+      title: asString(item.title) || asString(item.label),
+    };
+  });
+  return {
+    kind: 'schedule',
+    items: items.length > 0 ? items : defaultSchedule().items,
+  };
+}
+
 export function defaultBoard(): BoardTool {
   return {
     kind: 'board',
@@ -369,6 +627,65 @@ export function defaultGoals(): GoalsTool {
   };
 }
 
+export function defaultSpreadsheet(): SpreadsheetTool {
+  return {
+    kind: 'spreadsheet',
+    cells: padSheet([], 6, 4),
+  };
+}
+
+export function defaultBudget(): BudgetTool {
+  return {
+    kind: 'budget',
+    currency: '$',
+    items: [
+      { id: newPageToolId(), date: '', label: '', category: '', amount: 0, flow: 'income' },
+      { id: newPageToolId(), date: '', label: '', category: '', amount: 0, flow: 'expense' },
+    ],
+  };
+}
+
+export function defaultCalendar(): CalendarTool {
+  const now = new Date();
+  return {
+    kind: 'calendar',
+    year: now.getFullYear(),
+    month: now.getMonth() + 1,
+    events: [],
+  };
+}
+
+export function defaultHabit(): HabitTool {
+  return {
+    kind: 'habit',
+    days: 7,
+    habits: [
+      { id: newPageToolId(), title: '', stamps: [] },
+      { id: newPageToolId(), title: '', stamps: [] },
+    ],
+  };
+}
+
+export function defaultCountdown(): CountdownTool {
+  return {
+    kind: 'countdown',
+    items: [{ id: newPageToolId(), title: '', date: '' }],
+  };
+}
+
+export function defaultSchedule(): ScheduleTool {
+  return {
+    kind: 'schedule',
+    items: WEEK_DAYS.slice(0, 5).map((day) => ({
+      id: newPageToolId(),
+      day,
+      start: '',
+      end: '',
+      title: '',
+    })),
+  };
+}
+
 export function defaultPageTool(type: PageToolType): PageToolPayload {
   switch (type) {
     case 'board':
@@ -385,6 +702,18 @@ export function defaultPageTool(type: PageToolType): PageToolPayload {
       return defaultDecision();
     case 'goals':
       return defaultGoals();
+    case 'spreadsheet':
+      return defaultSpreadsheet();
+    case 'budget':
+      return defaultBudget();
+    case 'calendar':
+      return defaultCalendar();
+    case 'habit':
+      return defaultHabit();
+    case 'countdown':
+      return defaultCountdown();
+    case 'schedule':
+      return defaultSchedule();
   }
 }
 
@@ -408,6 +737,18 @@ export function parsePageTool(type: PageToolType, value: unknown): PageToolPaylo
       return parseDecision(raw);
     case 'goals':
       return parseGoals(raw);
+    case 'spreadsheet':
+      return parseSpreadsheet(raw);
+    case 'budget':
+      return parseBudget(raw);
+    case 'calendar':
+      return parseCalendarTool(raw);
+    case 'habit':
+      return parseHabit(raw);
+    case 'countdown':
+      return parseCountdown(raw);
+    case 'schedule':
+      return parseSchedule(raw);
   }
 }
 
@@ -435,5 +776,20 @@ export function pageToolPlainText(payload: PageToolPayload): string {
         .join(' ');
     case 'goals':
       return payload.items.map((item) => item.title).filter(Boolean).join(' ');
+    case 'spreadsheet':
+      return sheetPlainText(payload.cells);
+    case 'budget':
+      return payload.items
+        .flatMap((item) => [item.label, item.category, item.date])
+        .filter(Boolean)
+        .join(' ');
+    case 'calendar':
+      return payload.events.flatMap((item) => [item.title, item.date]).filter(Boolean).join(' ');
+    case 'habit':
+      return payload.habits.map((item) => item.title).filter(Boolean).join(' ');
+    case 'countdown':
+      return payload.items.flatMap((item) => [item.title, item.date]).filter(Boolean).join(' ');
+    case 'schedule':
+      return payload.items.flatMap((item) => [item.title, item.day, item.start]).filter(Boolean).join(' ');
   }
 }

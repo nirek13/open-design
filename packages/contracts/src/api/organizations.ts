@@ -48,6 +48,8 @@ export interface Organization {
 export interface OrganizationMembershipView extends Organization {
   role: OrgRole;
   memberCount: number;
+  /** The caller's membership row in this organization, when known. */
+  memberId?: string;
 }
 
 /** A named group of members inside an organization — Finance, contractors,

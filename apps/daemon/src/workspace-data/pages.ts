@@ -7,7 +7,10 @@
 import { randomUUID } from 'node:crypto';
 import {
   PAGE_BLOCK_TYPES,
+  buildPageTree,
+  isPageVisibility,
   parsePageStyle,
+  parsePageVisibility,
   type AppendPageBlocksRequest,
   type CreatePageRequest,
   type DuplicatePageRequest,
@@ -16,6 +19,7 @@ import {
   type PageBlockInput,
   type PageBlockType,
   type PageTreeNode,
+  type PageVisibility,
   type ScaffoldPageNode,
   type ScaffoldPagesRequest,
   type SearchPagesHit,
@@ -34,6 +38,7 @@ const PAGE_COLS = `
   id, workspace_id AS "orgId", parent_page_id AS "parentPageId", title, icon, cover,
   linked_record_id AS "linkedRecordId", linked_table_id AS "linkedTableId",
   style_json AS "styleJson",
+  COALESCE(visibility, 'public') AS "visibility",
   position, created_by AS "createdBy", created_at AS "createdAt",
   updated_at AS "updatedAt", archived_at AS "archivedAt"
 `;
@@ -54,6 +59,7 @@ interface PageRow {
   linkedRecordId: string | null;
   linkedTableId: string | null;
   styleJson: string | null;
+  visibility: string | null;
   position: number | string;
   createdBy: string;
   createdAt: number | string;
@@ -94,6 +100,30 @@ function pageNotFound(ref: string): WorkspaceDataError {
   return new WorkspaceDataError('PAGE_NOT_FOUND', 404, `no page '${ref}'`);
 }
 
+function parseStoredVisibility(value: unknown): PageVisibility {
+  return parsePageVisibility(value);
+}
+
+function assertVisibility(value: unknown): PageVisibility {
+  if (!isPageVisibility(value)) {
+    throw workspaceValidationError([
+      { path: 'visibility', message: 'visibility must be public or private' },
+    ]);
+  }
+  return value;
+}
+
+function pageVisibleTo(page: { visibility: unknown; createdBy: string }, viewerId: string): boolean {
+  return parseStoredVisibility(page.visibility) !== 'private' || page.createdBy === viewerId;
+}
+
+function visibilitySql(viewerId: string): { sql: string; params: unknown[] } {
+  return {
+    sql: `(visibility = 'public' OR created_by = ?)`,
+    params: [viewerId],
+  };
+}
+
 function normalizePage(row: PageRow): WorkspacePage {
   return {
     id: row.id,
@@ -105,6 +135,7 @@ function normalizePage(row: PageRow): WorkspacePage {
     linkedRecordId: row.linkedRecordId ?? null,
     linkedTableId: row.linkedTableId ?? null,
     style: parsePageStyle(parseJson(row.styleJson, {})),
+    visibility: parseStoredVisibility(row.visibility),
     position: num(row.position),
     createdBy: row.createdBy,
     createdAt: num(row.createdAt),
@@ -210,7 +241,7 @@ async function loadPageRow(
   db: SqlExecutor,
   orgId: string,
   pageId: string,
-  opts: { includeArchived?: boolean } = {},
+  opts: { includeArchived?: boolean; viewerId?: string } = {},
 ): Promise<PageRow> {
   const row = await db.get<PageRow>(
     `SELECT ${PAGE_COLS} FROM od_pages WHERE id = ? AND workspace_id = ?`,
@@ -218,6 +249,7 @@ async function loadPageRow(
   );
   if (!row) throw pageNotFound(pageId);
   if (!opts.includeArchived && row.archivedAt != null) throw pageNotFound(pageId);
+  if (opts.viewerId && !pageVisibleTo(row, opts.viewerId)) throw pageNotFound(pageId);
   return row;
 }
 
@@ -226,12 +258,13 @@ async function assertParentOk(
   orgId: string,
   parentPageId: string | null | undefined,
   selfId?: string,
-): Promise<string | null> {
+  viewerId?: string,
+): Promise<PageRow | null> {
   if (parentPageId == null || parentPageId === '') return null;
   if (selfId && parentPageId === selfId) {
     throw new WorkspaceDataError('PAGE_PARENT_INVALID', 400, 'a page cannot be its own parent');
   }
-  const parent = await loadPageRow(db, orgId, parentPageId);
+  const parent = await loadPageRow(db, orgId, parentPageId, viewerId ? { viewerId } : {});
   // Prevent cycles: walk ancestors.
   if (selfId) {
     let cursor: string | null = parent.parentPageId;
@@ -249,7 +282,7 @@ async function assertParentOk(
       cursor = next?.parentPageId ?? null;
     }
   }
-  return parent.id;
+  return parent;
 }
 
 async function nextPagePosition(
@@ -317,7 +350,7 @@ async function insertBlockTree(
 export async function listPages(
   db: SqlExecutor,
   orgId: string,
-  query: { parentPageId?: string | 'root'; includeArchived?: boolean } = {},
+  query: { parentPageId?: string | 'root'; includeArchived?: boolean; viewerId?: string } = {},
 ): Promise<WorkspacePage[]> {
   const clauses = ['workspace_id = ?'];
   const params: unknown[] = [orgId];
@@ -328,6 +361,11 @@ export async function listPages(
     clauses.push('parent_page_id = ?');
     params.push(query.parentPageId);
   }
+  if (query.viewerId) {
+    const vis = visibilitySql(query.viewerId);
+    clauses.push(vis.sql);
+    params.push(...vis.params);
+  }
   const rows = await db.all<PageRow>(
     `SELECT ${PAGE_COLS} FROM od_pages
      WHERE ${clauses.join(' AND ')}
@@ -337,28 +375,22 @@ export async function listPages(
   return rows.map(normalizePage);
 }
 
-export async function getPageTree(db: SqlExecutor, orgId: string): Promise<PageTreeNode[]> {
-  const pages = await listPages(db, orgId);
-  const byParent = new Map<string | null, WorkspacePage[]>();
-  for (const page of pages) {
-    const key = page.parentPageId;
-    const list = byParent.get(key) ?? [];
-    list.push(page);
-    byParent.set(key, list);
-  }
-  const walk = (parentId: string | null): PageTreeNode[] => {
-    const kids = byParent.get(parentId) ?? [];
-    return kids.map((page) => ({ page, children: walk(page.id) }));
-  };
-  return walk(null);
+export async function getPageTree(
+  db: SqlExecutor,
+  orgId: string,
+  viewerId?: string,
+): Promise<PageTreeNode[]> {
+  const pages = await listPages(db, orgId, viewerId ? { viewerId } : {});
+  return buildPageTree(pages);
 }
 
 export async function getPage(
   db: SqlExecutor,
   orgId: string,
   pageId: string,
+  viewerId?: string,
 ): Promise<WorkspacePageDetail> {
-  const page = normalizePage(await loadPageRow(db, orgId, pageId));
+  const page = normalizePage(await loadPageRow(db, orgId, pageId, viewerId ? { viewerId } : {}));
   const rows = await db.all<BlockRow>(
     `SELECT ${BLOCK_COLS} FROM od_blocks WHERE page_id = ? AND workspace_id = ?
      ORDER BY position ASC, created_at ASC`,
@@ -374,16 +406,22 @@ export async function createPage(
   input: CreatePageRequest,
 ): Promise<WorkspacePageDetail> {
   const now = Date.now();
-  const parentPageId = await assertParentOk(db, orgId, input.parentPageId);
+  const parent = await assertParentOk(db, orgId, input.parentPageId, undefined, createdBy);
+  const parentPageId = parent?.id ?? null;
   const id = randomUUID();
   const title = (input.title ?? 'Untitled').trim() || 'Untitled';
   const position = await nextPagePosition(db, orgId, parentPageId);
+  const visibility: PageVisibility = input.visibility
+    ? assertVisibility(input.visibility)
+    : parent
+      ? parseStoredVisibility(parent.visibility)
+      : 'public';
   await db.run(
     `INSERT INTO od_pages (
        id, workspace_id, parent_page_id, title, icon, cover,
-       linked_record_id, linked_table_id, style_json, position,
+       linked_record_id, linked_table_id, style_json, visibility, position,
        created_by, created_at, updated_at, archived_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     [
       id,
       orgId,
@@ -394,6 +432,7 @@ export async function createPage(
       input.linkedRecordId ?? null,
       input.linkedTableId ?? null,
       JSON.stringify(input.style ?? {}),
+      visibility,
       position,
       createdBy,
       now,
@@ -414,9 +453,9 @@ export async function createPage(
           props: { pageId: id },
         },
       ],
-    });
+    }, createdBy);
   }
-  return getPage(db, orgId, id);
+  return getPage(db, orgId, id, createdBy);
 }
 
 export async function updatePage(
@@ -424,8 +463,9 @@ export async function updatePage(
   orgId: string,
   pageId: string,
   input: UpdatePageRequest,
+  viewerId?: string,
 ): Promise<WorkspacePageDetail> {
-  await loadPageRow(db, orgId, pageId);
+  const existing = await loadPageRow(db, orgId, pageId, viewerId ? { viewerId } : {});
   const now = Date.now();
   const sets: string[] = ['updated_at = ?'];
   const params: unknown[] = [now];
@@ -455,13 +495,23 @@ export async function updatePage(
     params.push(input.position);
   }
   if (input.parentPageId !== undefined) {
-    const parent = await assertParentOk(db, orgId, input.parentPageId, pageId);
+    const parent = await assertParentOk(db, orgId, input.parentPageId, pageId, viewerId);
     sets.push('parent_page_id = ?');
-    params.push(parent);
+    params.push(parent?.id ?? null);
   }
   if (input.style !== undefined) {
     sets.push('style_json = ?');
     params.push(JSON.stringify(input.style ?? {}));
+  }
+  if (input.visibility !== undefined) {
+    const visibility = assertVisibility(input.visibility);
+    if (viewerId && existing.createdBy !== viewerId) {
+      throw workspaceValidationError([
+        { path: 'visibility', message: 'only the creator can change who can see this page' },
+      ]);
+    }
+    sets.push('visibility = ?');
+    params.push(visibility);
   }
 
   params.push(pageId, orgId);
@@ -469,7 +519,7 @@ export async function updatePage(
     `UPDATE od_pages SET ${sets.join(', ')} WHERE id = ? AND workspace_id = ?`,
     params,
   );
-  return getPage(db, orgId, pageId);
+  return getPage(db, orgId, pageId, viewerId);
 }
 
 export async function setPageBlocks(
@@ -477,8 +527,9 @@ export async function setPageBlocks(
   orgId: string,
   pageId: string,
   input: SetPageBlocksRequest,
+  viewerId?: string,
 ): Promise<WorkspacePageDetail> {
-  await loadPageRow(db, orgId, pageId);
+  await loadPageRow(db, orgId, pageId, viewerId ? { viewerId } : {});
   if (!Array.isArray(input.blocks)) {
     throw workspaceValidationError([{ path: 'blocks', message: 'required array' }]);
   }
@@ -496,7 +547,7 @@ export async function setPageBlocks(
       orgId,
     ]);
   });
-  return getPage(db, orgId, pageId);
+  return getPage(db, orgId, pageId, viewerId);
 }
 
 export async function appendPageBlocks(
@@ -504,8 +555,9 @@ export async function appendPageBlocks(
   orgId: string,
   pageId: string,
   input: AppendPageBlocksRequest,
+  viewerId?: string,
 ): Promise<WorkspacePageDetail> {
-  const existing = await getPage(db, orgId, pageId);
+  const existing = await getPage(db, orgId, pageId, viewerId);
   if (!Array.isArray(input.blocks) || input.blocks.length === 0) {
     throw workspaceValidationError([{ path: 'blocks', message: 'required non-empty array' }]);
   }
@@ -524,7 +576,7 @@ export async function appendPageBlocks(
     pageId,
     orgId,
   ]);
-  return getPage(db, orgId, pageId);
+  return getPage(db, orgId, pageId, viewerId);
 }
 
 function cloneBlockInputs(blocks: PageBlock[]): PageBlockInput[] {
@@ -639,12 +691,13 @@ export async function embedInPage(
   orgId: string,
   pageId: string,
   input: EmbedPageBlockRequest,
+  viewerId?: string,
 ): Promise<WorkspacePageDetail> {
   const block = embedToBlock(input);
   const url = mediaUrlFromBlock(block);
-  const existing = await getPage(db, orgId, pageId);
+  const existing = await getPage(db, orgId, pageId, viewerId);
   if (url && pageContainsMediaUrl(existing, url)) return existing;
-  return appendPageBlocks(db, orgId, pageId, { blocks: [block] });
+  return appendPageBlocks(db, orgId, pageId, { blocks: [block] }, viewerId);
 }
 
 export async function searchPages(
@@ -652,11 +705,13 @@ export async function searchPages(
   orgId: string,
   query: string,
   limit = 25,
+  viewerId?: string,
 ): Promise<SearchPagesHit[]> {
   const needle = query.trim();
   if (!needle) return [];
   const like = `%${needle.toLowerCase()}%`;
   const cap = Math.min(Math.max(limit, 1), 100);
+  const vis = viewerId ? visibilitySql(viewerId) : null;
   const rows = await db.all<PageRow & { snippet: string | null }>(
     `SELECT ${PAGE_COLS},
             (
@@ -668,6 +723,7 @@ export async function searchPages(
             ) AS snippet
      FROM od_pages
      WHERE workspace_id = ? AND archived_at IS NULL
+       ${vis ? `AND ${vis.sql}` : ''}
        AND (
          LOWER(title) LIKE ?
          OR id IN (
@@ -677,7 +733,9 @@ export async function searchPages(
        )
      ORDER BY updated_at DESC
      LIMIT ?`,
-    [like, orgId, like, orgId, like, cap],
+    vis
+      ? [like, orgId, ...vis.params, like, orgId, like, cap]
+      : [like, orgId, like, orgId, like, cap],
   );
   return rows.map((row) => ({
     page: normalizePage(row),
@@ -692,24 +750,25 @@ export async function duplicatePage(
   pageId: string,
   input: DuplicatePageRequest = {},
 ): Promise<WorkspacePageDetail> {
-  const source = await getPage(db, orgId, pageId);
+  const source = await getPage(db, orgId, pageId, createdBy);
   const copy = await createPage(db, orgId, createdBy, {
     title: `${source.title} (copy)`,
     parentPageId: source.parentPageId,
     icon: source.icon,
     cover: source.cover,
     style: source.style,
+    visibility: source.visibility,
     blocks: cloneBlockInputs(source.blocks),
     linkOnParent: true,
   });
   if (input.recursive) {
-    const tree = await getPageTree(db, orgId);
+    const tree = await getPageTree(db, orgId, createdBy);
     const node = findTreeNode(tree, pageId);
     for (const child of node?.children ?? []) {
       await duplicateSubtree(db, orgId, createdBy, child, copy.id);
     }
   }
-  return getPage(db, orgId, copy.id);
+  return getPage(db, orgId, copy.id, createdBy);
 }
 
 function findTreeNode(nodes: PageTreeNode[], pageId: string): PageTreeNode | null {
@@ -728,13 +787,14 @@ async function duplicateSubtree(
   node: PageTreeNode,
   parentPageId: string,
 ): Promise<void> {
-  const source = await getPage(db, orgId, node.page.id);
+  const source = await getPage(db, orgId, node.page.id, createdBy);
   const copy = await createPage(db, orgId, createdBy, {
     title: source.title,
     parentPageId,
     icon: source.icon,
     cover: source.cover,
     style: source.style,
+    visibility: source.visibility,
     blocks: cloneBlockInputs(source.blocks),
     linkOnParent: true,
   });
@@ -752,7 +812,7 @@ export async function scaffoldPages(
   if (!Array.isArray(input.pages) || input.pages.length === 0) {
     throw workspaceValidationError([{ path: 'pages', message: 'required non-empty array' }]);
   }
-  const parentPageId = await assertParentOk(db, orgId, input.parentPageId ?? null);
+  const parentPageId = (await assertParentOk(db, orgId, input.parentPageId ?? null, undefined, createdBy))?.id ?? null;
   const created: WorkspacePageDetail[] = [];
   const walk = async (nodes: ScaffoldPageNode[], parent: string | null): Promise<void> => {
     for (const node of nodes) {
@@ -762,6 +822,7 @@ export async function scaffoldPages(
         icon: node.icon ?? null,
         cover: node.cover ?? null,
         parentPageId: parent,
+        ...(node.visibility ? { visibility: node.visibility } : {}),
         blocks: node.blocks && node.blocks.length > 0 ? node.blocks : [{ type: 'paragraph', content: '' }],
         linkOnParent: Boolean(parent),
       });
@@ -770,15 +831,16 @@ export async function scaffoldPages(
     }
   };
   await walk(input.pages, parentPageId);
-  return { pages: created, tree: await getPageTree(db, orgId) };
+  return { pages: created, tree: await getPageTree(db, orgId, createdBy) };
 }
 
 export async function archivePage(
   db: SqlExecutor,
   orgId: string,
   pageId: string,
+  viewerId?: string,
 ): Promise<WorkspacePage> {
-  await loadPageRow(db, orgId, pageId);
+  await loadPageRow(db, orgId, pageId, viewerId ? { viewerId } : {});
   const now = Date.now();
   await db.run(
     `UPDATE od_pages SET archived_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`,
@@ -791,12 +853,15 @@ export async function findPageByLinkedRecord(
   db: SqlExecutor,
   orgId: string,
   recordId: string,
+  viewerId?: string,
 ): Promise<WorkspacePage | null> {
+  const vis = viewerId ? visibilitySql(viewerId) : null;
   const row = await db.get<PageRow>(
     `SELECT ${PAGE_COLS} FROM od_pages
      WHERE workspace_id = ? AND linked_record_id = ? AND archived_at IS NULL
+       ${vis ? `AND ${vis.sql}` : ''}
      ORDER BY updated_at DESC LIMIT 1`,
-    [orgId, recordId],
+    vis ? [orgId, recordId, ...vis.params] : [orgId, recordId],
   );
   return row ? normalizePage(row) : null;
 }
@@ -813,13 +878,14 @@ export async function ensurePageForRecord(
     tableName?: string;
   },
 ): Promise<WorkspacePageDetail> {
-  const existing = await findPageByLinkedRecord(db, orgId, input.recordId);
-  if (existing) return getPage(db, orgId, existing.id);
+  const existing = await findPageByLinkedRecord(db, orgId, input.recordId, createdBy);
+  if (existing) return getPage(db, orgId, existing.id, createdBy);
   return createPage(db, orgId, createdBy, {
     title: input.title,
     icon: '🧾',
     linkedRecordId: input.recordId,
     linkedTableId: input.tableId,
+    visibility: 'public',
     blocks: [
       { type: 'heading_1', content: input.title },
       {
@@ -851,19 +917,21 @@ export async function upsertPageFromAgent(
       [input.pageId, orgId],
     );
     if (existing && existing.archivedAt == null) {
+      if (!pageVisibleTo(existing, createdBy)) throw pageNotFound(input.pageId);
       const patch: UpdatePageRequest = {};
       if (input.title !== undefined) patch.title = input.title;
       if (input.parentPageId !== undefined) patch.parentPageId = input.parentPageId;
       if (input.icon !== undefined) patch.icon = input.icon;
       if (input.cover !== undefined) patch.cover = input.cover;
       if (input.style !== undefined) patch.style = input.style;
+      if (input.visibility !== undefined) patch.visibility = input.visibility;
       if (Object.keys(patch).length > 0) {
-        await updatePage(db, orgId, input.pageId, patch);
+        await updatePage(db, orgId, input.pageId, patch, createdBy);
       }
       if (input.blocks) {
-        return setPageBlocks(db, orgId, input.pageId, { blocks: input.blocks });
+        return setPageBlocks(db, orgId, input.pageId, { blocks: input.blocks }, createdBy);
       }
-      return getPage(db, orgId, input.pageId);
+      return getPage(db, orgId, input.pageId, createdBy);
     }
   }
   return createPage(db, orgId, createdBy, input);

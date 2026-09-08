@@ -1708,7 +1708,15 @@ export interface Dict {
   'pages.unsaved': string;
   'pages.searchPlaceholder': string;
   'pages.favorites': string;
+  'pages.publicPages': string;
   'pages.privatePages': string;
+  'pages.sharePage': string;
+  'pages.visibility': string;
+  'pages.visibilityPublic': string;
+  'pages.visibilityPrivate': string;
+  'pages.visibilityPublicDetail': string;
+  'pages.visibilityPrivateDetail': string;
+  'pages.newPrivatePage': string;
   'pages.addIcon': string;
   'pages.removeIcon': string;
   'pages.addCover': string;

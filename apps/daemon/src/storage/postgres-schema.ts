@@ -838,6 +838,15 @@ const MIGRATIONS: readonly PostgresMigration[] = [
         ON od_calendar_bookings(booking_type_id, starts_at);
     `,
   },
+  {
+    id: '0025-page-visibility',
+    sql: `
+      -- Per-page public (org) vs private (creator-only). Mirrors WORKSPACE_MIGRATIONS v22.
+      ALTER TABLE od_pages ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public';
+      CREATE INDEX IF NOT EXISTS odx_pages_visibility
+        ON od_pages(workspace_id, visibility, created_by);
+    `,
+  },
 ];
 
 /** Bring a Postgres database up to the current schema. Safe to call on every

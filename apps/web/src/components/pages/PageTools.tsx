@@ -1,7 +1,8 @@
 'use client';
 
 // Interactive page tools: kanban board, checklist, task assigner, poll,
-// timeline, decision, and goals. Payload lives on the block (`props.tool` in
+// timeline, decision, goals, spreadsheet, budget, calendar, habit tracker,
+// countdown, and weekly schedule. Payload lives on the block (`props.tool` in
 // the draft, `content` on the server) so a page can carry a working tool
 // without a workspace table.
 
@@ -12,6 +13,15 @@ import {
   type OrgMember,
   type PageToolPayload,
   type PageToolType,
+  type WeekDay,
+  WEEK_DAYS,
+  budgetTotals,
+  columnLetters,
+  daysUntil,
+  evaluateSheet,
+  formatIsoDate,
+  habitDayRange,
+  monthCells,
   newPageToolId,
   parsePageTool,
 } from '@open-design/contracts';
@@ -87,6 +97,18 @@ export function PageTool({ block, readOnly, orgId, onChange }: Props) {
       return <DecisionView tool={tool} readOnly={readOnly} onChange={commit} />;
     case 'goals':
       return <GoalsView tool={tool} readOnly={readOnly} onChange={commit} />;
+    case 'spreadsheet':
+      return <SpreadsheetView tool={tool} readOnly={readOnly} onChange={commit} />;
+    case 'budget':
+      return <BudgetView tool={tool} readOnly={readOnly} onChange={commit} />;
+    case 'calendar':
+      return <CalendarView tool={tool} readOnly={readOnly} onChange={commit} />;
+    case 'habit':
+      return <HabitView tool={tool} readOnly={readOnly} onChange={commit} />;
+    case 'countdown':
+      return <CountdownView tool={tool} readOnly={readOnly} onChange={commit} />;
+    case 'schedule':
+      return <ScheduleView tool={tool} readOnly={readOnly} onChange={commit} />;
   }
 }
 
@@ -904,6 +926,686 @@ function GoalsView({
           }
         >
           + Goal
+        </button>
+      )}
+    </div>
+  );
+}
+
+function money(currency: string, amount: number): string {
+  const formatted = amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return `${currency}${formatted}`;
+}
+
+function SpreadsheetView({
+  tool,
+  readOnly,
+  onChange,
+}: {
+  tool: Extract<PageToolPayload, { kind: 'spreadsheet' }>;
+  readOnly?: boolean;
+  onChange: (next: PageToolPayload) => void;
+}) {
+  const [edit, setEdit] = useState<{ row: number; col: number; draft: string } | null>(null);
+  const computed = evaluateSheet(tool.cells);
+  const cols = Math.max(tool.cells[0]?.length ?? 0, 1);
+
+  const setCell = (row: number, col: number, value: string) => {
+    const next = tool.cells.map((entry) => [...entry]);
+    const target = next[row];
+    if (!target) return;
+    target[col] = value;
+    onChange({ ...tool, cells: next });
+  };
+
+  return (
+    <div className={styles.shell} data-testid="pages-tool-spreadsheet">
+      <div className={styles.sheetHint}>=SUM(A1:A3) · =A1+B1 · AVERAGE MIN MAX COUNT</div>
+      <div className={styles.sheetWrap}>
+        <table className={styles.sheet}>
+          <thead>
+            <tr>
+              <th />
+              {Array.from({ length: cols }, (_, col) => (
+                <th key={col}>{columnLetters(col)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {tool.cells.map((row, ri) => (
+              <tr key={ri}>
+                <th>{ri + 1}</th>
+                {row.map((cell, ci) => {
+                  const active = Boolean(edit && edit.row === ri && edit.col === ci);
+                  const shown = active && edit ? edit.draft : (computed[ri]?.[ci] ?? cell);
+                  const formula = cell.trim().startsWith('=');
+                  return (
+                    <td key={ci} data-formula={formula && !active ? 'true' : undefined}>
+                      <input
+                        className={styles.sheetInput}
+                        value={shown}
+                        disabled={readOnly}
+                        aria-label={columnLetters(ci) + String(ri + 1)}
+                        onFocus={() => setEdit({ row: ri, col: ci, draft: cell })}
+                        onBlur={() => setEdit((current) => (current?.row === ri && current.col === ci ? null : current))}
+                        onChange={(event) => {
+                          setEdit({ row: ri, col: ci, draft: event.target.value });
+                          setCell(ri, ci, event.target.value);
+                        }}
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {readOnly ? null : (
+        <div className={styles.rowActions}>
+          <button
+            type="button"
+            className={styles.add}
+            onClick={() =>
+              onChange({
+                ...tool,
+                cells: [...tool.cells, Array.from({ length: cols }, () => '')],
+              })
+            }
+          >
+            + Row
+          </button>
+          <button
+            type="button"
+            className={styles.add}
+            onClick={() =>
+              onChange({
+                ...tool,
+                cells: tool.cells.map((row) => [...row, '']),
+              })
+            }
+          >
+            + Column
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BudgetView({
+  tool,
+  readOnly,
+  onChange,
+}: {
+  tool: Extract<PageToolPayload, { kind: 'budget' }>;
+  readOnly?: boolean;
+  onChange: (next: PageToolPayload) => void;
+}) {
+  const totals = budgetTotals(tool);
+  return (
+    <div className={styles.shell} data-testid="pages-tool-budget">
+      <div className={styles.budgetTotals}>
+        <span>
+          In <strong>{money(tool.currency, totals.income)}</strong>
+        </span>
+        <span>
+          Out <strong>{money(tool.currency, totals.expense)}</strong>
+        </span>
+        <span data-neg={totals.balance < 0 ? 'true' : undefined}>
+          Left <strong>{money(tool.currency, totals.balance)}</strong>
+        </span>
+        {readOnly ? null : (
+          <input
+            className={styles.unit}
+            value={tool.currency}
+            aria-label="Currency"
+            onChange={(event) => onChange({ ...tool, currency: event.target.value || '$' })}
+          />
+        )}
+      </div>
+      <ul className={styles.list}>
+        {tool.items.map((item) => (
+          <li key={item.id} className={styles.budgetRow}>
+            <input
+              className={styles.date}
+              value={item.date}
+              disabled={readOnly}
+              placeholder="Date"
+              aria-label="Entry date"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  items: tool.items.map((entry) =>
+                    entry.id === item.id ? { ...entry, date: event.target.value } : entry,
+                  ),
+                })
+              }
+            />
+            <input
+              className={styles.grow}
+              value={item.label}
+              disabled={readOnly}
+              placeholder="Item"
+              aria-label="Entry label"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  items: tool.items.map((entry) =>
+                    entry.id === item.id ? { ...entry, label: event.target.value } : entry,
+                  ),
+                })
+              }
+            />
+            <input
+              className={styles.unit}
+              value={item.category}
+              disabled={readOnly}
+              placeholder="Category"
+              aria-label="Entry category"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  items: tool.items.map((entry) =>
+                    entry.id === item.id ? { ...entry, category: event.target.value } : entry,
+                  ),
+                })
+              }
+            />
+            <select
+              className={styles.select}
+              value={item.flow}
+              disabled={readOnly}
+              aria-label="Income or expense"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  items: tool.items.map((entry) =>
+                    entry.id === item.id ? { ...entry, flow: event.target.value as 'income' | 'expense' } : entry,
+                  ),
+                })
+              }
+            >
+              <option value="income">In</option>
+              <option value="expense">Out</option>
+            </select>
+            <input
+              type="number"
+              className={styles.amount}
+              value={item.amount || ''}
+              disabled={readOnly}
+              placeholder="0"
+              aria-label="Amount"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  items: tool.items.map((entry) =>
+                    entry.id === item.id ? { ...entry, amount: Math.max(Number(event.target.value) || 0, 0) } : entry,
+                  ),
+                })
+              }
+            />
+            {readOnly ? null : (
+              <button
+                type="button"
+                className={styles.ghost}
+                aria-label="Remove entry"
+                onClick={() => onChange({ ...tool, items: tool.items.filter((entry) => entry.id !== item.id) })}
+              >
+                ×
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {readOnly ? null : (
+        <button
+          type="button"
+          className={styles.add}
+          onClick={() =>
+            onChange({
+              ...tool,
+              items: [
+                ...tool.items,
+                { id: newPageToolId(), date: '', label: '', category: '', amount: 0, flow: 'expense' },
+              ],
+            })
+          }
+        >
+          + Entry
+        </button>
+      )}
+    </div>
+  );
+}
+
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function CalendarView({
+  tool,
+  readOnly,
+  onChange,
+}: {
+  tool: Extract<PageToolPayload, { kind: 'calendar' }>;
+  readOnly?: boolean;
+  onChange: (next: PageToolPayload) => void;
+}) {
+  const cells = monthCells(tool.year, tool.month);
+  const byDate = new Map<string, string[]>();
+  for (const event of tool.events) {
+    if (!event.date) continue;
+    const titles = byDate.get(event.date) ?? [];
+    titles.push(event.title);
+    byDate.set(event.date, titles);
+  }
+  const shift = (delta: number) => {
+    const next = new Date(tool.year, tool.month - 1 + delta, 1);
+    onChange({ ...tool, year: next.getFullYear(), month: next.getMonth() + 1 });
+  };
+
+  return (
+    <div className={styles.shell} data-testid="pages-tool-calendar">
+      <div className={styles.monthHead}>
+        {readOnly ? null : (
+          <button type="button" className={styles.ghost} aria-label="Previous month" onClick={() => shift(-1)}>
+            ‹
+          </button>
+        )}
+        <strong>
+          {MONTH_NAMES[tool.month - 1]} {tool.year}
+        </strong>
+        {readOnly ? null : (
+          <button type="button" className={styles.ghost} aria-label="Next month" onClick={() => shift(1)}>
+            ›
+          </button>
+        )}
+      </div>
+      <div className={styles.monthGrid}>
+        {WEEKDAY_SHORT.map((label) => (
+          <span key={label} className={styles.monthDow}>
+            {label}
+          </span>
+        ))}
+        {cells.map((cell) => (
+          <button
+            key={cell.date}
+            type="button"
+            className={styles.monthDay}
+            data-out={!cell.inMonth ? 'true' : undefined}
+            disabled={readOnly || !cell.inMonth}
+            onClick={() =>
+              onChange({
+                ...tool,
+                events: [...tool.events, { id: newPageToolId(), date: cell.date, title: '' }],
+              })
+            }
+          >
+            <span>{Number(cell.date.slice(-2))}</span>
+            {(byDate.get(cell.date) ?? []).slice(0, 2).map((title, index) => (
+              <em key={index}>{title || 'Event'}</em>
+            ))}
+          </button>
+        ))}
+      </div>
+      <ul className={styles.list}>
+        {tool.events.map((event) => (
+          <li key={event.id} className={styles.milestone}>
+            <input
+              className={styles.date}
+              value={event.date}
+              disabled={readOnly}
+              placeholder="YYYY-MM-DD"
+              aria-label="Event date"
+              onChange={(eventChange) =>
+                onChange({
+                  ...tool,
+                  events: tool.events.map((entry) =>
+                    entry.id === event.id ? { ...entry, date: eventChange.target.value } : entry,
+                  ),
+                })
+              }
+            />
+            <input
+              className={styles.grow}
+              value={event.title}
+              disabled={readOnly}
+              placeholder="Event"
+              aria-label="Event title"
+              onChange={(eventChange) =>
+                onChange({
+                  ...tool,
+                  events: tool.events.map((entry) =>
+                    entry.id === event.id ? { ...entry, title: eventChange.target.value } : entry,
+                  ),
+                })
+              }
+            />
+            {readOnly ? null : (
+              <button
+                type="button"
+                className={styles.ghost}
+                aria-label="Remove event"
+                onClick={() => onChange({ ...tool, events: tool.events.filter((entry) => entry.id !== event.id) })}
+              >
+                ×
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {readOnly ? null : (
+        <button
+          type="button"
+          className={styles.add}
+          onClick={() =>
+            onChange({
+              ...tool,
+              events: [...tool.events, { id: newPageToolId(), date: formatIsoDate(new Date()), title: '' }],
+            })
+          }
+        >
+          + Event
+        </button>
+      )}
+    </div>
+  );
+}
+
+function HabitView({
+  tool,
+  readOnly,
+  onChange,
+}: {
+  tool: Extract<PageToolPayload, { kind: 'habit' }>;
+  readOnly?: boolean;
+  onChange: (next: PageToolPayload) => void;
+}) {
+  const days = habitDayRange(tool.days);
+  return (
+    <div className={styles.shell} data-testid="pages-tool-habit">
+      <div className={styles.habitHead} style={{ gridTemplateColumns: `minmax(0, 1fr) repeat(${days.length}, 28px) 22px` }}>
+        <span />
+        {days.map((day) => (
+          <span key={day} className={styles.habitDow}>
+            {WEEKDAY_SHORT[new Date(`${day}T00:00:00`).getDay()]}
+            <small>{Number(day.slice(-2))}</small>
+          </span>
+        ))}
+      </div>
+      <ul className={styles.list}>
+        {tool.habits.map((habit) => (
+          <li key={habit.id} className={styles.habitRow} style={{ gridTemplateColumns: `minmax(0, 1fr) repeat(${days.length}, 28px) 22px` }}>
+            <input
+              className={styles.grow}
+              value={habit.title}
+              disabled={readOnly}
+              placeholder="Habit"
+              aria-label="Habit name"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  habits: tool.habits.map((entry) =>
+                    entry.id === habit.id ? { ...entry, title: event.target.value } : entry,
+                  ),
+                })
+              }
+            />
+            {days.map((day) => {
+              const on = habit.stamps.includes(day);
+              return (
+                <input
+                  key={day}
+                  type="checkbox"
+                  className={styles.check}
+                  checked={on}
+                  disabled={readOnly}
+                  aria-label={`${habit.title || 'Habit'} ${day}`}
+                  onChange={() =>
+                    onChange({
+                      ...tool,
+                      habits: tool.habits.map((entry) => {
+                        if (entry.id !== habit.id) return entry;
+                        const stamps = on
+                          ? entry.stamps.filter((stamp) => stamp !== day)
+                          : [...entry.stamps, day];
+                        return { ...entry, stamps };
+                      }),
+                    })
+                  }
+                />
+              );
+            })}
+            {readOnly ? null : (
+              <button
+                type="button"
+                className={styles.ghost}
+                aria-label="Remove habit"
+                onClick={() => onChange({ ...tool, habits: tool.habits.filter((entry) => entry.id !== habit.id) })}
+              >
+                ×
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {readOnly ? null : (
+        <button
+          type="button"
+          className={styles.add}
+          onClick={() =>
+            onChange({
+              ...tool,
+              habits: [...tool.habits, { id: newPageToolId(), title: '', stamps: [] }],
+            })
+          }
+        >
+          + Habit
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CountdownView({
+  tool,
+  readOnly,
+  onChange,
+}: {
+  tool: Extract<PageToolPayload, { kind: 'countdown' }>;
+  readOnly?: boolean;
+  onChange: (next: PageToolPayload) => void;
+}) {
+  return (
+    <div className={styles.shell} data-testid="pages-tool-countdown">
+      <ul className={styles.list}>
+        {tool.items.map((item) => {
+          const left = daysUntil(item.date);
+          const label =
+            left === null ? 'Set a date' : left === 0 ? 'Today' : left > 0 ? `${left} days` : `${Math.abs(left)} days ago`;
+          return (
+            <li key={item.id} className={styles.countdownRow}>
+              <input
+                className={styles.grow}
+                value={item.title}
+                disabled={readOnly}
+                placeholder="Event"
+                aria-label="Countdown title"
+                onChange={(event) =>
+                  onChange({
+                    ...tool,
+                    items: tool.items.map((entry) =>
+                      entry.id === item.id ? { ...entry, title: event.target.value } : entry,
+                    ),
+                  })
+                }
+              />
+              <input
+                className={styles.date}
+                value={item.date}
+                disabled={readOnly}
+                placeholder="YYYY-MM-DD"
+                aria-label="Countdown date"
+                onChange={(event) =>
+                  onChange({
+                    ...tool,
+                    items: tool.items.map((entry) =>
+                      entry.id === item.id ? { ...entry, date: event.target.value } : entry,
+                    ),
+                  })
+                }
+              />
+              <span className={styles.count}>{label}</span>
+              {readOnly ? null : (
+                <button
+                  type="button"
+                  className={styles.ghost}
+                  aria-label="Remove countdown"
+                  onClick={() => onChange({ ...tool, items: tool.items.filter((entry) => entry.id !== item.id) })}
+                >
+                  ×
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {readOnly ? null : (
+        <button
+          type="button"
+          className={styles.add}
+          onClick={() =>
+            onChange({
+              ...tool,
+              items: [...tool.items, { id: newPageToolId(), title: '', date: '' }],
+            })
+          }
+        >
+          + Date
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ScheduleView({
+  tool,
+  readOnly,
+  onChange,
+}: {
+  tool: Extract<PageToolPayload, { kind: 'schedule' }>;
+  readOnly?: boolean;
+  onChange: (next: PageToolPayload) => void;
+}) {
+  return (
+    <div className={styles.shell} data-testid="pages-tool-schedule">
+      <ul className={styles.list}>
+        {tool.items.map((item) => (
+          <li key={item.id} className={styles.scheduleRow}>
+            <select
+              className={styles.select}
+              value={item.day}
+              disabled={readOnly}
+              aria-label="Weekday"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  items: tool.items.map((entry) =>
+                    entry.id === item.id ? { ...entry, day: event.target.value as WeekDay } : entry,
+                  ),
+                })
+              }
+            >
+              {WEEK_DAYS.map((day) => (
+                <option key={day} value={day}>
+                  {day[0]!.toUpperCase() + day.slice(1)}
+                </option>
+              ))}
+            </select>
+            <input
+              className={styles.date}
+              value={item.start}
+              disabled={readOnly}
+              placeholder="9:00"
+              aria-label="Start time"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  items: tool.items.map((entry) =>
+                    entry.id === item.id ? { ...entry, start: event.target.value } : entry,
+                  ),
+                })
+              }
+            />
+            <input
+              className={styles.date}
+              value={item.end}
+              disabled={readOnly}
+              placeholder="10:00"
+              aria-label="End time"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  items: tool.items.map((entry) =>
+                    entry.id === item.id ? { ...entry, end: event.target.value } : entry,
+                  ),
+                })
+              }
+            />
+            <input
+              className={styles.grow}
+              value={item.title}
+              disabled={readOnly}
+              placeholder="Block"
+              aria-label="Schedule title"
+              onChange={(event) =>
+                onChange({
+                  ...tool,
+                  items: tool.items.map((entry) =>
+                    entry.id === item.id ? { ...entry, title: event.target.value } : entry,
+                  ),
+                })
+              }
+            />
+            {readOnly ? null : (
+              <button
+                type="button"
+                className={styles.ghost}
+                aria-label="Remove block"
+                onClick={() => onChange({ ...tool, items: tool.items.filter((entry) => entry.id !== item.id) })}
+              >
+                ×
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {readOnly ? null : (
+        <button
+          type="button"
+          className={styles.add}
+          onClick={() =>
+            onChange({
+              ...tool,
+              items: [...tool.items, { id: newPageToolId(), day: 'mon', start: '', end: '', title: '' }],
+            })
+          }
+        >
+          + Block
         </button>
       )}
     </div>

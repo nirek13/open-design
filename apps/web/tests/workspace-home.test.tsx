@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 // The main view. What a person must be able to do the moment it loads:
-// find something they already have, add something new, or build something
-// that does not exist yet.
+// ask for visual work, add something new, or build something that does
+// not exist yet. Finding records lives on Search.
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -84,7 +84,6 @@ describe('WorkspaceHome', () => {
     vi.spyOn(registry, 'fetchRecentRecords').mockResolvedValue([hit('rec-1', 'INV-1001')]);
     vi.spyOn(registry, 'fetchHomeWidgets').mockResolvedValue([]);
     vi.spyOn(registry, 'fetchProposals').mockResolvedValue([]);
-    vi.spyOn(registry, 'searchWorkspace').mockResolvedValue([]);
     vi.spyOn(registry, 'queryWorkspaceRecords').mockResolvedValue({ records: [], nextCursor: null });
   });
 
@@ -93,7 +92,7 @@ describe('WorkspaceHome', () => {
     vi.restoreAllMocks();
   });
 
-  it('opens on the organization with search ready', async () => {
+  it('opens on the organization with ask ready', async () => {
     renderHome();
     expect(await screen.findByText('Northwind')).toBeTruthy();
     expect(screen.getByTestId('workspace-search')).toBeTruthy();
@@ -105,56 +104,36 @@ describe('WorkspaceHome', () => {
     expect(screen.getByTestId('home-atmosphere')).toBeTruthy();
   });
 
-  it('greets by name when they click into the box', async () => {
+  it('greets by name on the empty stage', async () => {
     renderHome();
     await screen.findByText('Northwind');
     const greeting = screen.getByTestId('workspace-greeting');
-    expect(greeting.getAttribute('aria-hidden')).toBe('true');
-    fireEvent.focus(screen.getByTestId('workspace-ask-input'));
     expect(greeting.getAttribute('aria-hidden')).toBe('false');
     expect(greeting.textContent).toContain('Local');
   });
 
-  it('searches across everything as you type', async () => {
-    vi.spyOn(registry, 'searchWorkspace').mockResolvedValue([
-      {
-        tableId: 'tbl-inv',
-        tableName: 'invoices',
-        tableDisplayName: 'Invoices',
-        hits: [hit('rec-9', 'INV-2042')],
-        total: 1,
-      },
-    ]);
+  it('does not search records from the hub ask box', async () => {
+    const searchWorkspace = vi.spyOn(registry, 'searchWorkspace');
     renderHome();
     await screen.findByTestId('workspace-ask-input');
     fireEvent.change(screen.getByTestId('workspace-ask-input'), { target: { value: 'INV-2042' } });
-    expect(await screen.findByText('INV-2042')).toBeTruthy();
-    await waitFor(() => {
-      expect(registry.searchWorkspace).toHaveBeenCalledWith('ws-1', 'INV-2042');
-    });
+    expect(screen.getByTestId('workspace-ask-input')).toHaveProperty('value', 'INV-2042');
+    expect(screen.queryByTestId('workspace-search-results')).toBeNull();
+    expect(screen.queryByText(/Nothing matches/)).toBeNull();
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    expect(searchWorkspace).not.toHaveBeenCalled();
   });
 
-  it('says so plainly when nothing matches', async () => {
-    renderHome();
-    await screen.findByTestId('workspace-ask-input');
-    fireEvent.change(screen.getByTestId('workspace-ask-input'), { target: { value: 'nothing here' } });
-    expect(await screen.findByText(/Nothing matches/)).toBeTruthy();
-  });
-
-  it('keeps a longer ask on the hub instead of calling it a failed search', async () => {
+  it('keeps a longer ask on the hub', async () => {
     renderHome();
     await screen.findByTestId('workspace-ask-input');
     fireEvent.change(screen.getByTestId('workspace-ask-input'), {
       target: { value: 'Make a 8-slide pitch deck for investors' },
     });
-    await waitFor(() => {
-      expect(registry.searchWorkspace).toHaveBeenCalledWith(
-        'ws-1',
-        'Make a 8-slide pitch deck for investors',
-      );
-    });
     expect(screen.queryByText(/Nothing matches/)).toBeNull();
     expect(screen.queryByText('INV-1001')).toBeNull();
+    expect(screen.getByTestId('workspace-greeting').getAttribute('aria-hidden')).toBe('false');
+    expect(screen.getByTestId('home-atmosphere').parentElement?.getAttribute('data-compact')).toBeNull();
   });
 
   it('offers to set up the business when it has not been set up', async () => {
@@ -475,7 +454,7 @@ describe('WorkspaceHome', () => {
     });
   });
 
-  it('keeps imported tables off the hub until they search', async () => {
+  it('keeps imported tables off the hub', async () => {
     const suppliers = {
       ...INVOICES_TABLE,
       id: 'tbl-sup',
@@ -528,7 +507,12 @@ describe('WorkspaceHome', () => {
       unmatched: 'make a pitch deck',
       suggestions: [],
     });
-    const onAskProject = vi.fn().mockResolvedValue(true);
+    let finishAsk!: (value: true) => void;
+    const onAskProject = vi.fn().mockImplementation(
+      () => new Promise<true>((resolve) => {
+        finishAsk = resolve;
+      }),
+    );
     render(
       <I18nProvider initial="en">
         <OrgProvider>
@@ -541,6 +525,11 @@ describe('WorkspaceHome', () => {
       target: { value: 'Make a 8-slide pitch deck for investors' },
     });
     fireEvent.click(screen.getByTestId('workspace-ask-submit'));
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-home').getAttribute('data-launching')).toBe('true');
+    });
+    expect(screen.getByTestId('workspace-ask-input')).toHaveProperty('value', 'Make a 8-slide pitch deck for investors');
+    finishAsk(true);
     await waitFor(() => {
       expect(onAskProject).toHaveBeenCalledWith(
         expect.objectContaining({

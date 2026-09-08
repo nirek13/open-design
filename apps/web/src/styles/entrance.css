@@ -505,6 +505,47 @@ button.primary-ghost:active:not(:disabled) {
 }
 
 /* ================================================================
+   First-prompt hub → studio
+   ================================================================ */
+
+html.od-studio-enter .app {
+  animation: none;
+}
+
+html.od-studio-enter .app .composer-shell {
+  view-transition-name: od-studio-composer;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 480ms;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+::view-transition-old(root) {
+  animation-name: od-studio-leave;
+}
+
+::view-transition-new(root) {
+  animation-name: od-studio-arrive;
+}
+
+::view-transition-group(od-studio-composer) {
+  animation-duration: 520ms;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes od-studio-leave {
+  from { opacity: 1; filter: blur(0); }
+  to { opacity: 0; filter: blur(10px); }
+}
+
+@keyframes od-studio-arrive {
+  from { opacity: 0; filter: blur(8px); transform: scale(0.985); }
+  to { opacity: 1; filter: none; transform: none; }
+}
+
+/* ================================================================
    Reduce motion preference
    ================================================================ */
 
@@ -513,5 +554,11 @@ button.primary-ghost:active:not(:disabled) {
     animation-duration: 0.01ms !important;
     animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

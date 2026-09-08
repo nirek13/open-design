@@ -283,7 +283,10 @@ describe('organization pages', () => {
     expect(page.blocks.map((block) => block.type)).toEqual(['board', 'checklist', 'assigner']);
     expect(page.blocks[0]!.content).toMatchObject({
       kind: 'board',
-      columns: [{ title: 'To do', cards: [{ title: 'Write spec' }] }],
+      columns: [
+        { title: 'To do', cards: [{ title: 'Write spec' }] },
+        { title: 'In progress', cards: [] },
+      ],
     });
     expect(page.blocks[1]!.content).toMatchObject({
       kind: 'checklist',
@@ -293,5 +296,95 @@ describe('organization pages', () => {
       kind: 'assigner',
       tasks: [{ title: 'Review', assigneeName: 'Ada', status: 'doing' }],
     });
+  });
+
+  it('persists spreadsheet and budget page tools', async () => {
+    const page = await createPage(db(), orgId, 'member-1', {
+      title: 'Finance',
+      blocks: [
+        {
+          type: 'spreadsheet',
+          content: {
+            kind: 'spreadsheet',
+            cells: [
+              ['Rent', '1200'],
+              ['Total', '=B1'],
+            ],
+          },
+        },
+        {
+          type: 'budget',
+          content: {
+            kind: 'budget',
+            currency: '$',
+            items: [
+              {
+                id: 'i1',
+                date: '2026-09-01',
+                label: 'Salary',
+                category: 'Income',
+                amount: 4000,
+                flow: 'income',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(page.blocks.map((block) => block.type)).toEqual(['spreadsheet', 'budget']);
+    expect(page.blocks[0]!.content).toMatchObject({
+      kind: 'spreadsheet',
+      cells: [
+        ['Rent', '1200'],
+        ['Total', '=B1'],
+      ],
+    });
+    expect(page.blocks[1]!.content).toMatchObject({
+      kind: 'budget',
+      items: [{ label: 'Salary', amount: 4000, flow: 'income' }],
+    });
+  });
+
+  it('hides private pages from other members and lets the creator flip visibility', async () => {
+    const shared = await createPage(db(), orgId, 'member-1', {
+      title: 'Handbook',
+      visibility: 'public',
+    });
+    const secret = await createPage(db(), orgId, 'member-1', {
+      title: 'Salary notes',
+      visibility: 'private',
+    });
+    expect(shared.visibility).toBe('public');
+    expect(secret.visibility).toBe('private');
+
+    const forOwner = await listPages(db(), orgId, { viewerId: 'member-1' });
+    expect(forOwner.map((page) => page.title).sort()).toEqual(['Handbook', 'Salary notes']);
+
+    const forCoworker = await listPages(db(), orgId, { viewerId: 'member-2' });
+    expect(forCoworker.map((page) => page.title)).toEqual(['Handbook']);
+
+    await expect(getPage(db(), orgId, secret.id, 'member-2')).rejects.toMatchObject({
+      code: 'PAGE_NOT_FOUND',
+    });
+    await expect(
+      searchPages(db(), orgId, 'Salary', 25, 'member-2'),
+    ).resolves.toEqual([]);
+    expect((await searchPages(db(), orgId, 'Salary', 25, 'member-1')).map((hit) => hit.page.id)).toEqual([
+      secret.id,
+    ]);
+
+    await expect(
+      updatePage(db(), orgId, shared.id, { visibility: 'private' }, 'member-2'),
+    ).rejects.toMatchObject({ code: 'WORKSPACE_VALIDATION_FAILED' });
+
+    const hidden = await updatePage(db(), orgId, shared.id, { visibility: 'private' }, 'member-1');
+    expect(hidden.visibility).toBe('private');
+    expect(await listPages(db(), orgId, { viewerId: 'member-2' })).toHaveLength(0);
+
+    const child = await createPage(db(), orgId, 'member-1', {
+      title: 'Draft appendix',
+      parentPageId: secret.id,
+    });
+    expect(child.visibility).toBe('private');
   });
 });

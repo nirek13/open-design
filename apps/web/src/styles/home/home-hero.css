@@ -114,6 +114,10 @@
   .home-hero__orb--right {
     animation: none;
   }
+  .home-hero__input-card.is-sending,
+  html.od-studio-enter .home-hero__input-card {
+    view-transition-name: none;
+  }
 }
 .home-hero > :not(.home-hero__atmosphere) {
   position: relative;
@@ -538,6 +542,10 @@
   box-shadow:
     var(--shadow-md),
     0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.home-hero__input-card.is-sending,
+html.od-studio-enter .home-hero__input-card {
+  view-transition-name: od-studio-composer;
 }
 .home-hero__input-card.is-drag-active {
   border-color: color-mix(in srgb, var(--accent) 56%, var(--border));

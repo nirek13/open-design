@@ -13,6 +13,10 @@ const homeIndexCss = readFileSync(
   new URL('../../src/styles/home/index.css', import.meta.url),
   'utf8',
 );
+const entranceCss = readFileSync(
+  new URL('../../src/styles/entrance.css', import.meta.url),
+  'utf8',
+);
 const workspacePageCss = readFileSync(
   new URL('../../src/components/workspace/WorkspacePage.module.css', import.meta.url),
   'utf8',
@@ -94,7 +98,22 @@ describe('Home canvas atmosphere', () => {
     expect(studio).toMatch(/var\(--accent/);
     expect(workspaceHomeCss).toMatch(/\.atmosphere/);
     expect(workspaceHomeCss).toMatch(/\.orbLamp/);
+    expect(workspaceHomeCss).toMatch(/\.grain/);
+    expect(workspaceHomeCss).toMatch(/\.greetingHero/);
+    expect(workspaceHomeCss).toMatch(/view-transition-name:\s*od-studio-composer/);
     expect(workspaceHomeCss).toMatch(/@keyframes homeOrbDrift/);
+    expect(workspaceHomeCss).toMatch(/@keyframes homeGreetingIn/);
     expect(workspaceHomeCss).toMatch(/prefers-reduced-motion:\s*reduce/);
+    const askBox = cssDeclarations(workspaceHomeCss, '.askBox');
+    expect(ruleValue(askBox, 'background')).toBe('transparent');
+    expect(ruleValue(askBox, 'box-shadow')).toBe('none');
+  });
+
+  it('morphs the first prompt into the studio composer', () => {
+    expect(entranceCss).toMatch(/html\.od-studio-enter/);
+    expect(entranceCss).toMatch(/view-transition-name:\s*od-studio-composer/);
+    expect(entranceCss).toMatch(/@keyframes od-studio-leave/);
+    expect(entranceCss).toMatch(/@keyframes od-studio-arrive/);
+    expect(entranceCss).toMatch(/prefers-reduced-motion:\s*reduce/);
   });
 });

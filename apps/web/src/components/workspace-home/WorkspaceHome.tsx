@@ -1,8 +1,8 @@
-// The company hub: a full-viewport search/ask box.
+// The company hub: a full-viewport ask box.
 //
-// Typing in the box searches records you already have. Enter / Ask changes
-// the company or starts visual work. Magic import lives in the page header,
-// and dropping a spreadsheet anywhere on the hub opens it.
+// Enter / Ask changes the company or starts visual work. Finding records
+// lives on Search. Magic import lives in the page header, and dropping a
+// spreadsheet anywhere on the hub opens it.
 //
 // Everything here is org-scoped. With no organization resolved the page shows
 // its empty shape rather than failing, because the shell mounts this view
@@ -19,9 +19,7 @@ import {
   fetchHubStatus,
   fetchProposals,
   fetchWorkspaceTables,
-  searchWorkspace,
   setUpHub,
-  type SearchResultGroup,
 } from '../../providers/registry';
 import { navigate } from '../../router';
 import type { PluginLoopSubmit } from '../PluginLoopHome';
@@ -30,7 +28,7 @@ import type { Recommendation } from '../../onboarding/recommendation';
 import type { OnboardingEntry } from '../../onboarding/onboarding-entry';
 import type { ProjectMetadata } from '../../types';
 import { WorkspacePage, WorkspaceSection } from '../workspace/WorkspacePage';
-import { relativeTime, singularize } from '../workspace/format';
+import { singularize } from '../workspace/format';
 import { Icon } from '../Icon';
 import { HubAskComposer } from './HubAskComposer';
 import { RecordEditor } from './RecordEditor';
@@ -91,8 +89,6 @@ export function WorkspaceHome({
   const greetingName = auth?.viewer?.displayName?.trim().split(/\s+/)[0] ?? '';
 
   const [query, setQuery] = useState(initialPrompt ?? '');
-  const [groups, setGroups] = useState<SearchResultGroup[]>([]);
-  const [searching, setSearching] = useState(false);
   const [tables, setTables] = useState<WorkspaceTable[]>([]);
   const [hub, setHub] = useState<HubStatus | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
@@ -107,6 +103,7 @@ export function WorkspaceHome({
   const [dropping, setDropping] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [launching, setLaunching] = useState(false);
   const createMenuRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
@@ -134,29 +131,6 @@ export function WorkspaceHome({
   useEffect(() => {
     if (initialPrompt) setQuery(initialPrompt);
   }, [initialPrompt]);
-
-  // Search as you type, but not on every keystroke — a short pause keeps the
-  // request count sane without ever feeling like a submit button.
-  useEffect(() => {
-    if (!active || !activeOrgId) return;
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setGroups([]);
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
-    const timer = window.setTimeout(async () => {
-      try {
-        setGroups(await searchWorkspace(activeOrgId, trimmed));
-      } catch (err) {
-        setError(errorMessage(err));
-      } finally {
-        setSearching(false);
-      }
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [active, activeOrgId, query]);
 
   useEffect(() => {
     if (!createOpen) return;
@@ -252,12 +226,6 @@ export function WorkspaceHome({
     }
   }
 
-  const hasResults = groups.length > 0;
-  const showingSearch = query.trim().length > 0;
-  // Short queries are lookups. A sentence is an ask — don't scold that nothing matched.
-  const showSearchEmpty = showingSearch && !searching && !hasResults
-    && query.trim().split(/\s+/).length <= 4;
-
   function openCreate(action: () => void) {
     setCreateOpen(false);
     action();
@@ -301,17 +269,40 @@ export function WorkspaceHome({
     setBuildingTool(true);
   }
 
+  async function handleAskProject(payload: PluginLoopSubmit) {
+    if (!onAskProject) return;
+    try {
+      const result = await onAskProject(payload);
+      if (result === 'blocked' || result === false) setLaunching(false);
+      return result;
+    } catch (err) {
+      setLaunching(false);
+      throw err;
+    }
+  }
+
   return (
     <>
       <WorkspacePage
       testId="workspace-home"
       fill
       studio
+      launching={launching}
       eyebrow={activeOrg?.name}
       title={t('workspace.title')}
       lead={t('workspace.subtitle')}
       actions={
         <div className={styles.headActions}>
+          {hub && !hub.ready ? (
+            <Button
+              variant="ghost"
+              data-testid="workspace-hub-setup"
+              onClick={() => void handleSetUpHub()}
+              disabled={busy}
+            >
+              {busy ? t('workspace.settingUp') : t('workspace.setUpAction')}
+            </Button>
+          ) : null}
           <Button
             className={styles.importBtn}
             data-testid="workspace-magic-import"
@@ -355,18 +346,6 @@ export function WorkspaceHome({
         <div className={styles.error} role="alert">
           {error}
         </div>
-      ) : null}
-
-      {hub && !hub.ready ? (
-        <section className={styles.setupCard} data-testid="workspace-hub-setup">
-          <div className={styles.setupText}>
-            <h2 className={styles.setupTitle}>{t('workspace.setUpTitle')}</h2>
-            <p className={styles.setupBody}>{t('workspace.setUpBody')}</p>
-          </div>
-          <Button variant="primary" onClick={handleSetUpHub} disabled={busy}>
-            {busy ? t('workspace.settingUp') : t('workspace.setUpAction')}
-          </Button>
-        </section>
       ) : null}
 
       {proposals.length > 0 ? (
@@ -418,12 +397,16 @@ export function WorkspaceHome({
         />
       ) : null}
 
-      <div className={`${styles.stage}${showingSearch ? ` ${styles.stageSearching}` : ''}`}>
+      <div
+        className={`${styles.stage}${launching ? ` ${styles.stageLaunching}` : ''}`}
+        {...(launching ? { 'data-launching': 'true' } : {})}
+      >
         <div className={styles.atmosphere} aria-hidden data-testid="home-atmosphere">
           <span className={styles.orbLamp} />
           <span className={styles.orbLeft} />
           <span className={styles.orbRight} />
           <span className={styles.ring} />
+          <span className={styles.grain} />
         </div>
         <HubAskComposer
           orgId={activeOrgId}
@@ -431,7 +414,10 @@ export function WorkspaceHome({
           onChange={setQuery}
           greetingName={greetingName}
           defaultDesignSystemId={defaultDesignSystemId}
-          {...(onAskProject ? { onAskProject } : {})}
+          hero
+          launching={launching}
+          onStudioLaunch={() => setLaunching(true)}
+          {...(onAskProject ? { onAskProject: handleAskProject } : {})}
           onProposalCreated={load}
           onImportUrl={(url) => {
             setImportSeedFile(null);
@@ -440,44 +426,7 @@ export function WorkspaceHome({
             setBuildingTool(true);
           }}
         />
-        {showSearchEmpty ? (
-          <p className={styles.searchQuiet} data-testid="workspace-search-empty">
-            {t('workspace.noResults', { query: query.trim() })}
-          </p>
-        ) : null}
       </div>
-
-      {hasResults ? (
-        <div data-testid="workspace-search-results" className={styles.searchResults}>
-          {groups.map((group) => (
-            <WorkspaceSection
-              key={group.tableId}
-              title={group.tableDisplayName}
-              action={<span className={styles.countChip}>{group.total}</span>}
-            >
-              <ul className={styles.resultList}>
-                {group.hits.map((hit) => (
-                  <li key={hit.recordId}>
-                    <button
-                      type="button"
-                      className={styles.result}
-                      onClick={() => setEditing({ tableRef: hit.tableName, recordId: hit.recordId })}
-                    >
-                      <span className={styles.resultMain}>
-                        <span className={styles.resultLabel}>{hit.label}</span>
-                        {hit.secondary ? (
-                          <span className={styles.resultSecondary}>{hit.secondary}</span>
-                        ) : null}
-                      </span>
-                      <span className={styles.resultMeta}>{relativeTime(hit.updatedAt, t)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </WorkspaceSection>
-          ))}
-        </div>
-      ) : null}
 
       {editing ? (
         <RecordEditor
@@ -508,7 +457,7 @@ export function WorkspaceHome({
             await load();
           }}
           onReload={load}
-          {...(onAskProject ? { onAskProject } : {})}
+          {...(onAskProject ? { onAskProject: handleAskProject } : {})}
         />
       ) : null}
 

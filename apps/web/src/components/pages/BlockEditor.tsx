@@ -120,6 +120,12 @@ const ICONS: Partial<Record<PageBlockType, string>> = {
   timeline: '↦',
   decision: '⚖',
   goals: '◎',
+  spreadsheet: '⊞',
+  budget: '$',
+  calendar: '▦',
+  habit: '✓',
+  countdown: '⏳',
+  schedule: '📅',
 };
 
 interface SlashState {

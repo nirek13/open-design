@@ -130,6 +130,33 @@
   gap: 2px;
   min-height: 0;
   padding: 0 2px;
+  flex: 1 1 auto;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.sectionAdd {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--radius-xs, 4px);
+  background: transparent;
+  color: var(--text-soft, #989590);
+  cursor: pointer;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.sectionAdd:hover {
+  background: var(--bg-fill-secondary, rgba(0, 0, 0, 0.06));
+  color: var(--text, #1a1916);
 }
 
 .section:last-of-type {
@@ -440,7 +467,7 @@
   top: calc(100% + 4px);
   right: 0;
   z-index: 40;
-  min-width: 180px;
+  min-width: 220px;
   padding: 6px;
   border-radius: 10px;
   border: 1px solid var(--border, #e1e5eb);
@@ -503,6 +530,19 @@
   letter-spacing: 0.04em;
   color: var(--text-soft, #989590);
   padding: 8px 8px 4px;
+}
+
+.visibilityDetail {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--text-muted, #74716b);
+  font-weight: 400;
+  white-space: normal;
+}
+
+.visibilityActive {
+  background: var(--bg-fill-secondary, rgba(0, 0, 0, 0.06));
 }
 
 .danger {

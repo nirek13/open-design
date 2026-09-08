@@ -54,6 +54,12 @@ Aligned with Notion’s public vocabulary where possible, plus Substrate bridges
 - `timeline` — dated milestones
 - `decision` — capture a choice and why
 - `goals` — numeric progress toward a target
+- `spreadsheet` — formula grid (`=SUM(A1:A3)`, `=A1+B1`)
+- `budget` — income and expenses with a running total
+- `calendar` — a month of dated events
+- `habit` — daily habit stamps
+- `countdown` — days until a date
+- `schedule` — weekly timetable
 
 Slash extras (same persistence as headings/columns):
 
@@ -82,6 +88,9 @@ artifacts / Write when they want a **designed** HTML app or deck. Use a
 
 ## Non-goals (still later)
 
-Realtime multiplayer / CRDT, synced blocks, comments, permissions per page,
+Realtime multiplayer / CRDT, synced blocks, comments, per-person page ACLs,
 full Notion import/export, Lexical rich marks inside every block (markdown
 marks + a selection toolbar cover the daily formatting path).
+
+Pages can be **public** (every organization member) or **private** (creator
+only). That is org-internal visibility, not a web publish.

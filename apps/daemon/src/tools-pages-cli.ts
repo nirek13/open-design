@@ -25,7 +25,7 @@ const PAGES_USAGE = `Usage:
   od tools pages archive --page <page-id>
 
 Input files:
-  upsert     {"title":"Handbook","parentPageId":null,"icon":"📘","blocks":[{"type":"heading_1","content":"Welcome"}]}
+  upsert     {"title":"Handbook","parentPageId":null,"icon":"📘","visibility":"private","blocks":[{"type":"heading_1","content":"Welcome"}]}
              Pass pageId to update an existing page's title/icon/blocks.
   append     {"blocks":[{"type":"paragraph","content":"Shipped."}]}
              Or a bare blocks array.
@@ -38,12 +38,15 @@ Block types:
   bookmark, embed, image, video, audio, file, pdf, equation,
   table_of_contents, breadcrumb, column_list, column, table,
   database, artifact, page, record,
-  board, checklist, assigner, poll, timeline, decision, goals.
+  board, checklist, assigner, poll, timeline, decision, goals,
+  spreadsheet, budget, calendar, habit, countdown, schedule.
 
 Prefer native page tools over generated HTML artifacts. Use board / checklist /
-assigner / poll / timeline / decision / goals when they fit a tracker, dashboard,
-kanban, poll, roadmap, decision log, or goals request. Only embed a created file
-for pictures, videos, slides, or custom apps those tools cannot express.
+assigner / poll / timeline / decision / goals / spreadsheet / budget / calendar /
+habit / countdown / schedule when they fit a tracker, dashboard, kanban, poll,
+roadmap, decision log, goals, sheet, budget, month, habit, countdown, or
+weekly plan request. Only embed a created file for pictures, videos, slides, or
+custom apps those tools cannot express.
 
 Page tools store their working state in the block content object, e.g.
   {"type":"board","content":{"kind":"board","columns":[{"id":"c1","title":"To do","cards":[]}]}}
@@ -53,6 +56,12 @@ Page tools store their working state in the block content object, e.g.
   {"type":"timeline","content":{"kind":"timeline","items":[{"id":"m1","title":"Launch","date":"2026-10-01","done":false}]}}
   {"type":"decision","content":{"kind":"decision","question":"Host?","options":[{"id":"o1","label":"Vercel"}],"chosenId":null,"notes":""}}
   {"type":"goals","content":{"kind":"goals","items":[{"id":"g1","title":"NPS","current":40,"target":70,"unit":""}]}}
+  {"type":"spreadsheet","content":{"kind":"spreadsheet","cells":[["Item","Amt"],["Rent","1200"],["Food","80"],["Total","=SUM(B2:B3)"]]}}
+  {"type":"budget","content":{"kind":"budget","currency":"$","items":[{"id":"i1","date":"2026-09-01","label":"Salary","category":"Income","amount":4000,"flow":"income"}]}}
+  {"type":"calendar","content":{"kind":"calendar","year":2026,"month":9,"events":[{"id":"e1","date":"2026-09-12","title":"Launch"}]}}
+  {"type":"habit","content":{"kind":"habit","days":7,"habits":[{"id":"h1","title":"Write","stamps":["2026-09-07"]}]}}
+  {"type":"countdown","content":{"kind":"countdown","items":[{"id":"c1","title":"Launch","date":"2026-10-01"}]}}
+  {"type":"schedule","content":{"kind":"schedule","items":[{"id":"s1","day":"mon","start":"9:00","end":"9:30","title":"Standup"}]}}
 
 Embeds:
   page       props.pageId     — nested page / wiki link

@@ -56,6 +56,17 @@ describe('page markdown export', () => {
     expect(md).toContain('### To do');
     expect(countPageWords('Sprint', [list])).toBeGreaterThan(2);
   });
+
+  it('exports a spreadsheet and budget', () => {
+    const sheet = emptyBlock('spreadsheet');
+    (sheet.props.tool as { cells: string[][] }).cells = [['Rent', '1200'], ['Total', '=B1']];
+    const budget = emptyBlock('budget');
+    (budget.props.tool as { items: Array<{ label: string; amount: number; flow: string }> }).items[0]!.label =
+      'Salary';
+    const md = pageToMarkdown('Money', [sheet, budget]);
+    expect(md).toContain('| Rent | 1200 |');
+    expect(md).toContain('Salary');
+  });
 });
 
 describe('page tool draft roundtrip', () => {

@@ -1,6 +1,6 @@
-// The hub's one box. Typing searches records you already have; Enter / Ask
-// changes the company or starts visual work. A pasted public link still
-// becomes an import — that path is a URL, not a second field.
+// The hub's one box. Enter / Ask changes the company or starts visual work.
+// Finding records lives on Search. A pasted public link still becomes an
+// import — that path is a URL, not a second field.
 
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Button, VisuallyHidden } from '@open-design/components';
@@ -18,9 +18,13 @@ interface Props {
   onChange: (value: string) => void;
   greetingName?: string | null;
   defaultDesignSystemId?: string | null;
+  /** Empty-stage greeting stays up so the first visit reads as a welcome. */
+  hero?: boolean;
+  launching?: boolean;
   onAskProject?: (payload: PluginLoopSubmit) => Promise<boolean | 'blocked' | void> | boolean | 'blocked' | void;
   onProposalCreated?: () => Promise<void> | void;
   onImportUrl?: (url: string) => void;
+  onStudioLaunch?: () => void;
 }
 
 function errorMessage(err: unknown): string {
@@ -39,9 +43,12 @@ export function HubAskComposer({
   onChange,
   greetingName,
   defaultDesignSystemId,
+  hero = false,
+  launching = false,
   onAskProject,
   onProposalCreated,
   onImportUrl,
+  onStudioLaunch,
 }: Props) {
   const t = useT();
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -52,6 +59,7 @@ export function HubAskComposer({
   const period = t(greetingPeriodKey(new Date().getHours()));
   const name = greetingName?.trim() ?? '';
   const greeting = name ? t('workspace.greetingNamed', { greeting: period, name }) : period;
+  const greetingOpen = hero || focused || launching;
 
   useLayoutEffect(() => {
     const el = inputRef.current;
@@ -86,6 +94,7 @@ export function HubAskComposer({
         }
       }
       if (!onAskProject) return;
+      onStudioLaunch?.();
       const result = await onAskProject({
         prompt: trimmed,
         pluginId: DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
@@ -99,7 +108,9 @@ export function HubAskComposer({
         visibility: 'private',
         conversationMode: 'design',
       });
-      if (result !== 'blocked' && result !== false) onChange('');
+      // Keep the typed brief visible through the studio morph; the hub unmounts
+      // on success. Clearing here would empty the box mid-transition.
+      if (result !== 'blocked' && result !== false) return;
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -108,21 +119,21 @@ export function HubAskComposer({
   }
 
   return (
-    <div className={styles.ask} data-testid="workspace-ask">
+    <div className={`${styles.ask}${launching ? ` ${styles.askLaunching}` : ''}`} data-testid="workspace-ask">
       <p
-        className={`${styles.greeting}${focused ? ` ${styles.greetingActive}` : ''}`}
+        className={`${styles.greeting}${greetingOpen ? ` ${styles.greetingActive}` : ''}${hero ? ` ${styles.greetingHero}` : ''}`}
         data-testid="workspace-greeting"
-        aria-hidden={!focused}
+        aria-hidden={!greetingOpen}
       >
         <span className={styles.greetingInner}>
           <span className={styles.greetingText}>{greeting}</span>
         </span>
       </p>
-      <div className={`${styles.askBox}${focused ? ` ${styles.askBoxFocused}` : ''}`} data-testid="workspace-search">
+      <div
+        className={`${styles.askBox}${focused ? ` ${styles.askBoxFocused}` : ''}${launching ? ` ${styles.askBoxLaunching}` : ''}`}
+        data-testid="workspace-search"
+      >
         <div className={styles.askMain}>
-          <span className={styles.askIcon} aria-hidden="true">
-            <Icon name="search" size={20} />
-          </span>
           <textarea
             ref={inputRef}
             id="workspace-ask-input"
@@ -133,6 +144,7 @@ export function HubAskComposer({
             placeholder={t('workspace.askPlaceholder')}
             disabled={busy}
             aria-label={t('workspace.askPlaceholder')}
+            aria-busy={busy || launching}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onChange={(event) => onChange(event.target.value)}
@@ -146,7 +158,7 @@ export function HubAskComposer({
           {value ? (
             <button
               type="button"
-              className={styles.searchClear}
+              className={styles.askClear}
               onClick={() => {
                 onChange('');
                 inputRef.current?.focus();
