@@ -294,10 +294,13 @@ describe('composeSystemPrompt — metadata.promptTemplate', () => {
       /unless the user explicitly chooses fallback in a later\s+turn/,
     );
     expect(out).toContain('$OD_PROJECT_DIR');
-    expect(out).toMatch(/ask the user for one-time\s+confirmation/);
-    expect(out).toContain('"$OD_NODE_BIN" "$OD_BIN"');
-    expect(out).toContain('media generate --surface image --model gpt-image-2');
-    expect(out).toContain('Do not silently fall');
+    const override = out.slice(out.indexOf('## Codex built-in imagegen override'));
+    expect(override).toContain('"$OD_NODE_BIN" "$OD_BIN"');
+    expect(override).toContain('media generate --surface image --model gpt-image-2');
+    expect(override).toMatch(/sign-in|not-logged-in|ChatGPT subscription|preview-only/);
+    expect(override).toMatch(/immediately dispatch|immediately fall back/i);
+    expect(override).toContain('Settings → Media');
+    expect(override).not.toMatch(/ask the user for one-time\s+confirmation/);
   });
 
   it('keeps non-Codex image projects on the daemon media dispatcher contract', () => {

@@ -1594,10 +1594,8 @@ filename and a short summary of the prompt used. Do not emit an \`<artifact>\`
 block for media.
 
 If Codex built-in imagegen is unavailable or generation fails before producing
-an image, surface the actual failure message and ask the user for one-time
-confirmation before falling back to the existing OpenAI/Azure API-key provider
-path via \`"$OD_NODE_BIN" "$OD_BIN" media generate --surface image --model ${imageModel}\`.
-Do not silently fall back.`;
+an image — including sign-in, not-logged-in, missing ChatGPT subscription, or
+preview-only errors — immediately dispatch via \`"$OD_NODE_BIN" "$OD_BIN" media generate --surface image --model ${imageModel}\` in the same turn. Do not ask the user to confirm first, and do not tell them to configure Settings → Media until that dispatcher command also fails. The dispatcher uses a working Codex subscription when it can, otherwise the OpenAI/Azure API key from Settings → Media or \`OPENAI_API_KEY\`.`;
 }
 
 // `style: 'facts'` (slim core) keeps the block a pure fact sheet: key-value
@@ -1629,7 +1627,7 @@ function renderMetadataBlock(
     const title = metadata.pageContext.title?.trim() || 'Untitled';
     const icon = metadata.pageContext.icon?.trim();
     lines.push(
-      `- **pageContext**: organization wiki page ${metadata.pageContext.pageId} (${icon ? `${icon} ` : ''}“${title}”). The user launched this chat from that page, which is open as a tab in the notes tab bar. Put work on that page, or create a new child under it (it will open as a tab), via \`tools pages\`. Prefer native page tools (board, checklist, assigner, poll, timeline, decision, goals) over generating HTML artifacts to embed. Do not edit other existing pages that are not in the tab bar, and do not invent markdown or HTML files for this wiki.`,
+      `- **pageContext**: organization wiki page ${metadata.pageContext.pageId} (${icon ? `${icon} ` : ''}“${title}”). The user launched this chat from that page, which is open as a tab in the notes tab bar. Put work on that page, or create a new child under it (it will open as a tab), via \`tools pages\`. Prefer native page tools (board, checklist, assigner, poll, timeline, decision, goals, spreadsheet, budget, calendar, habit, countdown, schedule) over generating HTML artifacts to embed. Do not edit other existing pages that are not in the tab bar, and do not invent markdown or HTML files for this wiki.`,
     );
   }
   if (metadata.platform) {

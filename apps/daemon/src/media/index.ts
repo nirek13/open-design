@@ -159,6 +159,22 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function isCodexImagegenAuthFailure(err: unknown): boolean {
+  // Codex `$imagegen` needs a ChatGPT login. When that path fails, gpt-image-*
+  // should still render through the OpenAI Images API if a key is configured.
+  const msg = errorMessage(err);
+  return (
+    /\bsign[- ]?in(?: to OpenAI)?\b/i.test(msg)
+    || /\bnot logged in\b/i.test(msg)
+    || /\bcodex login\b/i.test(msg)
+    || /\bAuthentication required\b/i.test(msg)
+    || /\bChatGPT subscription\b/i.test(msg)
+    || /\bpreview[- ]only\b/i.test(msg)
+    || /\bdid not write an ig_\*/i.test(msg)
+    || /\bdid not write an image file\b/i.test(msg)
+  );
+}
+
 function errorStringProp(err: unknown, key: string): string {
   return isRecord(err) && typeof err[key] === 'string' ? err[key] : '';
 }
@@ -561,17 +577,28 @@ export async function generateMedia(args: {
       providerNote = result.providerNote;
       suggestedExt = result.suggestedExt;
     } else if (codexSubscriptionModel && useCodexSubscription) {
-      providerId = 'codex';
-      const result = await renderCodexImage({
-        ...ctx,
-        model: codexSubscriptionModel.id,
-        wireModel: codexSubscriptionModel.id,
-        modelDef: codexSubscriptionModel,
-        provider: findProvider('codex'),
-      });
-      bytes = result.bytes;
-      providerNote = result.providerNote;
-      suggestedExt = result.suggestedExt;
+      try {
+        providerId = 'codex';
+        const result = await renderCodexImage({
+          ...ctx,
+          model: codexSubscriptionModel.id,
+          wireModel: codexSubscriptionModel.id,
+          modelDef: codexSubscriptionModel,
+          provider: findProvider('codex'),
+        });
+        bytes = result.bytes;
+        providerNote = result.providerNote;
+        suggestedExt = result.suggestedExt;
+      } catch (err) {
+        if (!credentials.apiKey || !isCodexImagegenAuthFailure(err)) {
+          throw err;
+        }
+        providerId = 'openai';
+        const result = await renderOpenAIImage(ctx, credentials);
+        bytes = result.bytes;
+        providerNote = result.providerNote;
+        suggestedExt = result.suggestedExt;
+      }
     } else if (def.provider === 'openai' && surface === 'image') {
       const result = await renderOpenAIImage(ctx, credentials);
       bytes = result.bytes;

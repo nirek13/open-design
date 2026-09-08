@@ -123,6 +123,7 @@ describe('OpenAI-compatible media providers', () => {
       expectedArgsIncludes?: string;
       expectedArgsExcludes?: string;
       outputFileName?: string;
+      failMessage?: string;
     } = {},
   ) {
     const codexBin = path.join(root, `${threadId}.mjs`);
@@ -136,6 +137,11 @@ const expectedConfigExcludes = ${JSON.stringify(options.expectedConfigExcludes ?
 const expectedArgsIncludes = ${JSON.stringify(options.expectedArgsIncludes ?? '')};
 const expectedArgsExcludes = ${JSON.stringify(options.expectedArgsExcludes ?? '')};
 const outputFileName = ${JSON.stringify(options.outputFileName ?? 'ig_0001.png')};
+const failMessage = ${JSON.stringify(options.failMessage ?? '')};
+if (failMessage) {
+  process.stderr.write(failMessage);
+  process.exit(1);
+}
 const args = process.argv.slice(2);
 const addDirIndex = args.indexOf('--add-dir');
 const generatedRoot = addDirIndex >= 0 ? args[addDirIndex + 1] : '';
@@ -706,6 +712,78 @@ process.stdin.on('end', () => {
 
     expect(result.providerId).toBe('codex');
     expect(result.providerNote).toContain('codex/gpt-image-2');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the OpenAI Images API when Codex subscription imagegen requires sign-in', async () => {
+    const generatedHome = path.join(root, 'subscription-signin-codex-home');
+    await writeCodexAuth(generatedHome, {
+      auth_mode: 'chatgpt',
+      tokens: { access_token: 'stale-codex-oauth-token' },
+    });
+    await installFakeCodex(generatedHome, 'subscription-signin-thread', {
+      failMessage: 'The generation requires sign-in to OpenAI. Run `codex login`.',
+    });
+    process.env.OPENAI_API_KEY = 'sk-openai-fallback-key';
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      expect(String(input)).toBe('https://api.openai.com/v1/images/generations');
+      expect(init?.headers).toMatchObject({
+        authorization: 'Bearer sk-openai-fallback-key',
+        'content-type': 'application/json',
+      });
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        prompt: 'PLYXL wordmark with a playful rainbow arc',
+        model: 'gpt-image-2',
+      });
+      return new Response(JSON.stringify({
+        data: [{ b64_json: PNG_BASE64 }],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await generateMedia({
+      projectRoot,
+      projectsRoot,
+      projectId: 'project-1',
+      surface: 'image',
+      model: 'gpt-image-2',
+      prompt: 'PLYXL wordmark with a playful rainbow arc',
+      output: 'plyxl-logo.png',
+    });
+
+    expect(result.providerId).toBe('openai');
+    expect(result.providerNote).toContain('openai/gpt-image-2');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const bytes = await readFile(path.join(projectsRoot, 'project-1', 'plyxl-logo.png'));
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('does not fall back to OpenAI when Codex subscription imagegen fails for a non-auth reason', async () => {
+    const generatedHome = path.join(root, 'subscription-timeout-codex-home');
+    await writeCodexAuth(generatedHome, {
+      auth_mode: 'chatgpt',
+    });
+    await installFakeCodex(generatedHome, 'subscription-timeout-thread', {
+      failMessage: 'codex imagegen timed out after 300000ms',
+    });
+    process.env.OPENAI_API_KEY = 'sk-openai-should-not-run';
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generateMedia({
+      projectRoot,
+      projectsRoot,
+      projectId: 'project-1',
+      surface: 'image',
+      model: 'gpt-image-2',
+      prompt: 'A compact green app icon',
+      output: 'timeout.png',
+    })).rejects.toThrow(/timed out/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

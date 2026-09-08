@@ -6,7 +6,7 @@
 #   ./deploy/aws/redeploy-local.sh --watch          # rebuild on source changes
 #   STACK=open-design-stack REGION=us-east-1 ./deploy/aws/redeploy-local.sh
 #
-#   OPENAI_SECRET_ARN=arn:aws:secretsmanager:... ./deploy/aws/redeploy-local.sh
+# Defaults OPENAI_SECRET_ARN to open-design/openai-api-key so ECS can generate images.
 #
 # Keeps the auth-proxy Host/Origin loopback rewrite and disables AMR/Vela bootstrap.
 set -euo pipefail
@@ -158,7 +158,7 @@ redeploy_once() {
   new_td="$(printf '%s' "$task_json" | ALLOWED_ORIGIN="$ALLOWED_ORIGIN" IMAGE="$image" \
     PROXY_COMMAND="$PROXY_COMMAND" APP_COMMAND="$APP_COMMAND" \
     PROXY_READ_TIMEOUT="$proxy_timeout" \
-    OPENAI_SECRET_ARN="${OPENAI_SECRET_ARN:-}" \
+    OPENAI_SECRET_ARN="${OPENAI_SECRET_ARN:-arn:aws:secretsmanager:us-east-1:211125341063:secret:open-design/openai-api-key-gp26Dx}" \
     OD_CLERK_ISSUER="${OD_CLERK_ISSUER:-https://clean-jay-54.clerk.accounts.dev}" \
     OD_CLERK_PUBLISHABLE_KEY="${OD_CLERK_PUBLISHABLE_KEY:-pk_test_Y2xlYW4tamF5LTU0LmNsZXJrLmFjY291bnRzLmRldiQ}" \
     python3 -c '
