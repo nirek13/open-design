@@ -819,3 +819,182 @@
   font-weight: 650;
   cursor: pointer;
 }
+
+/* --- Presence, typing, huddles, and the suggestion menu -------------------
+   Everything below arrived with the realtime revamp. Grouped rather than
+   scattered so it is obvious which rules belong to the live layer. */
+
+/* The sidebar's presence dot sits inline next to the name. The avatar's dot
+   (.dotOn / .dotOff) is absolutely positioned over the picture and cannot be
+   reused here without breaking the row's layout. */
+.presenceOn,
+.presenceOff {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.presenceOn {
+  background: #2bac76;
+}
+
+.presenceOff {
+  border: 1.5px solid rgba(127, 127, 127, 0.55);
+  background: transparent;
+}
+
+/* A live huddle. Pulsing rather than static because "right now" is the whole
+   claim it makes; a still dot reads as a status light. */
+.huddleDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #2bac76;
+  animation: huddlePulse 2s ease-out infinite;
+}
+
+@keyframes huddlePulse {
+  0% { box-shadow: 0 0 0 0 rgba(43, 172, 118, 0.55); }
+  70% { box-shadow: 0 0 0 6px rgba(43, 172, 118, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(43, 172, 118, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .huddleDot { animation: none; }
+}
+
+.huddleBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.16));
+  font-size: 0.8rem;
+}
+
+.huddleLive {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.huddleFaces {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.huddleFace,
+.huddleFaceMuted {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--chat-accent, #1164a3);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+/* Muted reads as dimmed rather than as a crossed-out microphone: at 22px an
+   icon is a smudge, and opacity carries the same meaning at any size. */
+.huddleFaceMuted {
+  opacity: 0.45;
+}
+
+.huddleError {
+  color: var(--danger, #c0392b);
+}
+
+/* The typing line reserves its own row so the transcript does not jump by a
+   line height every time somebody starts and stops typing. */
+.typing {
+  min-height: 1.15rem;
+  margin: 0;
+  padding: 0 16px 2px;
+  font-size: 0.74rem;
+  font-style: italic;
+  color: var(--text-3, rgba(127, 127, 127, 0.8));
+}
+
+.dndMark,
+.offlineMark {
+  margin-left: 6px;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.offlineMark {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #e8912d 22%, transparent);
+  color: #a1620c;
+}
+
+/* The suggestion menu. One row per candidate: what will be inserted on the
+   left, what it means on the right. */
+.mentionBtn {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border-radius: 6px;
+}
+
+.mentionBtnActive {
+  background: color-mix(in srgb, var(--chat-accent, #1164a3) 14%, transparent);
+}
+
+.suggestionLabel {
+  font-weight: 600;
+}
+
+.suggestionHint {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+  color: var(--text-3, rgba(127, 127, 127, 0.75));
+}
+
+.suggestionEmoji {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  vertical-align: -0.2em;
+}
+
+/* The formatting toolbar. Quiet by default and legible on hover: it is a
+   reminder that the shortcuts exist, not the primary way to use them. */
+.formatBar {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+  padding-right: 6px;
+  border-right: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+}
+
+.formatBtn {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-3, rgba(127, 127, 127, 0.8));
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.formatBtn:hover {
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  color: var(--text-1, inherit);
+}

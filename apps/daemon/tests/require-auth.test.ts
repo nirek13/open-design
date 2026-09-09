@@ -87,6 +87,15 @@ describe('isPublicApiPath', () => {
     expect(isPublicApiPath('/api/invites/abc123/accept')).toBe(true);
   });
 
+  it('lets an incoming chat webhook post with only its token', () => {
+    // The token in the URL is the whole credential; an outside system posting
+    // a build result has no session and cannot be given one. The rest of the
+    // chat surface stays gated.
+    expect(isPublicApiPath('/api/chat/hooks/org-1/sometoken')).toBe(true);
+    expect(isPublicApiPath('/api/orgs/org-1/chat/channels')).toBe(false);
+    expect(isPublicApiPath('/api/orgs/org-1/chat/webhooks')).toBe(false);
+  });
+
   it('lets Composio finish OAuth without a session cookie', () => {
     expect(isPublicApiPath('/api/connectors/oauth/callback/github')).toBe(true);
     expect(isPublicApiPath('/api/connectors/github/connect')).toBe(false);

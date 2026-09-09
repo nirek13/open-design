@@ -58,3 +58,20 @@ if (typeof window !== 'undefined') {
     Element.prototype.scrollIntoView = () => {};
   }
 }
+
+// Locale dictionaries are fetched on demand in the app (see src/i18n/registry.ts),
+// so `I18nProvider` withholds its first paint until the active one lands. Tests
+// call `render()` synchronously and assert immediately, which would race that
+// load. Warming the dictionaries the suite actually renders with restores the
+// synchronous mount — the same state a real second page load is in, since the
+// chunk is cached by then.
+//
+// Only the locales tests render with, not all nineteen: each dictionary is a
+// few hundred KB and this runs once per test file. Rendering with a locale
+// that is not listed here shows the boot shell instead of the component, so
+// add it below when a new one is used.
+import { loadDict } from '../../src/i18n/registry';
+
+await Promise.all(
+  (['en', 'zh-CN', 'fr', 'ja', 'th'] as const).map((locale) => loadDict(locale)),
+);

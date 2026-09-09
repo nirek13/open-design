@@ -1,0 +1,46 @@
+/* Remix Icon, narrowed to the glyphs this app draws.
+ *
+ * The vendored `remixicon.css` next to this file declares a "remixicon" face
+ * pointing at the full 189 KB woff2 — every one of the ~3,200 icons in the
+ * set, for the 76 this app actually renders. That file is left exactly as
+ * shipped so a RemixIcon upgrade stays a drop-in; this stylesheet loads after
+ * it and re-points the icon selector at a family of our own, leaving the
+ * vendored face declared but unreferenced (browsers never fetch a font face
+ * nothing renders with).
+ *
+ * Two faces, one family. The first carries only the glyphs we use and names
+ * them in `unicode-range`, so it is the only file fetched on a normal load.
+ * The second has no range and therefore covers everything else: if an icon
+ * name ever arrives from data rather than from source — pages, host tools and
+ * projects all carry an `icon` field in the API contracts — the browser falls
+ * back to the complete font for that glyph on its own. A name this subset has
+ * not seen costs a download, never a blank square.
+ *
+ * Regenerate with `apps/web/scripts/build-icon-subset.ts` after adding icons.
+ */
+
+@font-face {
+  font-family: "remixicon-subset";
+  src: url("/remixicon.subset.woff2") format("woff2");
+  font-display: swap;
+  unicode-range:
+    U+f5f8, U+ea42, U+ea4e, U+ea58, U+ea5a, U+ea60, U+ea78, U+ead1, U+eadb,
+    U+f42a, U+eb51, U+eb63, U+eb7b, U+eb7f, U+eb99, U+ebad, U+ebca, U+ec5a,
+    U+f38f, U+ec86, U+ecaf, U+ecb5, U+ecbb, U+ecd1, U+ecd5, U+eceb, U+ed01,
+    U+ed1f, U+f390, U+ed8d, U+edbd, U+edcf, U+f444, U+ee03, U+ee17, U+ee47,
+    U+ee4b, U+f479, U+ee66, U+ee6b, U+eead, U+eeae, U+eeb2, U+eeb4, U+eeb9,
+    U+eec6, U+ef1c, U+ef46, U+ef77, U+efbf, U+efc8, U+efe0, U+f00b, U+f350,
+    U+f062, U+f064, U+f080, U+f0c5, U+f0d1, U+f0de, U+f0e6, U+f0ee, U+f0fd,
+    U+f154, U+f15a, U+f167, U+f1e0, U+f1f0, U+f201, U+f227, U+f3e6, U+f244,
+    U+f24e, U+f2ba, U+f2bc, U+f2db;
+}
+
+@font-face {
+  font-family: "remixicon-subset";
+  src: url("/remixicon.woff2") format("woff2");
+  font-display: swap;
+}
+
+[class^="ri-"], [class*=" ri-"] {
+  font-family: "remixicon-subset" !important;
+}

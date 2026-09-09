@@ -662,6 +662,8 @@ import { registerWorkspaceDataRoutes } from './routes/workspace-data.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerErpRoutes } from './routes/erp.js';
 import { registerTeamChatRoutes } from './routes/team-chat.js';
+import { registerPushRoutes } from './routes/push.js';
+import { createWebPushService } from './services/web-push.js';
 import { registerPagesRoutes } from './routes/pages.js';
 import { registerOrgSearchRoutes } from './routes/org-search.js';
 import { registerCalendarRoutes } from './routes/calendar.js';
@@ -2465,6 +2467,7 @@ export async function startServer({
     console.log(`[od] organizations: postgres at ${daemonDbConfig.postgres?.host}`);
   }
   const workspaceDbManager = new WorkspaceDbManager(RUNTIME_DATA_DIR, sharedOrgExecutor);
+  const webPushService = createWebPushService({ dataDir: RUNTIME_DATA_DIR });
   const workspaceDataEvents = new WorkspaceDataEvents();
   // Identity: sign-in is required unless OD_AUTH_MODE=local-owner. See
   // apps/daemon/src/auth/identity.ts for the security posture of each mode.
@@ -2752,7 +2755,30 @@ export async function startServer({
   });
 
   if (fs.existsSync(STATIC_DIR)) {
-    app.use(express.static(STATIC_DIR));
+    // Everything under `_next/static` is content-hashed by the build, so the
+    // URL changes whenever the bytes do and the response can be cached
+    // forever. Served with express.static's defaults it went out as
+    // `max-age=0` instead, and the browser revalidated every chunk on every
+    // load — dozens of conditional requests standing between a reload and
+    // first paint.
+    app.use(
+      '/_next/static',
+      express.static(path.join(STATIC_DIR, '_next', 'static'), {
+        immutable: true,
+        maxAge: '1y',
+      }),
+    );
+    // The HTML shell is the one file whose URL never changes, so it must be
+    // revalidated or a deploy would never reach an open tab.
+    app.use(
+      express.static(STATIC_DIR, {
+        setHeaders(res, filePath) {
+          if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-cache');
+          }
+        },
+      }),
+    );
   }
 
   // ---- Projects (DB-backed) -------------------------------------------------
@@ -3452,7 +3478,12 @@ export async function startServer({
     db,
     auth: authDeps,
     paths: pathDeps,
-    chat: { manager: workspaceDbManager, identity: identityService },
+    chat: { manager: workspaceDbManager, identity: identityService, webPush: webPushService },
+  });
+  registerPushRoutes(app, {
+    auth: authDeps,
+    paths: pathDeps,
+    push: { manager: workspaceDbManager, identity: identityService, webPush: webPushService },
   });
   registerPagesRoutes(app, {
     db,
@@ -9523,6 +9554,7 @@ export async function startServer({
     finalize: finalizeDeps,
     handoff: handoffDeps,
     chat: { startChatRun },
+    push: { manager: workspaceDbManager, identity: identityService, webPush: webPushService },
     byokCredentials: byokCredentialService,
     messages: {
       pinAssistantMessageOnRunCreate,

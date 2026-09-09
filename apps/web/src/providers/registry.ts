@@ -77,6 +77,7 @@ import {
   isOpenDesignHostAvailable,
   openHostExternalUrl,
 } from '@open-design/host';
+import { daemonHasAnswered, markDaemonAnswered } from './daemon-reachability';
 
 export const DEFAULT_DEPLOY_PROVIDER_ID = 'vercel-self';
 export const CLOUDFLARE_PAGES_PROVIDER_ID = 'cloudflare-pages';
@@ -823,6 +824,10 @@ export async function fetchPromptTemplate(
 }
 
 export async function daemonIsLive(): Promise<boolean> {
+  // The boot path already waited on `/api/auth/context`; a successful answer
+  // is proof the daemon is up. Probing `/api/health` again just to learn the
+  // same thing put another full round trip in front of every workspace fetch.
+  if (daemonHasAnswered()) return true;
   try {
     const resp = await fetch('/api/health');
     return resp.ok;
@@ -2941,8 +2946,24 @@ const jsonBody = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
+/**
+ * Who the daemon thinks we are.
+ *
+ * Answering marks the daemon reachable, which is what lets `daemonIsLive`
+ * skip its own `/api/health` probe: the boot path already waited for this
+ * reply, so re-asking only adds a round trip in front of every other fetch.
+ *
+ * Two boot readers still call this in series — AuthGate, then OrgProvider
+ * once the gate resolves. Sharing one response would save a request, but the
+ * cache has to sit above this function to be worth anything, and 28 test
+ * files stub identity by replacing this module wholesale, so a wrapper here
+ * is invisible to them. Fixing it properly means handing OrgProvider the
+ * context AuthGate already holds rather than caching the call.
+ */
 export async function fetchAuthContext(): Promise<AuthContextResponse> {
-  return workspaceDataJson<AuthContextResponse>('/api/auth/context');
+  const context = await workspaceDataJson<AuthContextResponse>('/api/auth/context');
+  markDaemonAnswered();
+  return context;
 }
 
 export async function updateProfile(patch: UpdateProfileRequest): Promise<ProfileResponse> {
@@ -3426,6 +3447,8 @@ import type {
   SavedQuestionAnswer,
   TeamChatAttachment,
   TeamChatMessage,
+  PushStatusResponse,
+  RegisterPushSubscriptionResponse,
   TemplateInstallResult,
   TemplateStatus,
   TrialBalance,
@@ -3911,7 +3934,7 @@ export async function toggleChatReaction(
 export async function updateChatChannel(
   orgId: string,
   channelRef: string,
-  input: { displayName?: string; topic?: string; purpose?: string },
+  input: import('@open-design/contracts').UpdateChannelRequest,
 ): Promise<ChatChannel> {
   const json = await workspaceDataJson<{ channel: ChatChannel }>(
     orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}`),
@@ -4098,6 +4121,359 @@ export async function setMyChatStatus(
     },
   );
   return json.status;
+}
+
+// --- Team chat: realtime, emoji, groups, sections, drafts, quiet hours ----
+//
+// One block rather than scattered next to the calls they extend, because these
+// are the surfaces the revamp added and grouping them makes it obvious which
+// endpoints are new when reading the daemon side alongside.
+
+export async function sendChatHeartbeat(
+  orgId: string,
+  state: 'active' | 'away' = 'active',
+) {
+  return workspaceDataJson<{
+    presence: import('@open-design/contracts').ChatPresence;
+    roster: import('@open-design/contracts').ChatPresence[];
+    intervalMs: number;
+  }>(orgPath(orgId, '/chat/presence'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ state }),
+  });
+}
+
+export async function fetchChatPresence(orgId: string) {
+  return workspaceDataJson<{
+    roster: import('@open-design/contracts').ChatPresence[];
+    intervalMs: number;
+  }>(orgPath(orgId, '/chat/presence'));
+}
+
+/** Say you are (or are no longer) typing. Fire-and-forget at the call site:
+ * an indicator that fails to appear is not worth an error banner. */
+export async function sendChatTyping(
+  orgId: string,
+  channelRef: string,
+  input: { parentMessageId?: string | null; typing: boolean },
+): Promise<void> {
+  await workspaceDataJson(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/typing`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function fetchChatEmoji(orgId: string) {
+  return workspaceDataJson<{ emoji: import('@open-design/contracts').ChatCustomEmoji[] }>(
+    orgPath(orgId, '/chat/emoji'),
+  );
+}
+
+export async function uploadChatEmoji(orgId: string, name: string, image: File) {
+  const form = new FormData();
+  form.append('name', name);
+  form.append('image', image);
+  const json = await workspaceDataJson<{ emoji: import('@open-design/contracts').ChatCustomEmoji }>(
+    orgPath(orgId, '/chat/emoji'),
+    { method: 'POST', body: form },
+  );
+  return json.emoji;
+}
+
+export async function createChatEmojiAlias(orgId: string, name: string, aliasFor: string) {
+  const json = await workspaceDataJson<{ emoji: import('@open-design/contracts').ChatCustomEmoji }>(
+    orgPath(orgId, '/chat/emoji'),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, aliasFor }),
+    },
+  );
+  return json.emoji;
+}
+
+export async function deleteChatEmoji(orgId: string, name: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/chat/emoji/${encodeURIComponent(name)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchChatGroups(orgId: string) {
+  return workspaceDataJson<{ groups: import('@open-design/contracts').ChatUserGroup[] }>(
+    orgPath(orgId, '/chat/groups'),
+  );
+}
+
+export async function createChatGroup(
+  orgId: string,
+  input: import('@open-design/contracts').CreateChatUserGroupRequest,
+) {
+  const json = await workspaceDataJson<{ group: import('@open-design/contracts').ChatUserGroup }>(
+    orgPath(orgId, '/chat/groups'),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.group;
+}
+
+export async function updateChatGroup(
+  orgId: string,
+  groupId: string,
+  input: import('@open-design/contracts').UpdateChatUserGroupRequest,
+) {
+  const json = await workspaceDataJson<{ group: import('@open-design/contracts').ChatUserGroup }>(
+    orgPath(orgId, `/chat/groups/${encodeURIComponent(groupId)}`),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.group;
+}
+
+export async function deleteChatGroup(orgId: string, groupId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/chat/groups/${encodeURIComponent(groupId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchChatSections(orgId: string) {
+  return workspaceDataJson<{ sections: import('@open-design/contracts').ChatSection[] }>(
+    orgPath(orgId, '/chat/sections'),
+  );
+}
+
+export async function createChatSection(orgId: string, input: { name: string; emoji?: string }) {
+  const json = await workspaceDataJson<{ section: import('@open-design/contracts').ChatSection }>(
+    orgPath(orgId, '/chat/sections'),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.section;
+}
+
+export async function updateChatSection(
+  orgId: string,
+  sectionId: string,
+  input: import('@open-design/contracts').UpdateChatSectionRequest,
+) {
+  const json = await workspaceDataJson<{ sections: import('@open-design/contracts').ChatSection[] }>(
+    orgPath(orgId, `/chat/sections/${encodeURIComponent(sectionId)}`),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.sections;
+}
+
+export async function deleteChatSection(orgId: string, sectionId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/chat/sections/${encodeURIComponent(sectionId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchChatDrafts(orgId: string) {
+  return workspaceDataJson<{ drafts: import('@open-design/contracts').ChatDraft[] }>(
+    orgPath(orgId, '/chat/drafts'),
+  );
+}
+
+export async function saveChatDraft(
+  orgId: string,
+  channelRef: string,
+  input: { parentMessageId?: string | null; body: string; attachments?: TeamChatAttachment[] },
+) {
+  const json = await workspaceDataJson<{ draft: import('@open-design/contracts').ChatDraft | null }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/draft`),
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.draft;
+}
+
+export async function fetchChatDnd(orgId: string) {
+  return workspaceDataJson<{
+    dnd: import('@open-design/contracts').ChatDndSettings;
+    active: boolean;
+  }>(orgPath(orgId, '/chat/dnd'));
+}
+
+export async function updateChatDnd(
+  orgId: string,
+  input: import('@open-design/contracts').UpdateChatDndRequest,
+) {
+  return workspaceDataJson<{
+    dnd: import('@open-design/contracts').ChatDndSettings;
+    active: boolean;
+  }>(orgPath(orgId, '/chat/dnd'), {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function forwardChatMessage(
+  orgId: string,
+  messageId: string,
+  input: { toChannel: string; comment?: string },
+) {
+  const json = await workspaceDataJson<{ message: TeamChatMessage }>(
+    orgPath(orgId, `/chat/messages/${encodeURIComponent(messageId)}/forward`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.message;
+}
+
+export async function fetchChatCatchUp(orgId: string) {
+  return workspaceDataJson<import('@open-design/contracts').ChatCatchUpResponse>(
+    orgPath(orgId, '/chat/catch-up'),
+  );
+}
+
+export async function joinChatHuddle(orgId: string, channelRef: string) {
+  const json = await workspaceDataJson<{ huddle: import('@open-design/contracts').ChatHuddle }>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/huddle`),
+    { method: 'POST' },
+  );
+  return json.huddle;
+}
+
+export async function leaveChatHuddle(orgId: string, huddleId: string) {
+  return workspaceDataJson<{
+    huddle: import('@open-design/contracts').ChatHuddle;
+    ended: boolean;
+  }>(orgPath(orgId, `/chat/huddles/${encodeURIComponent(huddleId)}`), { method: 'DELETE' });
+}
+
+export async function setChatHuddleState(
+  orgId: string,
+  huddleId: string,
+  input: { muted?: boolean; sharing?: boolean },
+) {
+  const json = await workspaceDataJson<{ huddle: import('@open-design/contracts').ChatHuddle }>(
+    orgPath(orgId, `/chat/huddles/${encodeURIComponent(huddleId)}`),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return json.huddle;
+}
+
+/** Relay one WebRTC frame to a peer. Best-effort by design: a candidate that
+ * arrives after the peer left is dropped, which is what "ephemeral" means. */
+export async function sendChatHuddleSignal(
+  orgId: string,
+  huddleId: string,
+  input: import('@open-design/contracts').ChatHuddleSignalRequest,
+): Promise<void> {
+  await workspaceDataJson(
+    orgPath(orgId, `/chat/huddles/${encodeURIComponent(huddleId)}/signal`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function fetchChatWebhooks(orgId: string) {
+  return workspaceDataJson<{ webhooks: import('@open-design/contracts').ChatWebhook[] }>(
+    orgPath(orgId, '/chat/webhooks'),
+  );
+}
+
+export async function createChatWebhook(
+  orgId: string,
+  input: import('@open-design/contracts').CreateChatWebhookRequest,
+) {
+  return workspaceDataJson<import('@open-design/contracts').ChatWebhookCreatedResponse>(
+    orgPath(orgId, '/chat/webhooks'),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function revokeChatWebhook(orgId: string, webhookId: string): Promise<void> {
+  await workspaceDataJson(orgPath(orgId, `/chat/webhooks/${encodeURIComponent(webhookId)}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchChatRetention(orgId: string, channelRef: string) {
+  return workspaceDataJson<import('@open-design/contracts').ChatRetentionResponse>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/retention`),
+  );
+}
+
+export async function updateChatRetention(
+  orgId: string,
+  channelRef: string,
+  input: import('@open-design/contracts').UpdateChatRetentionRequest,
+) {
+  return workspaceDataJson<import('@open-design/contracts').ChatRetentionResponse>(
+    orgPath(orgId, `/chat/channels/${encodeURIComponent(channelRef)}/retention`),
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function exportChatTranscript(orgId: string, channelRef?: string) {
+  const suffix = channelRef ? `?channel=${encodeURIComponent(channelRef)}` : '';
+  return workspaceDataJson<import('@open-design/contracts').ChatExportResponse>(
+    orgPath(orgId, `/chat/export${suffix}`),
+  );
+}
+
+export async function fetchPushStatus(): Promise<PushStatusResponse> {
+  return workspaceDataJson<PushStatusResponse>('/api/push');
+}
+
+export async function registerPushSubscription(
+  subscription: { endpoint?: string; expirationTime?: number | null; keys?: { p256dh?: string; auth?: string } },
+  userAgent?: string,
+): Promise<RegisterPushSubscriptionResponse> {
+  return workspaceDataJson<RegisterPushSubscriptionResponse>('/api/push/subscriptions', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ subscription, ...(userAgent ? { userAgent } : {}) }),
+  });
+}
+
+export async function unregisterPushSubscription(endpoint: string): Promise<void> {
+  await workspaceDataJson('/api/push/subscriptions', {
+    method: 'DELETE',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ endpoint }),
+  });
 }
 
 // --- Organization pages ---------------------------------------------------

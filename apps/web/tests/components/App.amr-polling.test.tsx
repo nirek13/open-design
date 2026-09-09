@@ -465,6 +465,9 @@ describe('App AMR polling', () => {
     });
 
     fireEvent.click(screen.getByText('open settings'));
+    // The settings dialog loads on demand now, so its content lands a tick
+    // after the click rather than in the same commit.
+    await advanceTestClock(0);
     expect(screen.getByText('mark amr signed in')).toBeTruthy();
     fireEvent.click(screen.getByText('mark amr signed in'));
     await advanceTestClock(0);

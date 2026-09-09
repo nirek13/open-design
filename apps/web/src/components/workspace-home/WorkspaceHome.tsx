@@ -401,12 +401,16 @@ export function WorkspaceHome({
         className={`${styles.stage}${launching ? ` ${styles.stageLaunching}` : ''}`}
         {...(launching ? { 'data-launching': 'true' } : {})}
       >
+        {/* The pane-wide dawn is drawn once, by WorkspacePage's `studio`
+            surface. These layers are only the light around the composer —
+            the pool it sits in, two slow drifts, and the warmth beneath it.
+            Adding a second full-surface wash here is what made the hub read
+            as a muddy dome; keep this layer local. */}
         <div className={styles.atmosphere} aria-hidden data-testid="home-atmosphere">
-          <span className={styles.orbLamp} />
-          <span className={styles.orbLeft} />
-          <span className={styles.orbRight} />
-          <span className={styles.ring} />
-          <span className={styles.grain} />
+          <span className={styles.halo} />
+          <span className={styles.beamLeft} />
+          <span className={styles.beamRight} />
+          <span className={styles.underglow} />
         </div>
         <HubAskComposer
           orgId={activeOrgId}

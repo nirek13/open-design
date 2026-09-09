@@ -138,7 +138,18 @@
   color: inherit;
 }
 
-.text:empty::before {
+.text:focus:empty::before,
+.text[data-lonely='true']:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-faint, #b3b0a8);
+  pointer-events: none;
+}
+
+/* Deleting the last character leaves a stray <br> behind, which is exactly
+ * when the hint is wanted back. Its own rule: one unsupported selector would
+ * invalidate the whole list above. */
+.text:focus:has(> br:only-child)::before,
+.text[data-lonely='true']:has(> br:only-child)::before {
   content: attr(data-placeholder);
   color: var(--text-faint, #b3b0a8);
   pointer-events: none;

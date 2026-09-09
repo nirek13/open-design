@@ -1,4 +1,5 @@
 .fullscreen {
+  position: relative;
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
@@ -124,13 +125,21 @@
   text-align: start;
 }
 
+.tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
 .section {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-height: 0;
   padding: 0 2px;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
 }
 
 .sectionHead {
@@ -159,10 +168,6 @@
   color: var(--text, #1a1916);
 }
 
-.section:last-of-type {
-  flex: 1 1 auto;
-}
-
 .sectionTitle {
   margin: 0;
   padding: 6px 10px 4px;
@@ -174,9 +179,7 @@
 .pageList {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
-  overflow: auto;
-  min-height: 0;
+  min-width: 0;
 }
 
 .treeNode {
@@ -441,9 +444,14 @@
 }
 
 .savePill {
+  flex: 0 0 auto;
+  min-width: 5.5rem;
+  text-align: end;
   font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
   color: var(--text-soft, #989590);
   padding: 2px 8px;
+  white-space: nowrap;
 }
 
 .savePill[data-state='dirty'] {
@@ -468,6 +476,10 @@
   right: 0;
   z-index: 40;
   min-width: 220px;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   border-radius: 10px;
   border: 1px solid var(--border, #e1e5eb);
@@ -491,6 +503,13 @@
 
 .moreMenu button:hover {
   background: var(--bg-fill-secondary, rgba(0, 0, 0, 0.06));
+}
+
+/* Note titles are arbitrary length; keep them on one line. */
+.menuItemTruncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sendScrim {
@@ -552,7 +571,8 @@
 .canvas {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .emptyCanvas {
@@ -826,6 +846,10 @@
   }
 
   .article {
-    width: min(708px, calc(100% - 48px));
+    width: min(708px, calc(100% - 108px));
+  }
+
+  .savePill {
+    min-width: 0;
   }
 }

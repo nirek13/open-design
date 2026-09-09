@@ -1,0 +1,3 @@
+/* Excalidraw ships its editor stylesheet alongside the module. The suite
+   aliases the module itself to a mock, so this stands in for the CSS the
+   lazy sketch boundaries now import. */

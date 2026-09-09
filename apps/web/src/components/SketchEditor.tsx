@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// Excalidraw's stylesheet rides with this chunk rather than the root
+// layout: 142 KB of render-blocking CSS on every page load bought
+// nothing for the sessions that never open a sketch.
+import '@excalidraw/excalidraw/index.css';
 import type { MutableRefObject } from 'react';
 import {
   Excalidraw,

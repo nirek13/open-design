@@ -332,11 +332,33 @@ export function BlockEditor({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [mention, setMention] = useState<{ blockKey: string; query: string; index: number } | null>(null);
   const [format, setFormat] = useState<{ key: string; top: number; left: number } | null>(null);
-  const [focusKey, setFocusKey] = useState<string | null>(blocks[0]?.key ?? null);
+  const [focusKey, setFocusKey] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropState | null>(null);
   const refs = useRef(new Map<string, HTMLElement>());
+  const refSetters = useRef(new Map<string, (el: HTMLElement | null) => void>());
   const prevFocus = useRef<string | null>(null);
+  const textOf = useRef(new Map<string, string>());
+
+  // One stable callback per block. `textOf` carries the text the callback
+  // should write so the identity never has to change.
+  const bindBlock = useCallback((key: string) => {
+    const existing = refSetters.current.get(key);
+    if (existing) return existing;
+    const setter = (el: HTMLElement | null) => {
+      if (!el) {
+        refs.current.delete(key);
+        return;
+      }
+      refs.current.set(key, el);
+      const text = textOf.current.get(key) ?? '';
+      if (document.activeElement !== el && el.textContent !== text) {
+        el.textContent = text;
+      }
+    };
+    refSetters.current.set(key, setter);
+    return setter;
+  }, []);
 
   const slashItems = useMemo(() => (slash ? filterSlashItems(slash.query) : []), [slash]);
   const makeSlash = slashItems.filter((item) => item.source === 'make');
@@ -365,6 +387,19 @@ export function BlockEditor({
     const q = mention.query.toLowerCase();
     return pages.filter((page) => !q || page.title.toLowerCase().includes(q) || page.id.includes(q)).slice(0, 8);
   }, [mention, pages]);
+
+  // The block text is written into the DOM imperatively — React never renders
+  // children into a contentEditable — so anything that changes it from outside
+  // (an agent writing to the page, a block turning into another type) has to be
+  // pushed to the node after the render that carried it. Never touch the node
+  // the caret is in.
+  useEffect(() => {
+    for (const [key, node] of refs.current) {
+      const text = textOf.current.get(key);
+      if (text === undefined || document.activeElement === node) continue;
+      if (node.textContent !== text) node.textContent = text;
+    }
+  });
 
   useEffect(() => {
     if (!focusKey || focusKey === prevFocus.current) return;
@@ -1200,6 +1235,11 @@ export function BlockEditor({
     return true;
   };
 
+  const soleEmptyBlock =
+    blocks.length === 1 && !blocks[0]?.text && blocks[0]?.children.length === 0
+      ? blocks[0]?.key
+      : null;
+
   const renderBlock = (block: DraftBlock, siblings: DraftBlock[], depth: number): ReactNode => {
     const checked = Boolean(block.props.checked);
     const dropping = drop?.key === block.key;
@@ -1228,7 +1268,9 @@ export function BlockEditor({
           event.preventDefault();
           const rect = event.currentTarget.getBoundingClientRect();
           const edge = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-          setDrop({ key: block.key, edge });
+          setDrop((current) =>
+            current?.key === block.key && current.edge === edge ? current : { key: block.key, edge },
+          );
         }}
         onDrop={(event) => {
           event.preventDefault();
@@ -1337,22 +1379,14 @@ export function BlockEditor({
 
           {showText(block) ? (
             <div
-              ref={(el) => {
-                if (el) {
-                  refs.current.set(block.key, el);
-                  if (document.activeElement !== el && el.textContent !== block.text) {
-                    el.textContent = block.text;
-                  }
-                } else {
-                  refs.current.delete(block.key);
-                }
-              }}
+              ref={bindBlock(block.key)}
               className={`${styles.text}${checked ? ` ${styles.checked}` : ''}`}
               contentEditable={!readOnly}
               suppressContentEditableWarning
               role="textbox"
               aria-multiline="true"
               data-placeholder={placeholderFor(block.type)}
+              data-lonely={block.key === soleEmptyBlock ? 'true' : undefined}
               onInput={(event) => onText(block.key, event.currentTarget.textContent ?? '', event.currentTarget)}
               onKeyDown={(event) => onKeyDown(block, event)}
               onPaste={(event) => {
@@ -1440,6 +1474,21 @@ export function BlockEditor({
     onChange([...blocks, created]);
     setFocusKey(created.key);
   };
+
+  // Text the per-block ref callbacks write into their node, refreshed each
+  // render so those callbacks can keep a stable identity. Rebuilding the map
+  // also drops entries for blocks that no longer exist.
+  textOf.current.clear();
+  const indexText = (list: DraftBlock[]) => {
+    for (const block of list) {
+      textOf.current.set(block.key, block.text);
+      indexText(block.children);
+    }
+  };
+  indexText(blocks);
+  for (const key of refSetters.current.keys()) {
+    if (!textOf.current.has(key)) refSetters.current.delete(key);
+  }
 
   return (
     <div className={styles.editor} data-testid="pages-editor">

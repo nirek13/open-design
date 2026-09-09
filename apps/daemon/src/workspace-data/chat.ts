@@ -41,7 +41,8 @@ import type { SqlExecutor } from '../storage/sql.js';
 
 const CHANNEL_COLS = `
   id, workspace_id AS "orgId", slug, display_name AS "displayName", topic, purpose,
-  kind, visibility, archived_at AS "archivedAt", created_by AS "createdBy",
+  kind, visibility, post_policy AS "postPolicy",
+  archived_at AS "archivedAt", created_by AS "createdBy",
   created_at AS "createdAt", updated_at AS "updatedAt"
 `;
 
@@ -49,6 +50,8 @@ const MESSAGE_COLS = `
   id, channel_id AS "channelId", workspace_id AS "orgId",
   author_member_id AS "authorMemberId", body, system,
   attachments_json AS "attachmentsJson", mentions_json AS "mentionsJson",
+  group_mentions_json AS "groupMentionsJson", thread_broadcast AS "threadBroadcast",
+  bot_name AS "botName", bot_icon AS "botIcon",
   parent_message_id AS "parentMessageId", edited_at AS "editedAt",
   deleted_at AS "deletedAt", created_at AS "createdAt"
 `;
@@ -60,6 +63,8 @@ const MESSAGE_COLS_M = `
   m.id, m.channel_id AS "channelId", m.workspace_id AS "orgId",
   m.author_member_id AS "authorMemberId", m.body, m.system,
   m.attachments_json AS "attachmentsJson", m.mentions_json AS "mentionsJson",
+  m.group_mentions_json AS "groupMentionsJson", m.thread_broadcast AS "threadBroadcast",
+  m.bot_name AS "botName", m.bot_icon AS "botIcon",
   m.parent_message_id AS "parentMessageId", m.edited_at AS "editedAt",
   m.deleted_at AS "deletedAt", m.created_at AS "createdAt"
 `;
@@ -105,15 +110,60 @@ interface ChannelRow {
   purpose: string | null;
   kind: string | null;
   visibility: ChannelVisibility;
+  postPolicy: string | null;
   archivedAt: number | string | null;
   createdBy: string;
   createdAt: number | string;
   updatedAt: number | string;
 }
 
-/** Attach the per-caller and per-channel counts the UI needs. Done in one
- * grouped query per channel set rather than per row, because the channel list
- * is rendered on every page load. */
+/** The unread clause, written once.
+ *
+ * Read position is a timestamp, so "unread" is "newer than my marker". The
+ * rest is the notification preferences applied at read time rather than at
+ * write time: a muted channel has no badge, a mentions-only channel counts
+ * only messages that named you, and your own messages never count. Doing it
+ * here means changing a preference is instantly reflected in the badge
+ * without rewriting a stored counter. */
+const UNREAD_PREDICATE = `
+  m.deleted_at IS NULL
+  AND m.created_at > cm.last_read_at
+  AND (m.author_member_id IS NULL OR m.author_member_id <> cm.member_id)
+  AND COALESCE(cm.muted, 0) = 0
+  AND COALESCE(cm.notify, 'all') <> 'nothing'
+  AND (
+    COALESCE(cm.notify, 'all') = 'all'
+    OR m.mentions_json LIKE ?
+    OR m.mentions_json LIKE '%"@channel"%'
+    OR m.mentions_json LIKE '%"@here"%'
+    OR m.mentions_json LIKE '%"@everyone"%'
+  )
+`;
+
+/** Messages that named this member specifically, or the whole room. Counted
+ * separately from unread because the two badges mean different things: bold
+ * says "there is something here", a red number says "it is addressed to you".
+ * Mute does not suppress it — muting a channel is not a request never to be
+ * told when you are called by name. */
+const MENTION_PREDICATE = `
+  m.deleted_at IS NULL
+  AND m.created_at > cm.last_read_at
+  AND (m.author_member_id IS NULL OR m.author_member_id <> cm.member_id)
+  AND (
+    m.mentions_json LIKE ?
+    OR m.mentions_json LIKE '%"@channel"%'
+    OR m.mentions_json LIKE '%"@here"%'
+    OR m.mentions_json LIKE '%"@everyone"%'
+  )
+`;
+
+/** Attach the per-caller and per-channel counts the UI needs.
+ *
+ * Every figure here is one grouped query over the whole channel set. It used
+ * to be one query per channel for the unread count, which meant opening chat
+ * with forty rooms cost forty round trips before a single message rendered —
+ * fine on a laptop with a local file, ruinous against a hosted database where
+ * each one is a network hop. */
 async function decorateChannels(
   db: SqlExecutor,
   rows: ChannelRow[],
@@ -122,6 +172,7 @@ async function decorateChannels(
   if (rows.length === 0) return [];
   const ids = rows.map((row) => row.id);
   const placeholders = ids.map(() => '?').join(', ');
+  const mentionLike = `%"${memberId}"%`;
 
   const memberCounts = new Map<string, number>();
   for (const row of await db.all<{ channelId: string; n: number | string }>(
@@ -170,34 +221,66 @@ async function decorateChannels(
     });
   }
 
-  // Unread counts only for channels the caller is in — there is no such thing
-  // as unread in a channel you have not joined. Mute / mentions-only follow
-  // Slack: a muted room never badges, and mentions-only only counts @you
-  // (or @channel / @here / @everyone).
+  // Unread and mention counts for every joined channel at once. There is no
+  // such thing as unread in a channel you have not joined, and the join to the
+  // membership row is what supplies both the read marker and the preferences.
   const unread = new Map<string, number>();
-  for (const [channelId, prefs] of membership) {
-    if (prefs.muted || prefs.notify === 'nothing') {
-      unread.set(channelId, 0);
-      continue;
+  for (const row of await db.all<{ channelId: string; n: number | string }>(
+    `SELECT m.channel_id AS "channelId", COUNT(*) AS n
+       FROM od_chat_messages m
+       JOIN od_chat_channel_members cm
+         ON cm.channel_id = m.channel_id AND cm.member_id = ?
+      WHERE m.channel_id IN (${placeholders}) AND ${UNREAD_PREDICATE}
+      GROUP BY m.channel_id`,
+    [memberId, ...ids, mentionLike],
+  )) {
+    unread.set(row.channelId, num(row.n));
+  }
+
+  const mentions = new Map<string, number>();
+  for (const row of await db.all<{ channelId: string; n: number | string }>(
+    `SELECT m.channel_id AS "channelId", COUNT(*) AS n
+       FROM od_chat_messages m
+       JOIN od_chat_channel_members cm
+         ON cm.channel_id = m.channel_id AND cm.member_id = ?
+      WHERE m.channel_id IN (${placeholders}) AND ${MENTION_PREDICATE}
+      GROUP BY m.channel_id`,
+    [memberId, ...ids, mentionLike],
+  )) {
+    mentions.set(row.channelId, num(row.n));
+  }
+
+  const liveHuddles = new Set<string>();
+  for (const row of await db.all<{ channelId: string }>(
+    `SELECT DISTINCT channel_id AS "channelId" FROM od_chat_huddles
+      WHERE channel_id IN (${placeholders}) AND ended_at IS NULL`,
+    ids,
+  )) {
+    liveHuddles.add(row.channelId);
+  }
+
+  const retention = new Map<string, number | null>();
+  for (const row of await db.all<{ channelId: string; days: number | string | null }>(
+    `SELECT channel_id AS "channelId", days FROM od_chat_retention
+      WHERE channel_id IN (${placeholders})`,
+    ids,
+  )) {
+    retention.set(row.channelId, nullableNum(row.days));
+  }
+
+  // Sidebar sections are stored as a JSON list of channel ids per section, so
+  // the channel-to-section map is built here rather than joined. One row per
+  // section per person is a handful of rows; a join table would be more SQL
+  // for no gain.
+  const sectionOf = new Map<string, string>();
+  for (const row of await db.all<{ id: string; channelsJson: string }>(
+    `SELECT id, channels_json AS "channelsJson" FROM od_chat_sections
+      WHERE workspace_id = ? AND member_id = ?`,
+    [rows[0]!.orgId, memberId],
+  )) {
+    for (const channelId of parseJsonArray<string>(row.channelsJson)) {
+      sectionOf.set(channelId, row.id);
     }
-    const mentionOnly = prefs.notify === 'mentions';
-    const row = await db.get<{ n: number | string }>(
-      `SELECT COUNT(*) AS n FROM od_chat_messages
-        WHERE channel_id = ? AND deleted_at IS NULL AND created_at > ?
-          AND (author_member_id IS NULL OR author_member_id <> ?)
-          ${mentionOnly
-            ? `AND (
-                 mentions_json LIKE ?
-                 OR mentions_json LIKE '%"@channel"%'
-                 OR mentions_json LIKE '%"@here"%'
-                 OR mentions_json LIKE '%"@everyone"%'
-               )`
-            : ''}`,
-      mentionOnly
-        ? [channelId, prefs.lastReadAt, memberId, `%"${memberId}"%`]
-        : [channelId, prefs.lastReadAt, memberId],
-    );
-    unread.set(channelId, num(row?.n ?? 0));
   }
 
   return rows.map((row) => {
@@ -211,6 +294,7 @@ async function decorateChannels(
       purpose: row.purpose ?? null,
       kind: row.kind === 'dm' || row.kind === 'group_dm' ? row.kind : 'channel',
       visibility: row.visibility,
+      postPolicy: row.postPolicy === 'admins' ? 'admins' : 'everyone',
       archivedAt: nullableNum(row.archivedAt),
       createdBy: row.createdBy,
       createdAt: num(row.createdAt),
@@ -219,10 +303,14 @@ async function decorateChannels(
       messageCount: stats.get(row.id)?.count ?? 0,
       lastMessageAt: stats.get(row.id)?.last ?? null,
       joined: Boolean(prefs),
-      unreadCount: unread.get(row.id) ?? 0,
+      unreadCount: prefs ? (unread.get(row.id) ?? 0) : 0,
+      mentionCount: prefs ? (mentions.get(row.id) ?? 0) : 0,
       starred: prefs?.starred ?? false,
       muted: prefs?.muted ?? false,
       notify: prefs?.notify ?? 'all',
+      huddleActive: liveHuddles.has(row.id),
+      retentionDays: retention.get(row.id) ?? null,
+      sectionId: sectionOf.get(row.id) ?? null,
     };
   });
 }
@@ -316,10 +404,12 @@ export async function createChannel(
   const now = Date.now();
   const id = `chn-${randomUUID()}`;
   const visibility: ChannelVisibility = input.visibility === 'private' ? 'private' : 'public';
+  const postPolicy = input.postPolicy === 'admins' ? 'admins' : 'everyone';
   await db.run(
     `INSERT INTO od_chat_channels
-       (id, workspace_id, slug, display_name, topic, purpose, kind, visibility, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'channel', ?, ?, ?, ?)`,
+       (id, workspace_id, slug, display_name, topic, purpose, kind, visibility,
+        post_policy, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'channel', ?, ?, ?, ?, ?)`,
     [
       id,
       orgId,
@@ -328,6 +418,7 @@ export async function createChannel(
       input.topic?.trim() || null,
       input.purpose?.trim() || null,
       visibility,
+      postPolicy,
       createdBy,
       now,
       now,
@@ -367,6 +458,10 @@ export async function updateChannel(
   if (input.visibility === 'public' || input.visibility === 'private') {
     sets.push('visibility = ?');
     params.push(input.visibility);
+  }
+  if (input.postPolicy === 'everyone' || input.postPolicy === 'admins') {
+    sets.push('post_policy = ?');
+    params.push(input.postPolicy);
   }
   if (sets.length === 0) return channel;
   sets.push('updated_at = ?');
@@ -624,11 +719,17 @@ function toMessage(row: Record<string, any>, resolveMemberName?: ResolveMemberNa
     channelId: row.channelId,
     orgId: row.orgId,
     authorMemberId,
-    authorName: authorMemberId ? (resolveMemberName?.(authorMemberId) ?? null) : null,
+    // A webhook message has no member behind it, so its posted name is the
+    // author name. Reading it off the row rather than a live webhook lookup
+    // means revoking the webhook does not turn its history anonymous.
+    authorName: authorMemberId
+      ? (resolveMemberName?.(authorMemberId) ?? null)
+      : (row.botName ?? null),
     body: row.body,
     system: row.system === 1 || row.system === true,
     attachments: sanitizeTeamChatAttachments(parseJsonArray<TeamChatAttachment>(row.attachmentsJson)),
     mentions: parseJsonArray<string>(row.mentionsJson),
+    groupMentions: parseJsonArray<string>(row.groupMentionsJson),
     parentMessageId: row.parentMessageId ?? null,
     replyCount: num(row.replyCount ?? 0),
     reactions: [],
@@ -637,6 +738,9 @@ function toMessage(row: Record<string, any>, resolveMemberName?: ResolveMemberNa
     createdAt: num(row.createdAt),
     pinned: false,
     saved: false,
+    threadBroadcast: row.threadBroadcast === 1 || row.threadBroadcast === true,
+    botName: row.botName ?? null,
+    botIcon: row.botIcon ?? null,
   };
 }
 
@@ -659,7 +763,9 @@ export async function listMessages(
     params.push(query.parentMessageId);
   } else {
     // The channel view shows top-level messages; replies live in their thread.
-    where.push('m.parent_message_id IS NULL');
+    // The exception is a reply its author chose to broadcast, which appears in
+    // both places — stored once, so the two views can never disagree about it.
+    where.push('(m.parent_message_id IS NULL OR m.thread_broadcast = 1)');
   }
 
   if (query.before) {
@@ -720,6 +826,21 @@ export async function getMessage(
   return withReact ?? message;
 }
 
+export interface PostMessageOptions {
+  /** True when the caller is an organization admin or owner. Only consulted
+   * for announcement channels; passed in because roles are an organization
+   * concept and this module deliberately does not know about them. */
+  isAdmin?: boolean;
+  /** Identity for a message posted by an incoming webhook rather than a
+   * person. Stored on the row, so history keeps its byline after the webhook
+   * is revoked. */
+  bot?: { name: string; icon?: string | null } | null;
+  /** User-group ids named in the body. Their members are already folded into
+   * `input.mentions`; this is kept so the renderer can show one group chip
+   * instead of a list of names. */
+  groupMentions?: readonly string[];
+}
+
 export async function postMessage(
   db: SqlExecutor,
   orgId: string,
@@ -727,8 +848,19 @@ export async function postMessage(
   memberId: string,
   input: PostMessageRequest,
   resolveMemberName?: ResolveMemberName,
+  options: PostMessageOptions = {},
 ): Promise<TeamChatMessage> {
   const channel = await assertChannelAccess(db, orgId, ref, memberId);
+  // An announcement channel is readable by everyone and writable by admins.
+  // Thread replies stay open on purpose: an announcement nobody may question
+  // is a notice board, not a channel.
+  if (channel.postPolicy === 'admins' && !options.isAdmin && !input.parentMessageId) {
+    throw new WorkspaceDataError(
+      'CHANNEL_POST_DENIED',
+      403,
+      `only admins can post to #${channel.slug}`,
+    );
+  }
   const body = typeof input.body === 'string' ? input.body.trim() : '';
   const attachments = sanitizeTeamChatAttachments(input.attachments);
   if (!body && attachments.length === 0) {
@@ -753,24 +885,35 @@ export async function postMessage(
   }
 
   // Posting is joining. Someone who says something in a public channel is in
-  // it — requiring an explicit join first is friction with no purpose.
-  await addMember(db, channel.id, memberId, 'member');
+  // it — requiring an explicit join first is friction with no purpose. A
+  // webhook is not a person and does not join anything.
+  if (!options.bot) await addMember(db, channel.id, memberId, 'member');
 
   const id = `msg-${randomUUID()}`;
   const now = await nextMessageTimestamp(db, channel.id);
+  // A broadcast only means anything on a reply. Setting it on a top-level
+  // message would make the transcript claim a message is echoed from a thread
+  // that does not exist.
+  const broadcast = Boolean(input.threadBroadcast && input.parentMessageId);
   await db.run(
     `INSERT INTO od_chat_messages
        (id, channel_id, workspace_id, author_member_id, body, system,
-        attachments_json, mentions_json, parent_message_id, created_at)
-     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+        attachments_json, mentions_json, group_mentions_json,
+        thread_broadcast, bot_name, bot_icon, parent_message_id, created_at)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       channel.id,
       orgId,
-      memberId,
+      // A webhook posts as itself, not as whoever created it.
+      options.bot ? null : memberId,
       body,
       JSON.stringify(attachments),
       JSON.stringify(input.mentions ?? []),
+      JSON.stringify(options.groupMentions ?? []),
+      broadcast ? 1 : 0,
+      options.bot?.name ?? null,
+      options.bot?.icon ?? null,
       input.parentMessageId ?? null,
       now,
     ],
@@ -803,8 +946,8 @@ export async function postSystemMessage(
   await db.run(
     `INSERT INTO od_chat_messages
        (id, channel_id, workspace_id, author_member_id, body, system,
-        attachments_json, mentions_json, parent_message_id, created_at)
-     VALUES (?, ?, ?, NULL, ?, 1, ?, '[]', NULL, ?)`,
+        attachments_json, mentions_json, group_mentions_json, parent_message_id, created_at)
+     VALUES (?, ?, ?, NULL, ?, 1, ?, '[]', '[]', NULL, ?)`,
     [
       id,
       row.id,
@@ -906,8 +1049,9 @@ export async function openDirectMessage(
   const id = `chn-${randomUUID()}`;
   await db.run(
     `INSERT INTO od_chat_channels
-       (id, workspace_id, slug, display_name, topic, purpose, kind, visibility, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, NULL, NULL, ?, 'private', ?, ?, ?)`,
+       (id, workspace_id, slug, display_name, topic, purpose, kind, visibility,
+        post_policy, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, NULL, NULL, ?, 'private', 'everyone', ?, ?, ?)`,
     [id, orgId, slug, displayName, kind, callerId, now, now],
   );
   for (const memberId of partners) {
@@ -988,6 +1132,60 @@ export async function toggleReaction(
   return getMessage(db, messageId, resolveMemberName, memberId);
 }
 
+/** Whether this SQLite file has the FTS5 index the v23 migration tries to
+ * create. Cached per executor: the answer cannot change while the process is
+ * running, and asking sqlite_master on every search would undo the point of
+ * having an index. */
+const ftsAvailability = new WeakMap<SqlExecutor, Promise<boolean>>();
+
+async function hasFullTextIndex(db: SqlExecutor): Promise<boolean> {
+  if (db.dialect === 'postgres') return true;
+  let cached = ftsAvailability.get(db);
+  if (!cached) {
+    cached = db
+      .get<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'od_chat_fts'")
+      .then((row) => Boolean(row))
+      .catch(() => false);
+    ftsAvailability.set(db, cached);
+  }
+  return cached;
+}
+
+/** Turn what someone typed into an FTS5 MATCH expression.
+ *
+ * Every term is quoted, because a raw query is a small language of its own —
+ * `NEAR`, `*`, `:`, and an unbalanced quote are all syntax, and a search box
+ * that throws a parse error at the person using it is broken. A trailing `*`
+ * is added to the last term so results appear while they are still typing. */
+function toFts5Query(text: string): string {
+  const terms = text
+    .split(/\s+/)
+    .map((term) => term.replace(/"/g, '').trim())
+    .filter(Boolean);
+  if (terms.length === 0) return '';
+  return terms
+    .map((term, index) => (index === terms.length - 1 ? `"${term}"*` : `"${term}"`))
+    .join(' AND ');
+}
+
+/** Postgres `websearch_to_tsquery` already accepts what people type — quoted
+ * phrases, `or`, a leading `-` to exclude — so the text goes through as it is. */
+function searchClause(db: SqlExecutor, text: string): { sql: string; params: unknown[] } | null {
+  if (!text) return null;
+  if (db.dialect === 'postgres') {
+    return {
+      sql: `to_tsvector('english', m.body) @@ websearch_to_tsquery('english', ?)`,
+      params: [text],
+    };
+  }
+  const match = toFts5Query(text);
+  if (!match) return null;
+  return {
+    sql: `m.id IN (SELECT message_id FROM od_chat_fts WHERE od_chat_fts MATCH ?)`,
+    params: [match],
+  };
+}
+
 export async function searchMessages(
   db: SqlExecutor,
   orgId: string,
@@ -1013,10 +1211,21 @@ export async function searchMessages(
     )`,
   ];
   const params: unknown[] = [orgId, memberId];
+
   if (filters.text) {
-    where.push(`m.body LIKE ? ESCAPE '\\'`);
-    params.push(`%${filters.text.replace(/[%_]/g, (ch) => `\\${ch}`)}%`);
+    // Full text where the engine has an index for it, and a scan where it does
+    // not. The fallback is the old behaviour, kept because a SQLite built
+    // without FTS5 should search slowly rather than not at all.
+    const clause = (await hasFullTextIndex(db)) ? searchClause(db, filters.text) : null;
+    if (clause) {
+      where.push(clause.sql);
+      params.push(...clause.params);
+    } else {
+      where.push(`m.body LIKE ? ESCAPE '\\'`);
+      params.push(`%${filters.text.replace(/[%_]/g, (ch) => `\\${ch}`)}%`);
+    }
   }
+
   if (filters.in) {
     where.push('(c.slug = ? OR c.id = ?)');
     params.push(filters.in, filters.in);
@@ -1071,6 +1280,31 @@ export async function searchMessages(
   });
 }
 
+/** Channel ids this member may be told about over the realtime stream: every
+ * public channel in the organization plus the private ones and DMs they belong
+ * to. The realtime hub asks this before delivering any channel-scoped event,
+ * which is why it returns a set rather than rows — the caller only ever asks
+ * "is this one in it". */
+export async function visibleChannelIds(
+  db: SqlExecutor,
+  orgId: string,
+  memberId: string,
+): Promise<Set<string>> {
+  const rows = await db.all<{ id: string }>(
+    `SELECT c.id FROM od_chat_channels c
+      WHERE c.workspace_id = ?
+        AND (
+          c.visibility = 'public'
+          OR EXISTS (
+            SELECT 1 FROM od_chat_channel_members m
+             WHERE m.channel_id = c.id AND m.member_id = ?
+          )
+        )`,
+    [orgId, memberId],
+  );
+  return new Set(rows.map((row) => row.id));
+}
+
 // --- Setup ----------------------------------------------------------------
 
 /** Create the starting channels and put the caller in them. Idempotent: a slug
@@ -1103,24 +1337,83 @@ export async function setUpDefaultChannels(
 }
 
 export async function totalUnread(db: SqlExecutor, orgId: string, memberId: string): Promise<number> {
-  const row = await db.get<{ n: number | string }>(
-    `SELECT COUNT(*) AS n
+  return (await unreadTotals(db, orgId, memberId)).unread;
+}
+
+/** The two numbers the nav badge needs, in one query rather than two passes
+ * over the same rows. `unread` respects mute and mentions-only; `mentions`
+ * deliberately does not, because muting a room is not a request to stop being
+ * told when you are named in it. */
+export async function unreadTotals(
+  db: SqlExecutor,
+  orgId: string,
+  memberId: string,
+): Promise<{ unread: number; mentions: number }> {
+  const mentionLike = `%"${memberId}"%`;
+  const mentionSql = `(
+    m.mentions_json LIKE ?
+    OR m.mentions_json LIKE '%"@channel"%'
+    OR m.mentions_json LIKE '%"@here"%'
+    OR m.mentions_json LIKE '%"@everyone"%'
+  )`;
+  const row = await db.get<{ unread: number | string; mentions: number | string }>(
+    `SELECT
+       SUM(CASE WHEN COALESCE(cm.muted, 0) = 0
+                 AND COALESCE(cm.notify, 'all') <> 'nothing'
+                 AND (COALESCE(cm.notify, 'all') = 'all' OR ${mentionSql})
+                THEN 1 ELSE 0 END) AS unread,
+       SUM(CASE WHEN ${mentionSql} THEN 1 ELSE 0 END) AS mentions
        FROM od_chat_messages m
        JOIN od_chat_channel_members cm
          ON cm.channel_id = m.channel_id AND cm.member_id = ?
       WHERE m.workspace_id = ? AND m.deleted_at IS NULL
         AND m.created_at > cm.last_read_at
-        AND (m.author_member_id IS NULL OR m.author_member_id <> ?)
-        AND COALESCE(cm.muted, 0) = 0
-        AND COALESCE(cm.notify, 'all') <> 'nothing'
-        AND (
-          COALESCE(cm.notify, 'all') = 'all'
-          OR m.mentions_json LIKE ?
-          OR m.mentions_json LIKE '%"@channel"%'
-          OR m.mentions_json LIKE '%"@here"%'
-          OR m.mentions_json LIKE '%"@everyone"%'
-        )`,
-    [memberId, orgId, memberId, `%"${memberId}"%`],
+        AND (m.author_member_id IS NULL OR m.author_member_id <> ?)`,
+    [mentionLike, mentionLike, memberId, orgId, memberId],
   );
-  return num(row?.n ?? 0);
+  return { unread: num(row?.unread ?? 0), mentions: num(row?.mentions ?? 0) };
+}
+
+/** Repost a message somewhere else, carrying a snapshot of what it said.
+ *
+ * The quote is copied rather than referenced on purpose: a forward is an
+ * assertion about what someone said at a moment, and a link that silently
+ * follows a later edit turns that assertion into a lie. */
+export async function forwardMessage(
+  db: SqlExecutor,
+  orgId: string,
+  messageId: string,
+  memberId: string,
+  toChannel: string,
+  comment: string | undefined,
+  resolveMemberName?: ResolveMemberName,
+  options: PostMessageOptions = {},
+): Promise<TeamChatMessage> {
+  const source = await getMessage(db, messageId, resolveMemberName);
+  if (source.orgId !== orgId) {
+    throw new WorkspaceDataError('CHAT_MESSAGE_NOT_FOUND', 404, 'no such message');
+  }
+  // Reading the source through the access check means a private channel the
+  // caller cannot see cannot be laundered into one they can.
+  const from = await assertChannelAccess(db, orgId, source.channelId, memberId);
+  const quote: TeamChatAttachment = {
+    kind: 'message',
+    id: source.id,
+    label: source.body.slice(0, 80) || 'message',
+    quote: {
+      body: source.body,
+      authorName: source.authorName,
+      channelSlug: from.slug,
+      createdAt: source.createdAt,
+    },
+  };
+  return postMessage(
+    db,
+    orgId,
+    toChannel,
+    memberId,
+    { body: comment?.trim() ?? '', attachments: [quote, ...source.attachments.filter((a) => a.kind === 'file')] },
+    resolveMemberName,
+    options,
+  );
 }

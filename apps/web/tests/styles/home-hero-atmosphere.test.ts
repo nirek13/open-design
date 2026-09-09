@@ -39,6 +39,16 @@ function cssDeclarations(css: string, selector: string): string {
   return blocks.join('\n');
 }
 
+/** Every rule whose selector mentions `needle`, as raw declaration blocks. */
+function rulesMentioningSelector(css: string, needle: string): string[] {
+  const out: string[] = [];
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const match of cssWithoutComments.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    if ((match[1] ?? '').includes(needle)) out.push(match[2] ?? '');
+  }
+  return out;
+}
+
 function ruleValue(block: string, property: string): string {
   const matches = [...block.matchAll(new RegExp(`(?:^|[;\\n])\\s*${property}:\\s*([^;]+);`, 'g'))];
   const match = matches.at(-1);
@@ -76,12 +86,25 @@ describe('Home canvas atmosphere', () => {
   it('loads the studio wash on the home entry canvas', () => {
     expect(homeIndexCss).toMatch(/home-atmosphere\.css/);
     expect(homeAtmosphereCss).toMatch(/entry-view-home/);
-    expect(homeAtmosphereCss).toMatch(/entry-view-workspace/);
     expect(homeAtmosphereCss).toMatch(/--home-grain-fine/);
     expect(homeAtmosphereCss).toMatch(/--home-grain-soft/);
     expect(homeAtmosphereCss).not.toMatch(/repeating-linear-gradient/);
     expect(homeAtmosphereCss).toMatch(/feTurbulence/);
     expect(homeAtmosphereCss).not.toMatch(/isolation\s*:/);
+  });
+
+  it('does not also hand the entry-canvas wash to the workspace hub', () => {
+    // The hub paints its own dawn on `.studio`. It used to take this wash as
+    // well, under its own orb layer — three light sources compounding into a
+    // muddy dome with a seam wherever one of them started.
+    const workspaceRules = rulesMentioningSelector(homeAtmosphereCss, 'entry-view-workspace');
+    expect(workspaceRules.length).toBeGreaterThan(0);
+    for (const rule of workspaceRules) {
+      expect(rule).not.toMatch(/background-image/);
+    }
+    // What the hub does keep is the transparent topbar veil, so its own light
+    // can reach the top of the canvas instead of stopping at an opaque strip.
+    expect(workspaceRules.some((rule) => /background:\s*(linear-gradient|transparent)/.test(rule))).toBe(true);
   });
 
   it('drifts the wash with transform-safe background motion and honors reduced motion', () => {
@@ -92,21 +115,39 @@ describe('Home canvas atmosphere', () => {
 
   it('paints the workspace hub studio wash on the page itself', () => {
     const studio = cssDeclarations(workspacePageCss, '.studio');
-    expect(studio).toMatch(/--home-grain-fine/);
     expect(studio).not.toMatch(/repeating-linear-gradient/);
     expect(studio).toMatch(/radial-gradient/);
     expect(studio).toMatch(/var\(--accent/);
+    // The dawn belongs to the one element that spans the pane, so it has no
+    // edge to show; the grain that dithers it belongs to the layer above.
+    expect(studio).not.toMatch(/feTurbulence/);
     expect(workspaceHomeCss).toMatch(/\.atmosphere/);
-    expect(workspaceHomeCss).toMatch(/\.orbLamp/);
-    expect(workspaceHomeCss).toMatch(/\.grain/);
+    expect(workspaceHomeCss).toMatch(/\.halo/);
+    expect(workspaceHomeCss).toMatch(/\.underglow/);
     expect(workspaceHomeCss).toMatch(/\.greetingHero/);
     expect(workspaceHomeCss).toMatch(/view-transition-name:\s*od-studio-composer/);
-    expect(workspaceHomeCss).toMatch(/@keyframes homeOrbDrift/);
+    expect(workspaceHomeCss).toMatch(/@keyframes homeBeamDrift/);
     expect(workspaceHomeCss).toMatch(/@keyframes homeGreetingIn/);
     expect(workspaceHomeCss).toMatch(/prefers-reduced-motion:\s*reduce/);
+  });
+
+  it('dithers the hub wash exactly once, above every gradient', () => {
+    // Falloffs this large quantise into visible concentric rings without
+    // grain over the top — and two grain layers meeting mid-pane draw a
+    // rectangle across the canvas, which is the bug the single pass fixes.
+    expect([...workspaceHomeCss.matchAll(/feTurbulence/g)]).toHaveLength(1);
+    expect(workspaceHomeCss).toMatch(/\.atmosphere::after/);
+  });
+
+  it('builds the hub composer as an elevated object', () => {
     const askBox = cssDeclarations(workspaceHomeCss, '.askBox');
-    expect(ruleValue(askBox, 'background')).toBe('transparent');
-    expect(ruleValue(askBox, 'box-shadow')).toBe('none');
+    // It was transparent with no shadow, which left the one control that
+    // matters as the least present thing on the screen.
+    expect(ruleValue(askBox, 'background')).toMatch(/var\(--bg-elevated\)/);
+    expect(ruleValue(askBox, 'box-shadow')).not.toBe('none');
+    // Shadow ink, not `--text`: mixing a shadow against the text colour
+    // inverts in dark mode and lights a rim around the box.
+    expect(ruleValue(askBox, 'box-shadow')).not.toMatch(/var\(--text\)/);
   });
 
   it('morphs the first prompt into the studio composer', () => {

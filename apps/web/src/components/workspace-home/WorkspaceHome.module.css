@@ -1,4 +1,4 @@
-/* Stage: the ask box sits in the remaining viewport. */
+/* The hub stage — one screen, one light, one thing to do. */
 
 .stage {
   position: relative;
@@ -8,122 +8,152 @@
   align-items: center;
   justify-content: center;
   min-height: 0;
-  padding: 0 16px 10vh;
+  /* Optically centred, not geometrically: a little more room below than
+     above makes the greeting read as placed rather than as floating. */
+  padding: 0 16px 6vh;
 }
 
+/* The light around the composer, and the dither over all of it.
+   The pane-wide dawn lives on WorkspacePage's `.studio` — one gradient, on
+   the one element that spans the pane, so it has no edge to show. What this
+   layer adds is local: a pool of light the composer sits in, two slow accent
+   drifts, and a glow beneath it. Anchoring all of it to `--focal-y` is the
+   whole point — the brightest part of the canvas is the part you are meant
+   to type into.
+   It also carries the single dither pass (see `::after` below), which is why
+   it has to reach the pane edges even though its contents are local. */
 .atmosphere {
   position: absolute;
-  inset: -18% -28% 4%;
+  /* Out past the column padding and the floating action row, so one layer
+     lights the whole pane. `.rootFill`'s clip is what bounds it. */
+  inset: -76px -32px -28px;
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
+  --focal-y: 53%;
+  animation: homeAtmosphereIn 1100ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
-.orbLamp,
-.orbLeft,
-.orbRight,
-.ring,
-.grain {
+.halo,
+.beamLeft,
+.beamRight,
+.underglow {
   position: absolute;
   pointer-events: none;
 }
 
-.orbLamp {
+/* A clearing in the wash. Lifting toward `--bg-elevated` rather than adding
+   more accent is what keeps the composer legible on top of a warm canvas. */
+.halo {
   left: 50%;
-  top: -22%;
-  width: min(108vw, 1280px);
-  height: min(72vw, 780px);
-  transform: translateX(-50%);
-  border-radius: 50%;
-  background: radial-gradient(
-    ellipse at center,
-    color-mix(in srgb, var(--accent-tint) 96%, transparent) 0%,
-    color-mix(in srgb, var(--accent) 26%, transparent) 34%,
-    color-mix(in srgb, var(--accent) 8%, transparent) 58%,
-    transparent 78%
-  );
-  animation: homeOrbDrift 36s linear infinite alternate;
-}
-
-.orbLeft {
-  left: -16%;
-  top: 14%;
-  width: min(58vw, 580px);
-  height: min(58vw, 580px);
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    color-mix(in srgb, var(--accent) 18%, transparent),
-    transparent 78%
-  );
-  animation: homeOrbDrift 42s linear infinite alternate-reverse;
-}
-
-.orbRight {
-  right: -18%;
-  top: 0%;
-  width: min(54vw, 540px);
-  height: min(54vw, 540px);
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    color-mix(in srgb, var(--accent-soft) 62%, transparent),
-    transparent 76%
-  );
-  animation: homeOrbDrift 40s linear infinite alternate;
-}
-
-.ring {
-  left: 50%;
-  top: 44%;
-  width: min(720px, 84vw);
-  height: min(720px, 84vw);
+  top: var(--focal-y);
+  width: min(1180px, 106%);
+  height: min(580px, 84%);
   transform: translate(-50%, -50%);
   border-radius: 50%;
   background: radial-gradient(
-    circle,
-    transparent 42%,
-    color-mix(in srgb, var(--accent) 12%, transparent) 62%,
-    transparent 78%
+    ellipse at center,
+    color-mix(in srgb, var(--bg-elevated) 94%, transparent) 0%,
+    color-mix(in srgb, var(--bg-elevated) 52%, transparent) 32%,
+    color-mix(in srgb, var(--bg-elevated) 16%, transparent) 55%,
+    transparent 74%
   );
-  animation: homeRingPulse 8s cubic-bezier(0.23, 1, 0.32, 1) infinite;
 }
 
-.grain {
+.beamLeft {
+  left: 0;
+  top: calc(var(--focal-y) - 34%);
+  width: min(520px, 44%);
+  height: min(520px, 62%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 7%, transparent),
+    color-mix(in srgb, var(--accent) 2%, transparent) 44%,
+    transparent 72%
+  );
+  animation: homeBeamDrift 46s linear infinite alternate;
+}
+
+.beamRight {
+  right: 0;
+  top: calc(var(--focal-y) - 42%);
+  width: min(500px, 42%);
+  height: min(500px, 60%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent-soft) 30%, transparent),
+    color-mix(in srgb, var(--accent-soft) 9%, transparent) 46%,
+    transparent 74%
+  );
+  animation: homeBeamDrift 54s linear infinite alternate-reverse;
+}
+
+/* Warmth returning under the composer, so the box reads as sitting on
+   something rather than as cut out of the page. */
+.underglow {
+  left: 50%;
+  top: calc(var(--focal-y) + 21%);
+  width: min(880px, 86%);
+  height: min(230px, 26%);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--accent) 10%, transparent),
+    color-mix(in srgb, var(--accent) 3%, transparent) 46%,
+    transparent 72%
+  );
+  animation: homeUnderglowBreathe 14s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
+/* Dither.
+   A wash this large is quantised to 8 bits per channel, which turns the
+   long falloffs into visible concentric rings. Grain over the top scatters
+   the quantisation across neighbouring levels so the rings dissolve — which
+   is why it sits above every gradient layer, at an opacity low enough to
+   read as paper rather than as noise. */
+.atmosphere::after {
+  content: '';
+  position: absolute;
   inset: 0;
-  opacity: 0.38;
-  mix-blend-mode: overlay;
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.78'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 280 280'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.32' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
-  background-size: 128px 128px, 280px 280px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.11'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  background-repeat: repeat;
+  opacity: 1;
 }
 
-:global([data-theme='dark']) .grain {
-  mix-blend-mode: soft-light;
+:global([data-theme='dark']) .atmosphere::after {
+  opacity: 0.7;
 }
 
 @media (prefers-color-scheme: dark) {
-  :global(html:not([data-theme='light'])) .grain {
-    mix-blend-mode: soft-light;
+  :global(html:not([data-theme='light'])) .atmosphere::after {
+    opacity: 0.7;
   }
 }
 
-@keyframes homeOrbDrift {
-  from { translate: 0 0; }
-  to { translate: 18px 12px; }
+@keyframes homeAtmosphereIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-@keyframes homeRingPulse {
-  0%, 100% { opacity: 0.7; transform: translate(-50%, -50%) scale(1); }
-  50% { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
+@keyframes homeBeamDrift {
+  from { translate: 0 0; }
+  to { translate: 22px 14px; }
+}
+
+@keyframes homeUnderglowBreathe {
+  0%, 100% { opacity: 0.85; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
 }
 
 @keyframes homeGreetingIn {
   from {
     opacity: 0;
-    transform: translateY(12px);
-    filter: blur(8px);
+    transform: translateY(14px);
+    filter: blur(10px);
   }
   to {
     opacity: 1;
@@ -133,15 +163,20 @@
 }
 
 @keyframes homeAskIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes homeStarterIn {
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .orbLamp,
-  .orbLeft,
-  .orbRight,
-  .ring {
+  .atmosphere,
+  .beamLeft,
+  .beamRight,
+  .underglow {
     animation: none;
   }
 }
@@ -223,12 +258,15 @@
 
 .greetingText {
   display: block;
-  padding: 0 12px 22px;
+  padding: 0 12px 14px;
   color: var(--text-strong);
-  font-size: clamp(32px, 4.6vw, 48px);
-  font-weight: 650;
-  letter-spacing: -0.045em;
-  line-height: 1.12;
+  font-size: clamp(34px, 4.4vw, 52px);
+  font-weight: 620;
+  /* Was -0.045em, which closed the word gaps at this size until the greeting
+     read as one long token. Display tracking wants to be tight, not welded. */
+  letter-spacing: -0.032em;
+  line-height: 1.08;
+  text-wrap: balance;
   transform: translateY(10px);
   filter: blur(6px);
   transition:
@@ -246,38 +284,99 @@
   animation: homeGreetingIn 700ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
+/* One sentence saying what this box actually does. Without it a first-time
+   visitor gets a name, a blank field, and no reason to believe either. */
+.heroLead {
+  display: block;
+  padding: 0 12px 26px;
+  color: var(--text-muted);
+  font-size: 15.5px;
+  font-weight: 450;
+  line-height: 1.5;
+  text-wrap: balance;
+}
+
+.greetingHero .heroLead {
+  animation: homeGreetingIn 700ms cubic-bezier(0.23, 1, 0.32, 1) 90ms both;
+}
+
+/* The composer is the whole product on this screen, so it is built as an
+   object: an elevated surface with a contact shadow and an ambient one,
+   over the halo the atmosphere layer puts behind it. It used to be a
+   transparent box with a hairline and no shadow, which left the single most
+   important control as the least present thing on the page. */
 .askBox {
+  /* Shadow ink, not `--text`. Mixing a shadow against the text colour looks
+     right in light mode and inverts in dark, where it drew a rim of light
+     around the box instead of a shadow under it. */
+  --ask-ink: 28, 27, 26;
+  --ask-ink-contact: 0.07;
+  --ask-ink-mid: 0.2;
+  --ask-ink-ambient: 0.3;
   display: flex;
   flex-direction: column;
   padding: 4px 6px;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  border-radius: 28px;
-  background: transparent;
-  box-shadow: none;
-  transform: scale(1);
-  animation: homeAskIn 420ms cubic-bezier(0.23, 1, 0.32, 1) 80ms both;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 58%, transparent);
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--bg-elevated) 86%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+  box-shadow:
+    0 1px 2px rgba(var(--ask-ink), var(--ask-ink-contact)),
+    0 14px 34px -14px rgba(var(--ask-ink), var(--ask-ink-mid)),
+    0 42px 84px -44px rgba(var(--ask-ink), var(--ask-ink-ambient));
+  animation: homeAskIn 460ms cubic-bezier(0.23, 1, 0.32, 1) 120ms both;
   transition:
     border-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
     box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1),
     transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .askBox:hover {
-  border-color: color-mix(in srgb, var(--text) 26%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 88%, transparent);
+  box-shadow:
+    0 1px 2px rgba(var(--ask-ink), calc(var(--ask-ink-contact) + 0.02)),
+    0 18px 40px -14px rgba(var(--ask-ink), calc(var(--ask-ink-mid) + 0.04)),
+    0 48px 92px -44px rgba(var(--ask-ink), calc(var(--ask-ink-ambient) + 0.04));
 }
 
+/* Lift, don't scale. Scaling a 680px box by 1.5% resamples every glyph in
+   it, so the text shimmered on every focus; a 1px rise reads as the same
+   gesture and stays crisp. */
 .askBox:focus-within,
 .askBoxFocused {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  transform: scale(1.015);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border-strong));
+  background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 11%, transparent),
+    0 1px 2px rgba(var(--ask-ink), calc(var(--ask-ink-contact) + 0.02)),
+    0 20px 44px -14px rgba(var(--ask-ink), calc(var(--ask-ink-mid) + 0.04)),
+    0 52px 96px -44px rgba(var(--ask-ink), calc(var(--ask-ink-ambient) + 0.04));
+}
+
+:global([data-theme='dark']) .askBox {
+  --ask-ink: 0, 0, 0;
+  --ask-ink-contact: 0.3;
+  --ask-ink-mid: 0.42;
+  --ask-ink-ambient: 0.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :global(html:not([data-theme='light'])) .askBox {
+    --ask-ink: 0, 0, 0;
+    --ask-ink-contact: 0.3;
+    --ask-ink-mid: 0.42;
+    --ask-ink-ambient: 0.5;
+  }
 }
 
 .askMain {
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  padding: 8px 8px 8px 16px;
+  padding: 10px 10px 10px 20px;
 }
 
 .askInput {
@@ -286,12 +385,12 @@
   min-height: 28px;
   max-height: 168px;
   resize: none;
-  padding: 8px 0;
+  padding: 9px 0;
   border: 0;
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 17px;
+  font-size: 17.5px;
   line-height: 1.45;
   box-shadow: none;
   overflow-y: auto;
@@ -299,7 +398,7 @@
 }
 
 .askInput::placeholder {
-  color: var(--text-muted);
+  color: var(--text-soft);
 }
 
 .askInput:focus {
@@ -313,19 +412,122 @@
 
 .askSubmit {
   flex: none;
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
   padding: 0;
   margin-bottom: 0;
   border-radius: 50%;
+  box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--accent) 45%, transparent);
+  transition:
+    box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.askSubmit:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -4px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.askSubmit:disabled {
+  box-shadow: none;
 }
 
 .askError {
   margin: 0 18px;
   color: var(--danger, #b42318);
   font-size: 13px;
+}
+
+/* Starting points.
+   A first-time visitor met a blank field and a placeholder, which asks them
+   to already know what this thing does. These fill the box rather than
+   submitting it, so the first action is still theirs to edit and confirm —
+   and they retreat the moment there is anything to say instead. */
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 22px 0 0;
+  transition:
+    opacity 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.startersHidden {
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+}
+
+.starter {
+  --starter-ink: 28, 27, 26;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 14px 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 42%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-elevated) 62%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  /* Staggered so the row arrives as a sequence, not a block. */
+  animation: homeStarterIn 420ms cubic-bezier(0.23, 1, 0.32, 1)
+    calc(240ms + var(--starter-index, 0) * 60ms) both;
+  transition:
+    color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.starter:hover {
+  border-color: color-mix(in srgb, var(--border-strong) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  color: var(--text-strong);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px -8px rgba(var(--starter-ink, 28, 27, 26), 0.34);
+}
+
+.starter:active {
+  transform: translateY(0);
+}
+
+.starter:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.starterIcon {
+  flex: none;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.starter:hover .starterIcon {
+  opacity: 1;
+}
+
+:global([data-theme='dark']) .starter {
+  --starter-ink: 0, 0, 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :global(html:not([data-theme='light'])) .starter {
+    --starter-ink: 0, 0, 0;
+  }
 }
 
 .stageLaunching .greeting {
@@ -338,28 +540,40 @@
     transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.stageLaunching .orbLamp,
-.stageLaunching .orbLeft,
-.stageLaunching .orbRight,
-.stageLaunching .ring {
+/* Launch: the light swells toward the composer as it morphs into the
+   studio, so the transition reads as the page opening rather than as the
+   page being replaced. */
+.stageLaunching .halo,
+.stageLaunching .beamLeft,
+.stageLaunching .beamRight,
+.stageLaunching .underglow {
   animation: none;
-  filter: saturate(1.15);
+  filter: saturate(1.12);
   transition:
     transform 420ms cubic-bezier(0.23, 1, 0.32, 1),
     filter 420ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.stageLaunching .orbLamp {
-  transform: translateX(-50%) scale(1.18);
+.stageLaunching .halo {
+  transform: translate(-50%, -50%) scale(1.16);
 }
 
-.stageLaunching .orbLeft,
-.stageLaunching .orbRight {
-  transform: scale(1.12);
+.stageLaunching .underglow {
+  transform: translate(-50%, -50%) scale(1.2);
 }
 
-.stageLaunching .ring {
-  transform: translate(-50%, -50%) scale(1.08);
+.stageLaunching .beamLeft,
+.stageLaunching .beamRight {
+  transform: scale(1.14);
+}
+
+.stageLaunching .starters {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition:
+    opacity 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .askBoxLaunching {
@@ -617,29 +831,36 @@
 
 @media (prefers-reduced-motion: reduce) {
   .createCard:hover,
+  .askBox:hover,
   .askBox:focus-within,
   .askBoxFocused,
-  .askBoxLaunching {
+  .askBoxLaunching,
+  .askSubmit:not(:disabled):hover,
+  .starter:hover {
     transform: none;
   }
 
   .greetingText,
   .greetingActive .greetingText,
-  .greetingHero .greetingText {
+  .greetingHero .greetingText,
+  .heroLead,
+  .greetingHero .heroLead {
     transform: none;
     filter: none;
     animation: none;
   }
 
-  .askBox {
+  .askBox,
+  .starter {
     animation: none;
   }
 
   .stageLaunching .greeting,
-  .stageLaunching .orbLamp,
-  .stageLaunching .orbLeft,
-  .stageLaunching .orbRight,
-  .stageLaunching .ring {
+  .stageLaunching .starters,
+  .stageLaunching .halo,
+  .stageLaunching .beamLeft,
+  .stageLaunching .beamRight,
+  .stageLaunching .underglow {
     transition: none;
     filter: none;
     transform: none;

@@ -144,7 +144,14 @@ function BoardView({
 
   return (
     <div className={styles.shell} data-testid="pages-tool-board">
-      <div className={styles.board} onDragLeave={() => setOver(null)}>
+      <div
+        className={styles.board}
+        onDragLeave={(event) => {
+          const next = event.relatedTarget as Node | null;
+          if (next && event.currentTarget.contains(next)) return;
+          setOver(null);
+        }}
+      >
         {tool.columns.map((column) => (
           <section
             key={column.id}
@@ -153,7 +160,11 @@ function BoardView({
             onDragOver={(event) => {
               if (!drag) return;
               event.preventDefault();
-              setOver({ columnId: column.id, cardId: null });
+              setOver((current) =>
+                current?.columnId === column.id && current.cardId === null
+                  ? current
+                  : { columnId: column.id, cardId: null },
+              );
             }}
             onDrop={(event) => {
               event.preventDefault();
@@ -209,7 +220,11 @@ function BoardView({
                     if (!drag || drag.cardId === card.id) return;
                     event.preventDefault();
                     event.stopPropagation();
-                    setOver({ columnId: column.id, cardId: card.id });
+                    setOver((current) =>
+                      current?.columnId === column.id && current.cardId === card.id
+                        ? current
+                        : { columnId: column.id, cardId: card.id },
+                    );
                   }}
                   onDrop={(event) => {
                     event.preventDefault();

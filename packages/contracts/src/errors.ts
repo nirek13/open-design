@@ -208,6 +208,21 @@ export const API_ERROR_CODES = [
   // The caller is not in this channel. Returned for private channels the
   // caller cannot see at all, so membership is not probeable.
   'CHANNEL_ACCESS_DENIED',
+  // An announcement channel: readable by everyone, writable by admins.
+  'CHANNEL_POST_DENIED',
+  // Team chat furniture (api/chat-org.ts).
+  'CHAT_EMOJI_TAKEN',
+  'CHAT_EMOJI_NOT_FOUND',
+  'CHAT_GROUP_TAKEN',
+  'CHAT_GROUP_NOT_FOUND',
+  'CHAT_SECTION_NOT_FOUND',
+  // Returned for a revoked or unknown incoming-webhook token alike, so a
+  // caller cannot learn that a URL was once valid.
+  'CHAT_WEBHOOK_NOT_FOUND',
+  // Huddles (api/chat-realtime.ts). Also returned when a signalling frame
+  // names a peer who is not in the huddle, so a huddle id cannot be used to
+  // probe who is on a call.
+  'HUDDLE_NOT_FOUND',
   // Organization pages (api/pages.ts).
   'PAGE_NOT_FOUND',
   'PAGE_BLOCK_INVALID',

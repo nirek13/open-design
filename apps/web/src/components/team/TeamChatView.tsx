@@ -1,7 +1,15 @@
-// In-app Slack-style workspace chat. Messages live in the organization
-// database so teammates can coordinate here — this is not a connector to
-// Slack.com. Opening a channel marks it read; posting does not. New messages
-// arrive by polling while the tab is visible.
+// Slack-shaped workspace chat. Messages live in the organization database.
+//
+// Everything here is driven by one live stream. A message someone else sends
+// arrives as an event and is applied to the transcript in place; the only
+// refetch is when the stream says it could not catch us up, or when a change
+// touches something the event does not carry (a channel's unread count after
+// a read marker moves, say). Opening a channel marks it read; posting does
+// not. Web Push covers the case where nothing is open at all.
+//
+// The previous version asked for the whole open channel every five seconds.
+// That is why this file no longer has a poll timer, and why it can show that
+// somebody is typing — you cannot poll for that.
 
 import {
   useCallback,
@@ -18,16 +26,22 @@ import {
 import { Badge, Button, EmptyState, Input, Skeleton, Textarea } from '@open-design/components';
 import {
   CHAT_FILE_MAX_BYTES,
+  DRAFT_SYNC_DEBOUNCE_MS,
   personLabel,
   workspaceLabel,
   type ChatActivityItem,
   type ChatBookmark,
   type ChatChannel,
+  type ChatCustomEmoji,
+  type ChatDndSettings,
   type ChatPin,
   type ChatReminder,
   type ChatScheduledMessage,
   type ChatSearchHit,
+  type ChatSection,
   type ChatStatus,
+  type ChatStreamEvent,
+  type ChatUserGroup,
   type OrgMember,
   type TeamChatAttachment,
   type TeamChatMessage,
@@ -79,6 +93,17 @@ import {
   updateChatChannel,
   updateChatChannelPrefs,
   uploadChatFile,
+  createChatSection,
+  deleteChatSection,
+  fetchChatDnd,
+  fetchChatDrafts,
+  fetchChatEmoji,
+  fetchChatGroups,
+  fetchChatSections,
+  forwardChatMessage,
+  saveChatDraft,
+  updateChatDnd,
+  updateChatSection,
 } from '../../providers/registry';
 import { navigate } from '../../router';
 import {
@@ -88,11 +113,29 @@ import {
   parseChatAccent,
   type ChatAccent,
 } from '../../runtime/chat-media';
-import { chatWhen, parseRemindWhen, parseSlashCommand, SLASH_HELP } from '../../runtime/chat-format';
+import {
+  chatWhen,
+  parseRemindWhen,
+  parseSlashCommand,
+  SLASH_HELP,
+  wrapSelection,
+} from '../../runtime/chat-format';
+import { enableChatPush } from '../../runtime/chat-push';
+import { showChatNotification } from '../../utils/notifications';
 import { CHAT_EMOJI_GROUPS, QUICK_REACTIONS } from '../../runtime/chat-emoji';
 import { Icon } from '../Icon';
 import { WorkspacePage } from '../workspace/WorkspacePage';
 import { ChatMessageBody } from './ChatMessageBody';
+import { ChatEmojiProvider } from './ChatEmojiContext';
+import { useTeamChatRealtime } from './useTeamChatRealtime';
+import { useChatHuddle } from './useChatHuddle';
+import { presenceState } from '../../runtime/team-chat-stream';
+import {
+  applyChatSuggestion,
+  chatSuggestions,
+  readChatAutocomplete,
+  type ChatSuggestion,
+} from '../../runtime/chat-autocomplete';
 import {
   attachmentFileSource,
   ChatFileLightbox,
@@ -107,7 +150,6 @@ interface Props {
   homeView?: 'team' | 'slack';
 }
 
-const POLL_MS = 5_000;
 const DRAFT_PREFIX = 'od:chat-draft:';
 const HISTORY_PREFIX = 'od:chat-history:';
 const HISTORY_LIMIT = 40;
@@ -177,13 +219,14 @@ function mentionsCaller(
   return false;
 }
 
-function notifyMention(body: string, channelName: string) {
+function notifyMention(body: string, channelName: string, url?: string, tag?: string) {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-  try {
-    new Notification(channelName, { body: body.slice(0, 140), silent: false });
-  } catch {
-    // Browser may still throw if the user revoked permission mid-session.
-  }
+  void showChatNotification({
+    title: channelName,
+    body: body.slice(0, 140),
+    url: url ?? `/team`,
+    tag: tag ?? `chat-${channelName}`,
+  });
 }
 
 function lookupPerson(people: OrgMember[], token: string): OrgMember | undefined {
@@ -200,6 +243,7 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   const t = useT();
   const org = useOptionalOrg() ?? NO_ORG_CONTEXT;
   const { activeOrgId, activeOrg, auth } = org;
+
   const viewerUserId = auth?.viewer?.userId ?? null;
   const runningApp = useOptionalRunningApp();
 
@@ -223,6 +267,9 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   const [searchOpen, setSearchOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [notifyPermission, setNotifyPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission,
+  );
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -233,7 +280,6 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsTab, setDetailsTab] = useState<'about' | 'members' | 'files' | 'pins'>('about');
   const [emojiOpen, setEmojiOpen] = useState<'main' | 'thread' | false>(false);
-  const [mentionOpen, setMentionOpen] = useState(false);
   const [statusDraft, setStatusDraft] = useState('');
   const [statusOpen, setStatusOpen] = useState(false);
   const [jumpQuery, setJumpQuery] = useState('');
@@ -262,6 +308,16 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
   const [hideChannels, setHideChannels] = useState(false);
   const [hideDms, setHideDms] = useState(false);
   const [historySlugs, setHistorySlugs] = useState<string[]>([]);
+  const [customEmoji, setCustomEmoji] = useState<ChatCustomEmoji[]>([]);
+  const [groups, setGroups] = useState<ChatUserGroup[]>([]);
+  const [sections, setSections] = useState<ChatSection[]>([]);
+  const [dnd, setDnd] = useState<ChatDndSettings | null>(null);
+  const [dndActive, setDndActive] = useState(false);
+  const [suggestions, setSuggestions] = useState<ChatSuggestion[]>([]);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [suggestionFor, setSuggestionFor] = useState<'main' | 'thread' | null>(null);
+  const [draftsBySlug, setDraftsBySlug] = useState<Record<string, string>>({});
+  const [newSectionName, setNewSectionName] = useState('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mainComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const threadComposerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -274,6 +330,32 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     () => people.find((person) => person.userId === viewerUserId)?.id ?? null,
     [people, viewerUserId],
   );
+
+  /** Every way the viewer can be addressed, so a mention of any of them is
+   * highlighted. A group the viewer belongs to counts: being named as part of
+   * @design is being named. */
+  const selfHandles = useMemo(() => {
+    const me = people.find((person) => person.id === myMemberId);
+    const own = [me?.username, me?.displayName?.replace(/\s+/g, '')].filter(
+      (value): value is string => Boolean(value),
+    );
+    const mine = groups
+      .filter((group) => myMemberId && group.memberIds.includes(myMemberId))
+      .map((group) => group.handle);
+    return [...own, ...mine];
+  }, [people, myMemberId, groups]);
+
+  // The huddle controller owns the peer connections and the microphone. It is
+  // created before the stream handler because that handler feeds signalling
+  // frames into it.
+  const huddle = useChatHuddle(activeOrgId ?? null, myMemberId);
+
+  /** Owners and admins see the settings that change what other people may do.
+   * The daemon enforces this regardless; hiding the control is so nobody is
+   * offered a switch that will refuse them. `can` is the organization
+   * context's own answer, so the chat view does not get a second opinion
+   * about roles. */
+  const isOrgAdmin = org.can('admin');
 
   const openAttachment = useCallback(
     async (attachment: TeamChatAttachment) => {
@@ -428,45 +510,172 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     };
   }, [active, activeOrgId, currentSlug, threadId]);
 
+  // --- Live updates -------------------------------------------------------
+  //
+  // One event handler for the whole view. It patches what it can and refetches
+  // only what an event genuinely cannot carry: an unread count depends on the
+  // reader's own marker, so a `message-posted` for another channel means "ask
+  // again", not "increment".
+
+  const currentIdRef = useRef<string | null>(null);
+  currentIdRef.current = current?.id ?? null;
+  const threadIdRef = useRef<string | null>(null);
+  threadIdRef.current = threadId;
+  // Read inside the event handler to find a deleted reply's parent. Refs
+  // rather than dependencies, so a message arriving does not rebuild the
+  // handler and, through it, the stream subscription.
+  const messagesRef = useRef<TeamChatMessage[]>([]);
+  messagesRef.current = messages;
+  const threadMessagesRef = useRef<TeamChatMessage[]>([]);
+  threadMessagesRef.current = threadMessages;
+
+  const applyStreamEvent = useCallback(
+    (event: ChatStreamEvent) => {
+      const openChannelId = currentIdRef.current;
+      switch (event.type) {
+        case 'message-posted': {
+          if (event.channelId !== openChannelId) {
+            // Somewhere else. The badge is the reader's own arithmetic, so ask
+            // rather than guess.
+            void loadChannels();
+            return;
+          }
+          const message = event.message;
+          if (message.parentMessageId && message.parentMessageId === threadIdRef.current) {
+            setThreadMessages((prev) =>
+              prev.some((row) => row.id === message.id) ? prev : [...prev, message],
+            );
+          }
+          setMessages((prev) => {
+            if (prev.some((row) => row.id === message.id)) return prev;
+            // Every reply bumps its parent's count, including a broadcast one:
+            // the count is "replies in this thread", and a reply that also
+            // appears in the channel is still a reply.
+            const next = message.parentMessageId
+              ? prev.map((row) =>
+                  row.id === message.parentMessageId
+                    ? { ...row, replyCount: row.replyCount + 1 }
+                    : row,
+                )
+              : prev;
+            // A thread reply only belongs in the transcript when its author
+            // asked for it to be there.
+            return !message.parentMessageId || message.threadBroadcast
+              ? [...next, message]
+              : next;
+          });
+          if (message.authorMemberId !== myMemberId) {
+            const someone = people.find((person) => person.id === myMemberId)?.username;
+            if (document.visibilityState === 'hidden' && mentionsCaller(message, myMemberId, someone)) {
+              notifyMention(
+                message.body,
+                current?.displayName ?? currentSlug ?? '',
+                currentSlug ? `/${homeView}/${encodeURIComponent(currentSlug)}` : undefined,
+                current ? `chat-${current.id}` : undefined,
+              );
+            }
+            // Reading is what the person is doing by having it open; the badge
+            // should not creep up while they watch.
+            if (document.visibilityState === 'visible' && activeOrgId && currentSlug) {
+              void markChatChannelRead(activeOrgId, currentSlug).then(() => loadChannels());
+            }
+          }
+          return;
+        }
+        case 'message-edited':
+        case 'reaction-changed': {
+          const message = event.message;
+          setMessages((prev) => prev.map((row) => (row.id === message.id ? message : row)));
+          setThreadMessages((prev) => prev.map((row) => (row.id === message.id ? message : row)));
+          return;
+        }
+        case 'message-deleted': {
+          const parentId =
+            messagesRef.current.find((row) => row.id === event.messageId)?.parentMessageId
+            ?? threadMessagesRef.current.find((row) => row.id === event.messageId)?.parentMessageId
+            ?? null;
+          setMessages((prev) =>
+            prev
+              .filter((row) => row.id !== event.messageId)
+              .map((row) =>
+                parentId && row.id === parentId
+                  ? { ...row, replyCount: Math.max(0, row.replyCount - 1) }
+                  : row,
+              ),
+          );
+          setThreadMessages((prev) => prev.filter((row) => row.id !== event.messageId));
+          if (threadIdRef.current === event.messageId) setThreadId(null);
+          return;
+        }
+        case 'pin-changed': {
+          setMessages((prev) =>
+            prev.map((row) => (row.id === event.messageId ? { ...row, pinned: event.pinned } : row)),
+          );
+          if (event.channelId === openChannelId && activeOrgId && currentSlug) {
+            void fetchChatPins(activeOrgId, currentSlug)
+              .then((result) => setPins(result.pins))
+              .catch(() => {});
+          }
+          return;
+        }
+        case 'bookmark-changed': {
+          if (event.channelId === openChannelId) setBookmarks(event.bookmarks);
+          return;
+        }
+        case 'channel-created':
+        case 'channel-updated':
+        case 'channel-archived':
+        case 'member-joined':
+        case 'member-left':
+          void loadChannels();
+          return;
+        case 'huddle-started':
+        case 'huddle-ended':
+        case 'huddle-roster':
+          void loadChannels();
+          if (event.type === 'huddle-roster') huddle.sync(event.huddle);
+          return;
+        case 'huddle-signal':
+          huddle.accept(event.signal);
+          return;
+        default:
+      }
+    },
+    // `people` and `current` are read for the notification text only; a stale
+    // name in a background notification is not worth rebuilding the stream for,
+    // which is why the hook holds this in a ref.
+    [activeOrgId, currentSlug, current, homeView, loadChannels, myMemberId, people, huddle],
+  );
+
+  const resync = useCallback(() => {
+    if (!activeOrgId || !currentSlug) return;
+    void loadMessages(currentSlug).catch(() => {});
+    void loadChannels().catch(() => {});
+  }, [activeOrgId, currentSlug, loadChannels, loadMessages]);
+
+  const realtime = useTeamChatRealtime({
+    orgId: activeOrgId ?? null,
+    active,
+    myMemberId,
+    onEvent: applyStreamEvent,
+    onResync: resync,
+  });
+
+  // A fallback, not the mechanism. While the stream is open this does nothing;
+  // when it is not — an old browser without EventSource, a proxy that will not
+  // hold a connection, a daemon restarting — chat degrades to the refresh rate
+  // it had before rather than to silence. Thirty seconds because a fallback
+  // that costs as much as the thing it replaces is not a fallback.
   useEffect(() => {
     if (!active || !activeOrgId || !currentSlug) return;
-    const tick = async () => {
-      try {
-        const result = await fetchChatMessages(activeOrgId, currentSlug, { limit: 80 });
-        const latest = result.messages[result.messages.length - 1];
-        if (
-          latest
-          && document.visibilityState === 'hidden'
-          && lastNotifiedId.current !== latest.id
-          && latest.authorMemberId !== myMemberId
-          && mentionsCaller(latest, myMemberId, people.find((person) => person.id === myMemberId)?.username)
-        ) {
-          lastNotifiedId.current = latest.id;
-          notifyMention(latest.body, current?.displayName ?? currentSlug);
-        }
-        if (document.visibilityState !== 'visible') return;
-        setMessages((prev) => {
-          const latestId = latest?.id;
-          const known = prev[prev.length - 1]?.id;
-          return latestId === known && prev.length === result.messages.length ? prev : result.messages;
-        });
-        setNextBefore(result.nextBefore);
-        void markChatChannelRead(activeOrgId, currentSlug);
-        void loadChannels();
-        if (threadId) {
-          const thread = await fetchChatMessages(activeOrgId, currentSlug, {
-            parentMessageId: threadId,
-            limit: 80,
-          });
-          setThreadMessages(thread.messages);
-        }
-      } catch {
-        // A failed poll is not worth an error banner.
-      }
-    };
-    const timer = window.setInterval(() => void tick(), POLL_MS);
+    if (realtime.status === 'open') return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void loadMessages(currentSlug).catch(() => {});
+      void loadChannels().catch(() => {});
+    }, 30_000);
     return () => window.clearInterval(timer);
-  }, [active, activeOrgId, currentSlug, threadId, loadChannels, myMemberId, people, current?.displayName]);
+  }, [active, activeOrgId, currentSlug, realtime.status, loadChannels, loadMessages]);
 
   useEffect(() => {
     if (!activeOrgId) {
@@ -481,12 +690,18 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     setHistorySlugs(rememberChatHistory(activeOrgId, currentSlug));
   }, [active, activeOrgId, currentSlug]);
 
+  // A draft is restored from whichever copy is available: the local one is
+  // instant and survives a reload with no network, the server one is what
+  // makes the reply you started on a laptop appear on a phone. Local wins on
+  // load because it is never older — it is written on every keystroke.
   useEffect(() => {
     if (!activeOrgId || !currentSlug) return;
     const key = `${DRAFT_PREFIX}${activeOrgId}:${currentSlug}`;
-    const stored = window.localStorage.getItem(key);
-    if (stored) setDraft(stored);
-  }, [activeOrgId, currentSlug]);
+    const local = window.localStorage.getItem(key);
+    const remote = current ? draftsBySlug[current.id] : undefined;
+    const restored = local ?? remote ?? '';
+    if (restored) setDraft(restored);
+  }, [activeOrgId, currentSlug, current, draftsBySlug]);
 
   useEffect(() => {
     if (!activeOrgId || !currentSlug) return;
@@ -495,12 +710,53 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     else window.localStorage.removeItem(key);
   }, [activeOrgId, currentSlug, draft]);
 
+  // The server copy is written on a debounce. Every keystroke would be a
+  // request per character; a second and a half is short enough that switching
+  // devices mid-sentence works and long enough that typing costs one write.
+  useEffect(() => {
+    if (!activeOrgId || !currentSlug) return;
+    const timer = window.setTimeout(() => {
+      void saveChatDraft(activeOrgId, currentSlug, { body: draft, parentMessageId: null }).catch(() => {
+        // A draft that fails to sync is still in localStorage. Nothing is lost
+        // that an error banner would help with.
+      });
+    }, DRAFT_SYNC_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [activeOrgId, currentSlug, draft]);
+
   useEffect(() => {
     if (!active || !activeOrgId) return;
     void fetchChatStatuses(activeOrgId)
       .then((result) => setStatuses(result.statuses ?? []))
       .catch(() => setStatuses([]));
   }, [active, activeOrgId, people.length]);
+
+  // Emoji, groups, sections, quiet hours, and any drafts left on another
+  // device. All five are per organization and change rarely, so they are
+  // fetched once rather than with every channel switch. Each failure is
+  // swallowed on its own: a missing emoji list should not cost you your
+  // sidebar sections.
+  useEffect(() => {
+    if (!active || !activeOrgId) return;
+    void fetchChatEmoji(activeOrgId).then((r) => setCustomEmoji(r.emoji)).catch(() => setCustomEmoji([]));
+    void fetchChatGroups(activeOrgId).then((r) => setGroups(r.groups)).catch(() => setGroups([]));
+    void fetchChatSections(activeOrgId).then((r) => setSections(r.sections)).catch(() => setSections([]));
+    void fetchChatDnd(activeOrgId)
+      .then((r) => {
+        setDnd(r.dnd);
+        setDndActive(r.active);
+      })
+      .catch(() => setDnd(null));
+    void fetchChatDrafts(activeOrgId)
+      .then((r) => {
+        const byChannel: Record<string, string> = {};
+        for (const item of r.drafts) {
+          if (!item.parentMessageId) byChannel[item.channelId] = item.body;
+        }
+        setDraftsBySlug(byChannel);
+      })
+      .catch(() => setDraftsBySlug({}));
+  }, [active, activeOrgId]);
 
   useEffect(() => {
     if (!active || !activeOrgId || !currentSlug || pane !== 'channel') return;
@@ -566,7 +822,8 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
       if (event.key === 'Escape') {
         setThreadId(null);
         setEmojiOpen(false);
-        setMentionOpen(false);
+        setSuggestions([]);
+        setSuggestionFor(null);
         setJumpOpen(false);
         setDetailsOpen(false);
         setStatusOpen(false);
@@ -593,10 +850,24 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     if (node instanceof HTMLElement) node.scrollIntoView({ block: 'center' });
   }, [messages]);
 
+  /** The other person in a two-person DM, so the sidebar can show whether they
+   * are here rather than a generic message bubble. */
+  function dmPartnerId(channel: ChatChannel): string | null {
+    if (channel.kind !== 'dm') return null;
+    const row = channelMembers.find(
+      (member) => member.channelId === channel.id && member.memberId !== myMemberId,
+    );
+    return row?.memberId ?? null;
+  }
+
   function renderChannelButton(channel: ChatChannel) {
     const selected = pane === 'channel' && current?.id === channel.id;
     const draftKey = activeOrgId ? `${DRAFT_PREFIX}${activeOrgId}:${channel.slug}` : '';
-    const hasDraft = Boolean(draftKey && typeof window !== 'undefined' && window.localStorage.getItem(draftKey));
+    const hasDraft = Boolean(
+      (draftKey && typeof window !== 'undefined' && window.localStorage.getItem(draftKey))
+      || draftsBySlug[channel.id],
+    );
+    const partner = dmPartnerId(channel);
     return (
       <button
         key={channel.id}
@@ -605,15 +876,74 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
         onClick={() => selectChannel(channel.slug)}
         data-testid={`team-channel-${channel.slug}`}
       >
-        <Icon name={isDirect(channel) ? 'message-circle' : channel.visibility === 'private' ? 'lock' : 'hash'} size={12} />
+        {partner ? (
+          <i
+            className={presenceOf(partner) === 'active' ? styles.presenceOn : styles.presenceOff}
+            aria-hidden
+          />
+        ) : (
+          <Icon
+            name={
+              isDirect(channel)
+                ? 'message-circle'
+                : channel.visibility === 'private'
+                  ? 'lock'
+                  : 'hash'
+            }
+            size={12}
+          />
+        )}
         <span className={styles.channelName}>{channel.displayName}</span>
+        {channel.huddleActive ? (
+          <span className={styles.huddleDot} title={t('team.huddleLive')} aria-label={t('team.huddleLive')} />
+        ) : null}
         {hasDraft && channel.unreadCount === 0 ? <span className={styles.draftMark}>{t('team.draft')}</span> : null}
         {channel.starred ? <Icon name="star" size={10} /> : null}
-        {channel.unreadCount > 0 ? (
+        {/* Two badges, because they answer different questions: the red count
+            is "you were named", the plain one is "there is something here". */}
+        {channel.mentionCount > 0 ? (
+          <Badge tone="danger" data-testid={`team-mention-${channel.slug}`}>{channel.mentionCount}</Badge>
+        ) : channel.unreadCount > 0 ? (
           <Badge tone="accent" data-testid={`team-unread-${channel.slug}`}>{channel.unreadCount}</Badge>
         ) : null}
       </button>
     );
+  }
+
+  /** Channels the sidebar shows outside any custom section. A channel put into
+   * a section leaves the default group, which is what makes sections useful
+   * rather than a second copy of the same list. */
+  const sectioned = useMemo(() => {
+    const assigned = new Set(sections.flatMap((section) => section.channelIds));
+    return {
+      assigned,
+      loose: (list: ChatChannel[]) => list.filter((channel) => !assigned.has(channel.id)),
+    };
+  }, [sections]);
+
+  async function moveToSection(channelId: string, sectionId: string | null) {
+    if (!activeOrgId) return;
+    try {
+      if (sectionId) {
+        const target = sections.find((section) => section.id === sectionId);
+        if (!target) return;
+        setSections(
+          await updateChatSection(activeOrgId, sectionId, {
+            channelIds: [...new Set([...target.channelIds, channelId])],
+          }),
+        );
+        return;
+      }
+      const owner = sections.find((section) => section.channelIds.includes(channelId));
+      if (!owner) return;
+      setSections(
+        await updateChatSection(activeOrgId, owner.id, {
+          channelIds: owner.channelIds.filter((id) => id !== channelId),
+        }),
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    }
   }
 
   function selectChannel(slug: string) {
@@ -630,10 +960,18 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     return statuses.find((item) => item.memberId === memberId && item.text);
   }
 
+  /** Whether someone is here right now.
+   *
+   * This used to be inferred from how recently their read marker moved, which
+   * meant somebody who had chat open but had not looked at this channel read
+   * as away, and somebody who left the tab open overnight read as present.
+   * It is now the connection itself. */
   function isActive(memberId: string | null | undefined): boolean {
-    if (!memberId) return false;
-    const row = channelMembers.find((item) => item.memberId === memberId);
-    return Boolean(row && Date.now() - row.lastReadAt < 5 * 60_000);
+    return presenceState(realtime.presence, memberId) === 'active';
+  }
+
+  function presenceOf(memberId: string | null | undefined): 'active' | 'away' | 'offline' {
+    return presenceState(realtime.presence, memberId);
   }
 
   async function runSlash(slash: ReturnType<typeof parseSlashCommand>) {
@@ -769,7 +1107,8 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     }
     setSending(true);
     setEmojiOpen(false);
-    setMentionOpen(false);
+    setSuggestions([]);
+    setSuggestionFor(null);
     try {
       const attachments: TeamChatAttachment[] = [];
       for (const file of files) {
@@ -783,23 +1122,32 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
       if (parentMessageId) setThreadDraft('');
       else setDraft('');
       setPendingFiles([]);
-      const posted = await postChatMessage(activeOrgId, currentSlug, {
+      // "Also send to channel" is a property of the one reply, not a second
+      // copy of it. Posting twice used to mean an edit could change one and
+      // not the other, and a delete could leave the echo behind.
+      await postChatMessage(activeOrgId, currentSlug, {
         body: text,
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(parentMessageId ? { parentMessageId } : {}),
+        ...(parentMessageId && alsoSend ? { threadBroadcast: true } : {}),
       });
-      if (parentMessageId && alsoSend && posted.message) {
-        await postChatMessage(activeOrgId, currentSlug, { body: text });
-        setAlsoSend(false);
-      }
+      if (parentMessageId && alsoSend) setAlsoSend(false);
+      realtime.notifyTyping(currentSlug, parentMessageId ?? null, false);
       pinnedToBottom.current = true;
-      await loadMessages(currentSlug);
-      if (parentMessageId) {
-        const thread = await fetchChatMessages(activeOrgId, currentSlug, {
-          parentMessageId,
-          limit: 80,
-        });
-        setThreadMessages(thread.messages);
+      // Normally the posted message arrives on the stream like anyone else's,
+      // so there is nothing to refetch. When the stream is not up — no
+      // EventSource, a proxy eating the connection — the sender would watch
+      // their own message vanish, which is the worst possible way for a chat
+      // app to fail. So: fetch when we are not listening.
+      if (realtime.status !== 'open') {
+        await loadMessages(currentSlug);
+        if (parentMessageId) {
+          const thread = await fetchChatMessages(activeOrgId, currentSlug, {
+            parentMessageId,
+            limit: 80,
+          });
+          setThreadMessages(thread.messages);
+        }
       }
       await loadChannels();
       setError(null);
@@ -813,7 +1161,137 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     }
   }
 
-  function onComposerKey(event: KeyboardEvent<HTMLTextAreaElement>, parentMessageId?: string) {
+  /** Insert a suggestion into whichever composer raised the menu. */
+  function chooseSuggestion(
+    suggestion: ChatSuggestion,
+    text: string,
+    setText: (value: string) => void,
+    parentMessageId?: string,
+  ) {
+    const node = parentMessageId ? threadComposerRef.current : mainComposerRef.current;
+    const caret = node?.selectionStart ?? text.length;
+    const query = readChatAutocomplete(text, caret);
+    if (!query) return;
+    const next = applyChatSuggestion(text, query, suggestion);
+    setText(next.text);
+    setSuggestions([]);
+    setSuggestionFor(null);
+    requestAnimationFrame(() => {
+      node?.focus();
+      node?.setSelectionRange(next.caret, next.caret);
+    });
+  }
+
+  /** Recompute the menu from the caret. Called on every change and on cursor
+   * moves, because moving the caret into an existing `@ada` should offer to
+   * complete it just as typing it does. */
+  function refreshSuggestions(
+    text: string,
+    caret: number,
+    which: 'main' | 'thread',
+  ) {
+    const query = readChatAutocomplete(text, caret);
+    if (!query) {
+      setSuggestions([]);
+      setSuggestionFor(null);
+      return;
+    }
+    const next = chatSuggestions(query, {
+      people,
+      groups,
+      channels,
+      customEmoji,
+      selfMemberId: myMemberId,
+    });
+    setSuggestions(next);
+    setSuggestionIndex(0);
+    setSuggestionFor(next.length > 0 ? which : null);
+  }
+
+  /** Wrap the selection (or insert a placeholder) in a formatting mark.
+   *
+   * Operates on the textarea's own selection rather than on React state,
+   * because the caret is the thing being formatted and only the DOM knows
+   * where it is. */
+  function applyFormat(
+    mark: string,
+    text: string,
+    setText: (value: string) => void,
+    parentMessageId?: string,
+  ) {
+    const node = parentMessageId ? threadComposerRef.current : mainComposerRef.current;
+    const start = node?.selectionStart ?? text.length;
+    const end = node?.selectionEnd ?? text.length;
+    const next = wrapSelection(text, start, end, mark);
+    setText(next);
+    // Leave the marked-up run selected, so pressing bold then italic wraps the
+    // same words twice instead of nesting them around a collapsed caret.
+    const from = start + mark.length;
+    const to = from + (end > start ? end - start : 4);
+    requestAnimationFrame(() => {
+      node?.focus();
+      node?.setSelectionRange(from, to);
+    });
+  }
+
+  function onComposerKey(
+    event: KeyboardEvent<HTMLTextAreaElement>,
+    parentMessageId: string | undefined,
+    text: string,
+    setText: (value: string) => void,
+  ) {
+    const which = parentMessageId ? 'thread' : 'main';
+    const menuOpen = suggestionFor === which && suggestions.length > 0;
+
+    // The formatting shortcuts everybody expects from a text box. Checked
+    // before the suggestion menu, since none of them collide with it.
+    if (event.metaKey || event.ctrlKey) {
+      const key = event.key.toLowerCase();
+      const mark = key === 'b' ? '*' : key === 'i' ? '_' : key === 'x' && event.shiftKey ? '~' : null;
+      if (mark) {
+        event.preventDefault();
+        applyFormat(mark, text, setText, parentMessageId);
+        return;
+      }
+      if (key === 'c' && event.shiftKey) {
+        event.preventDefault();
+        applyFormat('`', text, setText, parentMessageId);
+        return;
+      }
+    }
+
+    if (menuOpen) {
+      // While the menu is up it owns the arrows, tab, and enter. Escape closes
+      // it without also closing the thread pane, which is what a bare Escape
+      // does — hence handling it here rather than letting it fall through.
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setSuggestionIndex((prev) => (prev + 1) % suggestions.length);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setSuggestionIndex((prev) => (prev - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        const picked = suggestions[suggestionIndex];
+        if (picked) {
+          event.preventDefault();
+          event.stopPropagation();
+          chooseSuggestion(picked, text, setText, parentMessageId);
+          return;
+        }
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        setSuggestions([]);
+        setSuggestionFor(null);
+        return;
+      }
+    }
+
     if (event.key === 'Escape' && emojiOpen) {
       event.preventDefault();
       setEmojiOpen(false);
@@ -914,19 +1392,28 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           ) : null}
           {dropping ? <p className={styles.dropHint}>{t('team.dropToAttach')}</p> : null}
           {text.startsWith('/') && !parentMessageId ? <p className={styles.slashHint}>{t('team.slashHint')}</p> : null}
-          {mentionOpen ? (
-            <ul className={styles.mentionList}>
-              {['@channel', '@here', '@everyone', ...others.map((person) => `@${person.username || person.displayName}`)].map((item) => (
-                <li key={item}>
+          {suggestionFor === pickerKey && suggestions.length > 0 ? (
+            <ul className={styles.mentionList} data-testid="team-suggestions">
+              {suggestions.map((suggestion, index) => (
+                <li key={suggestion.id}>
                   <button
                     type="button"
-                    className={styles.mentionBtn}
-                    onClick={() => {
-                      insertAtCursor(text, `${text.endsWith(' ') || !text ? '' : ' '}${item} `, setText, parentMessageId);
-                      setMentionOpen(false);
-                    }}
+                    className={`${styles.mentionBtn}${index === suggestionIndex ? ` ${styles.mentionBtnActive}` : ''}`}
+                    // The menu must not steal focus from the composer: the
+                    // caret position is what tells us which token to replace.
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setSuggestionIndex(index)}
+                    onClick={() => chooseSuggestion(suggestion, text, setText, parentMessageId)}
                   >
-                    {item}
+                    {suggestion.iconUrl ? (
+                      <img className={styles.suggestionEmoji} src={suggestion.iconUrl} alt="" />
+                    ) : suggestion.icon ? (
+                      <span aria-hidden>{suggestion.icon}</span>
+                    ) : null}
+                    <span className={styles.suggestionLabel}>{suggestion.label}</span>
+                    {suggestion.hint ? (
+                      <span className={styles.suggestionHint}>{suggestion.hint}</span>
+                    ) : null}
                   </button>
                 </li>
               ))}
@@ -934,6 +1421,29 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           ) : null}
           {emojiOpen === pickerKey ? (
             <div className={styles.emojiPicker} data-testid="team-emoji-picker">
+              {customEmoji.length > 0 ? (
+                <div>
+                  <p className={styles.emojiLabel}>{t('team.customEmoji')}</p>
+                  <div className={styles.emojiGrid}>
+                    {customEmoji
+                      .filter((item) => item.url)
+                      .map((item) => (
+                        <button
+                          key={item.name}
+                          type="button"
+                          className={styles.emojiBtn}
+                          title={`:${item.name}:`}
+                          onClick={() => {
+                            insertAtCursor(text, `:${item.name}: `, setText, parentMessageId);
+                            setEmojiOpen(false);
+                          }}
+                        >
+                          <img className={styles.suggestionEmoji} src={item.url!} alt={`:${item.name}:`} />
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              ) : null}
               {CHAT_EMOJI_GROUPS.map((group) => (
                 <div key={group.label}>
                   <p className={styles.emojiLabel}>{group.label}</p>
@@ -960,11 +1470,23 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             ref={parentMessageId ? threadComposerRef : mainComposerRef}
             value={text}
             onChange={(event) => {
-              setText(event.target.value);
               const value = event.target.value;
-              setMentionOpen(value.endsWith('@') || /(?:^|\s)@[\w.-]*$/.test(value));
+              setText(value);
+              refreshSuggestions(value, event.target.selectionStart ?? value.length, pickerKey);
+              // Announcing "typing" for an empty box would say someone is
+              // composing when they have just cleared it.
+              if (currentSlug) {
+                realtime.notifyTyping(currentSlug, parentMessageId ?? null, value.trim().length > 0);
+              }
             }}
-            onKeyDown={(event) => onComposerKey(event, parentMessageId)}
+            onSelect={(event) => {
+              const node = event.currentTarget;
+              refreshSuggestions(node.value, node.selectionStart ?? node.value.length, pickerKey);
+            }}
+            onBlur={() => {
+              if (currentSlug) realtime.notifyTyping(currentSlug, parentMessageId ?? null, false);
+            }}
+            onKeyDown={(event) => onComposerKey(event, parentMessageId, text, setText)}
             placeholder={placeholder}
             aria-label={placeholder}
             disabled={sending}
@@ -972,6 +1494,28 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             data-testid={testId}
           />
           <div className={styles.composerBar}>
+            <span className={styles.formatBar}>
+              {([
+                ['*', t('team.bold'), 'B'],
+                ['_', t('team.italic'), 'I'],
+                ['~', t('team.strike'), 'S'],
+                ['`', t('team.code'), '<>'],
+              ] as const).map(([mark, label, glyph]) => (
+                <button
+                  key={mark}
+                  type="button"
+                  className={styles.formatBtn}
+                  aria-label={label}
+                  title={label}
+                  // Formatting acts on the selection, which a focus change
+                  // would collapse before the click handler ever runs.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyFormat(mark, text, setText, parentMessageId)}
+                >
+                  {glyph}
+                </button>
+              ))}
+            </span>
             <button
               type="button"
               className={styles.attachBtn}
@@ -1171,12 +1715,17 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
     }
   }
 
+  /** Forward a message somewhere else.
+   *
+   * This used to paste the body into a new message as a markdown quote, which
+   * meant the "quote" was really just text: it could be edited into something
+   * the original author never said, and it lost every attachment. The server
+   * now stores a snapshot of what was actually said, and renders it as a
+   * quotation that cannot be passed off as the reader's own words. */
   async function shareTo(message: TeamChatMessage, slug: string) {
     if (!activeOrgId) return;
     try {
-      await postChatMessage(activeOrgId, slug, {
-        body: `> ${message.body}\n_${t('team.forwardedFrom')} ${current?.displayName ?? ''}_`,
-      });
+      await forwardChatMessage(activeOrgId, message.id, { toChannel: slug });
       setShareId(null);
       selectChannel(slug);
     } catch (err) {
@@ -1313,6 +1862,8 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
               body={message.body}
               attachments={message.attachments}
               onOpenAttachment={openAttachment}
+              groups={groups}
+              selfHandles={selfHandles}
             />
           )}
           {message.reactions.length > 0 ? (
@@ -1491,10 +2042,35 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
 
   const visibleMessages = searchOpen && searchHits ? searchHits : messages;
   const unreadRooms = channels.filter((channel) => channel.joined && channel.unreadCount > 0);
+
+  // Typing rows arrive for every channel on the stream; the indicator only
+  // shows the ones for what is on screen, and thread typing belongs in the
+  // thread pane rather than under the channel composer.
+  const typingHere = realtime.typing.filter(
+    (row) => row.channelId === current?.id && !row.parentMessageId,
+  );
+  const typingInThread = realtime.typing.filter(
+    (row) => row.channelId === current?.id && row.parentMessageId === threadId,
+  );
+
+  /** "Ada is typing", "Ada and Ravi are typing", "Several people are typing".
+   * Names stop at two because a third name makes the line longer than the
+   * message it is about. */
+  function typingLabel(rows: typeof realtime.typing): string {
+    const names = rows
+      .map((row) => people.find((person) => person.id === row.memberId))
+      .map((person) => (person ? labelPerson(person, person.displayName, t('team.someone')) : null))
+      .filter((name): name is string => Boolean(name));
+    if (names.length === 0) return t('team.someoneTyping');
+    if (names.length === 1) return t('team.oneTyping', { name: names[0]! });
+    if (names.length === 2) return t('team.twoTyping', { a: names[0]!, b: names[1]! });
+    return t('team.manyTyping');
+  }
   const others = people.filter((person) => person.id !== myMemberId);
   const profilePerson = people.find((person) => person.id === profileId);
 
   return (
+    <ChatEmojiProvider emoji={customEmoji}>
     <div className={styles.root} style={accentVars} data-testid="team-chat-view">
       <input
         ref={fileInputRef}
@@ -1519,6 +2095,14 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           onClick={() => setStatusOpen((prev) => !prev)}
         >
           {workspaceLabel(activeOrg?.name, t('team.workspace'))}
+          {dndActive ? <span className={styles.dndMark} title={t('team.quietHours')}>🔕</span> : null}
+          {/* Say so when the stream is down, rather than letting the room look
+              quiet because nothing is arriving. */}
+          {realtime.status === 'reconnecting' || realtime.status === 'closed' ? (
+            <span className={styles.offlineMark} data-testid="team-stream-offline">
+              {t('team.reconnecting')}
+            </span>
+          ) : null}
         </button>
         {statusOpen ? (
           <form
@@ -1545,6 +2129,48 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             </Button>
             <Button type="button" variant="ghost" onClick={() => activeOrgId && void setMyChatStatus(activeOrgId, { text: 'Do not disturb', emoji: '🔕', expiresAt: Date.now() + 30 * 60_000 }).then(() => fetchChatStatuses(activeOrgId)).then((result) => setStatuses(result.statuses ?? [])).then(() => setStatusOpen(false))}>
               {t('team.snooze30')}
+            </Button>
+            {/* A status says what you are doing; quiet hours say whether to
+                interrupt you. Related enough to sit together, different enough
+                to be separate controls. */}
+            <label className={styles.privateToggle}>
+              <input
+                type="checkbox"
+                checked={dnd?.scheduleEnabled ?? false}
+                onChange={(event) => {
+                  if (!activeOrgId) return;
+                  void updateChatDnd(activeOrgId, {
+                    scheduleEnabled: event.target.checked,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  })
+                    .then((result) => {
+                      setDnd(result.dnd);
+                      setDndActive(result.active);
+                    })
+                    .catch((err) => setError(errorMessage(err)));
+                }}
+              />
+              {t('team.quietHours')}
+            </label>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                if (!activeOrgId) return;
+                const snoozed = Boolean(dnd?.snoozeUntil && dnd.snoozeUntil > Date.now());
+                void updateChatDnd(activeOrgId, {
+                  snoozeUntil: snoozed ? null : Date.now() + 60 * 60_000,
+                })
+                  .then((result) => {
+                    setDnd(result.dnd);
+                    setDndActive(result.active);
+                  })
+                  .catch((err) => setError(errorMessage(err)));
+              }}
+            >
+              {dnd?.snoozeUntil && dnd.snoozeUntil > Date.now()
+                ? t('team.resumeNotifications')
+                : t('team.pauseNotifications')}
             </Button>
           </form>
         ) : null}
@@ -1599,13 +2225,22 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
           <Icon name="check" size={12} />
           <span className={styles.channelName}>{t('team.markAllRead')}</span>
         </button>
-        <button type="button" className={styles.channelButton} onClick={() => {
-          if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
-            void Notification.requestPermission();
-          }
-        }}>
+        <button
+          type="button"
+          className={styles.channelButton}
+          onClick={() => {
+            if (notifyPermission === 'granted' || notifyPermission === 'unsupported') return;
+            void enableChatPush().then(setNotifyPermission);
+          }}
+        >
           <Icon name="bell" size={12} />
-          <span className={styles.channelName}>{t('team.enableNotifications')}</span>
+          <span className={styles.channelName}>
+            {notifyPermission === 'granted'
+              ? t('team.notificationsOn')
+              : notifyPermission === 'denied'
+                ? t('team.notificationsDenied')
+                : t('team.enableNotifications')}
+          </span>
         </button>
         <button type="button" className={styles.channelButton} onClick={() => setShortcutsOpen(true)}>
           <Icon name="help-circle" size={12} />
@@ -1620,6 +2255,48 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             {hideStarred ? null : starredRooms.map((channel) => renderChannelButton(channel))}
           </>
         ) : null}
+
+        {sections.map((section) => {
+          const inSection = channels.filter((channel) => section.channelIds.includes(channel.id));
+          return (
+            <div key={section.id}>
+              <div className={styles.sidebarHead}>
+                <button
+                  type="button"
+                  className={styles.sectionLabel}
+                  onClick={() =>
+                    activeOrgId
+                    && void updateChatSection(activeOrgId, section.id, { collapsed: !section.collapsed })
+                      .then(setSections)
+                      .catch((err) => setError(errorMessage(err)))
+                  }
+                >
+                  {section.emoji ? `${section.emoji} ` : ''}
+                  {section.name}
+                </button>
+                <button
+                  type="button"
+                  className={styles.ghostIcon}
+                  aria-label={t('team.deleteSection')}
+                  onClick={() =>
+                    activeOrgId
+                    && void deleteChatSection(activeOrgId, section.id)
+                      .then(() => fetchChatSections(activeOrgId))
+                      .then((result) => setSections(result.sections))
+                      .catch((err) => setError(errorMessage(err)))
+                  }
+                >
+                  <Icon name="trash" size={12} />
+                </button>
+              </div>
+              {section.collapsed
+                ? null
+                : inSection.length === 0
+                  ? <p className={styles.sidebarEmpty}>{t('team.sectionEmpty')}</p>
+                  : inSection.map((channel) => renderChannelButton(channel))}
+            </div>
+          );
+        })}
 
         <div className={styles.sidebarHead}>
           <button type="button" className={styles.sectionLabel} onClick={() => setHideChannels((prev) => !prev)}>{t('team.channels')}</button>
@@ -1662,7 +2339,29 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             <Button type="submit" disabled={busy || !newChannelName.trim()}>{t('team.create')}</Button>
           </form>
         ) : null}
-        {hideChannels ? null : rooms.map((channel) => renderChannelButton(channel))}
+        {hideChannels ? null : sectioned.loose(rooms).map((channel) => renderChannelButton(channel))}
+        <form
+          className={styles.createRow}
+          onSubmit={(event) => {
+            event.preventDefault();
+            const name = newSectionName.trim();
+            if (!activeOrgId || !name) return;
+            void createChatSection(activeOrgId, { name })
+              .then(() => fetchChatSections(activeOrgId))
+              .then((result) => {
+                setSections(result.sections);
+                setNewSectionName('');
+              })
+              .catch((err) => setError(errorMessage(err)));
+          }}
+        >
+          <Input
+            value={newSectionName}
+            onChange={(event) => setNewSectionName(event.target.value)}
+            placeholder={t('team.newSection')}
+            aria-label={t('team.newSection')}
+          />
+        </form>
 
         <div className={styles.sidebarHead}>
           <button type="button" className={styles.sectionLabel} onClick={() => setHideDms((prev) => !prev)}>{t('team.directMessages')}</button>
@@ -1710,7 +2409,7 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
             ) : null}
           </div>
         ) : null}
-        {hideDms ? null : dms.map((channel) => renderChannelButton(channel))}
+        {hideDms ? null : sectioned.loose(dms).map((channel) => renderChannelButton(channel))}
       </nav>
 
       <section className={styles.main} aria-label={current ? current.displayName : t('team.title')}>
@@ -1938,6 +2637,55 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
                 ))}
               </div>
             ) : null}
+            {current?.joined && !searchOpen ? (
+              <div className={styles.huddleBar} data-testid="team-huddle-bar">
+                {huddle.huddle && huddle.huddle.channelId === current.id ? (
+                  <>
+                    <span className={styles.huddleLive}>
+                      <span className={styles.huddleDot} aria-hidden />
+                      {t('team.huddleInProgress', {
+                        count: String(huddle.huddle.participants.length),
+                      })}
+                    </span>
+                    <span className={styles.huddleFaces}>
+                      {huddle.huddle.participants.map((participant) => (
+                        <span
+                          key={participant.memberId}
+                          className={participant.muted ? styles.huddleFaceMuted : styles.huddleFace}
+                          title={participant.displayName ?? participant.memberId}
+                        >
+                          {(participant.displayName ?? '?').slice(0, 1).toUpperCase()}
+                        </span>
+                      ))}
+                    </span>
+                    <Button variant="ghost" onClick={() => void huddle.toggleMute()}>
+                      {huddle.muted ? t('team.huddleUnmute') : t('team.huddleMute')}
+                    </Button>
+                    <Button variant="ghost" onClick={() => void huddle.leave()} data-testid="team-huddle-leave">
+                      {t('team.huddleLeave')}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {current.huddleActive ? (
+                      <span className={styles.huddleLive}>
+                        <span className={styles.huddleDot} aria-hidden />
+                        {t('team.huddleLive')}
+                      </span>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      disabled={huddle.joining}
+                      onClick={() => currentSlug && void huddle.join(currentSlug)}
+                      data-testid="team-huddle-join"
+                    >
+                      {current.huddleActive ? t('team.huddleJoin') : t('team.huddleStart')}
+                    </Button>
+                  </>
+                )}
+                {huddle.error ? <span className={styles.huddleError}>{huddle.error}</span> : null}
+              </div>
+            ) : null}
             <div
               className={styles.transcript}
               ref={transcriptRef}
@@ -1996,6 +2744,11 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
                 {t('team.jumpLatest')}
               </button>
             ) : null}
+            {typingHere.length > 0 ? (
+              <p className={styles.typing} data-testid="team-typing">
+                {typingLabel(typingHere)}
+              </p>
+            ) : null}
             {!searchOpen && current
               ? composerForm(
                   draft,
@@ -2049,6 +2802,45 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
                     <option value="nothing">{t('team.notifyNothing')}</option>
                   </select>
                 </label>
+                {/* Where this channel sits in your own sidebar. Per viewer, so
+                    it is a preference rather than a change to the channel. */}
+                <label className={styles.privateToggle}>
+                  {t('team.section')}
+                  <select
+                    value={current.sectionId ?? ''}
+                    onChange={(event) =>
+                      void moveToSection(current.id, event.target.value || null).then(loadChannels)
+                    }
+                  >
+                    <option value="">{t('team.noSection')}</option>
+                    {sections.map((section) => (
+                      <option key={section.id} value={section.id}>
+                        {section.emoji ? `${section.emoji} ` : ''}
+                        {section.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {isOrgAdmin ? (
+                  <label className={styles.privateToggle}>
+                    {t('team.whoCanPost')}
+                    <select
+                      value={current.postPolicy}
+                      onChange={(event) =>
+                        activeOrgId
+                        && currentSlug
+                        && void updateChatChannel(activeOrgId, currentSlug, {
+                          postPolicy: event.target.value as 'everyone' | 'admins',
+                        })
+                          .then(loadChannels)
+                          .catch((err) => setError(errorMessage(err)))
+                      }
+                    >
+                      <option value="everyone">{t('team.postEveryone')}</option>
+                      <option value="admins">{t('team.postAdmins')}</option>
+                    </select>
+                  </label>
+                ) : null}
                 {current.kind === 'channel' ? (
                   current.archivedAt ? (
                     <Button variant="ghost" onClick={() => activeOrgId && currentSlug && void unarchiveChatChannel(activeOrgId, currentSlug).then(loadChannels)}>
@@ -2133,6 +2925,9 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
               : null}
             {threadMessages.map((message) => renderMessage(message, true))}
           </div>
+          {typingInThread.length > 0 ? (
+            <p className={styles.typing}>{typingLabel(typingInThread)}</p>
+          ) : null}
           {composerForm(threadDraft, setThreadDraft, threadId, t('team.replyInThread'))}
         </aside>
       ) : null}
@@ -2141,5 +2936,6 @@ export function TeamChatView({ active, initialChannelId, homeView = 'team' }: Pr
         <ChatFileLightbox source={viewingFile} onClose={() => setViewingFile(null)} />
       ) : null}
     </div>
+    </ChatEmojiProvider>
   );
 }

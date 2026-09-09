@@ -32,6 +32,16 @@ let ctx: AudioContext | null = null;
 const activeNotifications = new Set<Notification>();
 const SERVICE_WORKER_URL = '/od-notifications-sw.js';
 
+export async function ensureNotificationServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
+  try {
+    const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
+    return await navigator.serviceWorker.ready.catch(() => registration);
+  } catch {
+    return null;
+  }
+}
+
 function getCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   const Ctor: AudioCtxCtor | undefined =
@@ -206,10 +216,9 @@ async function showViaServiceWorker(
 ): Promise<CompletionNotificationResult | null> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
   try {
-    const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
-    const readyRegistration = await navigator.serviceWorker.ready.catch(() => registration);
-    if (!readyRegistration.showNotification) return null;
-    await readyRegistration.showNotification(opts.title, notificationOptionsFor(opts));
+    const registration = await ensureNotificationServiceWorker();
+    if (!registration?.showNotification) return null;
+    await registration.showNotification(opts.title, notificationOptionsFor(opts));
     return 'shown';
   } catch {
     return null;
@@ -255,4 +264,35 @@ export async function showCompletionNotification(
   if (typeof Notification === 'undefined') return 'unsupported';
   if (Notification.permission !== 'granted') return 'permission-denied';
   return (await showViaServiceWorker(opts)) ?? showViaConstructor(opts);
+}
+
+export async function showChatNotification(opts: {
+  title: string;
+  body: string;
+  url?: string;
+  tag?: string;
+}): Promise<CompletionNotificationResult> {
+  if (typeof Notification === 'undefined') return 'unsupported';
+  if (Notification.permission !== 'granted') return 'permission-denied';
+  const url = opts.url ?? (typeof window === 'undefined' ? '/team' : window.location.href);
+  const options: NotificationOptionsWithBrowserExtensions = {
+    body: opts.body,
+    tag: opts.tag ?? 'chat',
+    renotify: true,
+    data: { url },
+  };
+  try {
+    const registration = await ensureNotificationServiceWorker();
+    if (registration?.showNotification) {
+      await registration.showNotification(opts.title, options);
+      return 'shown';
+    }
+  } catch {
+    /* fall through to the constructor */
+  }
+  return showViaConstructor({
+    status: 'succeeded',
+    title: opts.title,
+    body: opts.body,
+  });
 }

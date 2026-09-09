@@ -1,14 +1,4 @@
-import {
-  memo,
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type DragEvent as ReactDragEvent,
-  type ReactNode,
-} from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode, lazy, Suspense } from 'react';
 import { Button } from '@open-design/components';
 import { createPortal } from 'react-dom';
 import type { DesignSystemEditClickProps, TrackingProjectKind } from '@open-design/contracts/analytics';
@@ -141,8 +131,17 @@ import { LiveArtifactBadges } from './LiveArtifactBadges';
 import { MissingBrandFontsBanner } from './MissingBrandFontsBanner';
 import { LibraryPicker } from './LibraryPicker';
 import { QuickSwitcher } from './QuickSwitcher';
-import { SketchEditor } from './SketchEditor';
-import { SketchEnginePrewarm } from './SketchEnginePrewarm';
+// Excalidraw is ~2.2 MB of JS plus its own stylesheet. Statically importing
+// it here dragged the whole engine into the entry graph via ProjectView, so
+// every visitor paid for the sketch canvas whether or not they opened one.
+// Both boundaries below are the only runtime importers (SketchPreview already
+// loads it on demand), so lazy-loading them keeps it off first paint.
+const SketchEditor = lazy(() =>
+  import('./SketchEditor').then((m) => ({ default: m.SketchEditor })),
+);
+const SketchEnginePrewarm = lazy(() =>
+  import('./SketchEnginePrewarm').then((m) => ({ default: m.SketchEnginePrewarm })),
+);
 import {
   emptySketchScene,
   isSketchJsonFileName,
@@ -3371,7 +3370,9 @@ export function FileWorkspace({
       ].filter(Boolean).join(' ')}
       data-testid="file-workspace"
     >
-      <SketchEnginePrewarm />
+      <Suspense fallback={null}>
+        <SketchEnginePrewarm />
+      </Suspense>
       <div className="ws-tabs-shell">
         {onFocusModeChange && focusMode ? (
           <button
@@ -3790,7 +3791,10 @@ export function FileWorkspace({
         ) : isBrowserTabId(activeTab) ? (
           null
         ) : isActiveSketch && activeFile ? (
-          activeSketch?.loaded ? (
+          // The editor chunk and the scene both resolve into the same
+          // placeholder, so a cold sketch open reads as one wait.
+          <Suspense fallback={<div className="viewer-empty">{t('workspace.loadingSketch')}</div>}>
+            {activeSketch?.loaded ? (
             <SketchEditor
               fileName={activeFile.name}
               scene={activeSketch.scene}
@@ -3829,7 +3833,8 @@ export function FileWorkspace({
             />
           ) : (
             <div className="viewer-empty">{t('workspace.loadingSketch')}</div>
-          )
+            )}
+          </Suspense>
         ) : isSideChatTabId(activeTab) && chatConfig && chatAgentsById ? (
           <SideChatTab
             key={`${projectId}:${activeTab}`}

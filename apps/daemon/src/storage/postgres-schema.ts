@@ -847,6 +847,178 @@ const MIGRATIONS: readonly PostgresMigration[] = [
         ON od_pages(workspace_id, visibility, created_by);
     `,
   },
+  {
+    id: '0026-push-subscriptions',
+    sql: `
+      -- Web Push endpoints for the signed-in user. Mirrors DIRECTORY_MIGRATIONS v9.
+      CREATE TABLE IF NOT EXISTS od_push_subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES od_users(id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL UNIQUE,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        user_agent TEXT,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_push_subscriptions_user
+        ON od_push_subscriptions(user_id);
+    `,
+  },
+  {
+    id: '0027-chat-realtime',
+    sql: `
+      -- Realtime chat. Mirrors WORKSPACE_MIGRATIONS v23 in storage/workspace-db.ts.
+      --
+      -- The event log is what makes a reconnect lossless: every change is
+      -- appended with a per-organization sequence number before any subscriber
+      -- hears about it, so a client can ask for everything after the last
+      -- number it saw instead of reloading the world.
+      CREATE TABLE IF NOT EXISTS od_chat_events (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        seq BIGINT NOT NULL,
+        type TEXT NOT NULL,
+        channel_id TEXT,
+        audience_json TEXT,
+        payload_json TEXT NOT NULL,
+        created_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_chat_events_seq
+        ON od_chat_events(workspace_id, seq);
+      CREATE INDEX IF NOT EXISTS odx_chat_events_age
+        ON od_chat_events(workspace_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS od_chat_event_cursor (
+        workspace_id TEXT PRIMARY KEY,
+        seq BIGINT NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS od_chat_emoji (
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        url TEXT,
+        alias_for TEXT,
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (workspace_id, name)
+      );
+
+      CREATE TABLE IF NOT EXISTS od_chat_user_groups (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        handle TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        members_json TEXT NOT NULL DEFAULT '[]',
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS odx_chat_group_handle
+        ON od_chat_user_groups(workspace_id, handle);
+
+      CREATE TABLE IF NOT EXISTS od_chat_sections (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        emoji TEXT,
+        position INTEGER NOT NULL DEFAULT 0,
+        collapsed INTEGER NOT NULL DEFAULT 0,
+        channels_json TEXT NOT NULL DEFAULT '[]',
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS odx_chat_sections_member
+        ON od_chat_sections(workspace_id, member_id, position);
+
+      CREATE TABLE IF NOT EXISTS od_chat_drafts (
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        thread_key TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '',
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        updated_at BIGINT NOT NULL,
+        PRIMARY KEY (member_id, channel_id, thread_key)
+      );
+      CREATE INDEX IF NOT EXISTS odx_chat_drafts_member
+        ON od_chat_drafts(workspace_id, member_id);
+
+      CREATE TABLE IF NOT EXISTS od_chat_dnd (
+        member_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        schedule_enabled INTEGER NOT NULL DEFAULT 0,
+        start_minute INTEGER NOT NULL DEFAULT 1320,
+        end_minute INTEGER NOT NULL DEFAULT 480,
+        timezone TEXT NOT NULL DEFAULT 'UTC',
+        snooze_until BIGINT,
+        allow_urgent INTEGER NOT NULL DEFAULT 1,
+        updated_at BIGINT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS od_chat_webhooks (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        icon TEXT,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        last_used_at BIGINT,
+        revoked_at BIGINT
+      );
+      CREATE INDEX IF NOT EXISTS odx_chat_webhooks_ws
+        ON od_chat_webhooks(workspace_id, channel_id);
+
+      CREATE TABLE IF NOT EXISTS od_chat_huddles (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        started_by TEXT NOT NULL,
+        started_at BIGINT NOT NULL,
+        ended_at BIGINT
+      );
+      CREATE INDEX IF NOT EXISTS odx_chat_huddles_live
+        ON od_chat_huddles(workspace_id, channel_id, ended_at);
+
+      CREATE TABLE IF NOT EXISTS od_chat_huddle_participants (
+        huddle_id TEXT NOT NULL REFERENCES od_chat_huddles(id) ON DELETE CASCADE,
+        member_id TEXT NOT NULL,
+        joined_at BIGINT NOT NULL,
+        left_at BIGINT,
+        muted INTEGER NOT NULL DEFAULT 0,
+        sharing INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (huddle_id, member_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS od_chat_retention (
+        channel_id TEXT PRIMARY KEY REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        days INTEGER,
+        include_files INTEGER NOT NULL DEFAULT 0,
+        updated_at BIGINT NOT NULL
+      );
+
+      ALTER TABLE od_chat_channels ADD COLUMN IF NOT EXISTS post_policy TEXT NOT NULL DEFAULT 'everyone';
+      ALTER TABLE od_chat_messages ADD COLUMN IF NOT EXISTS thread_broadcast INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE od_chat_messages ADD COLUMN IF NOT EXISTS bot_name TEXT;
+      ALTER TABLE od_chat_messages ADD COLUMN IF NOT EXISTS bot_icon TEXT;
+      ALTER TABLE od_chat_messages ADD COLUMN IF NOT EXISTS group_mentions_json TEXT NOT NULL DEFAULT '[]';
+
+      CREATE INDEX IF NOT EXISTS odx_chat_messages_ws_time
+        ON od_chat_messages(workspace_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS odx_chat_messages_author
+        ON od_chat_messages(workspace_id, author_member_id, created_at DESC);
+
+      -- Postgres's own full-text index, the counterpart of the SQLite FTS5
+      -- table. An expression index rather than a stored tsvector column, so no
+      -- trigger has to be kept in step with edits.
+      CREATE INDEX IF NOT EXISTS odx_chat_messages_fts
+        ON od_chat_messages USING GIN (to_tsvector('english', body));
+    `,
+  },
 ];
 
 /** Bring a Postgres database up to the current schema. Safe to call on every

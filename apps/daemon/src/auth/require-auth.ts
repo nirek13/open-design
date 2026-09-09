@@ -53,6 +53,11 @@ const PUBLIC_API_PREFIXES = [
   // Phone inbound webhooks (Slack Events, BlueBubbles, Apple Shortcuts)
   // authorize with the channel's inbound token, not a Clerk session.
   '/api/phone/inbound/',
+  // Team-chat incoming webhooks. The 32-byte token in the URL is the whole
+  // credential — that is the point of the shape, and it is why only its hash
+  // is stored. An outside system posting a build result has no session and
+  // cannot be given one.
+  '/api/chat/hooks/',
 ];
 
 export function isPublicApiPath(pathname: string): boolean {

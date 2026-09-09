@@ -30,9 +30,46 @@ export const CHAT_SPECIAL_MENTIONS = ['@channel', '@here', '@everyone'] as const
 
 export type ChatSpecialMention = (typeof CHAT_SPECIAL_MENTIONS)[number];
 
+const SPECIAL_MENTION_SET = new Set<string>(CHAT_SPECIAL_MENTIONS);
+
+/** True when this member should be pinged: they were @mentioned, or the
+ * message used @channel / @here / @everyone. */
+export function messageMentionsMember(mentions: readonly string[], memberId: string): boolean {
+  return mentions.some(
+    (token) => token === memberId || SPECIAL_MENTION_SET.has(token.toLowerCase()),
+  );
+}
+
+/** Channel notify prefs plus mute, applied to one posted message. The author
+ * never notifies themselves; system messages (joins, pack installs) never
+ * notify; muted / `nothing` never notify; `mentions` only fires on an @. */
+export function shouldNotifyChatMember(input: {
+  memberId: string;
+  authorMemberId: string | null;
+  muted: boolean;
+  notify: ChatNotifyLevel;
+  mentions: readonly string[];
+  system?: boolean;
+}): boolean {
+  if (input.system) return false;
+  if (input.authorMemberId && input.authorMemberId === input.memberId) return false;
+  if (input.muted || input.notify === 'nothing') return false;
+  if (input.notify === 'mentions') return messageMentionsMember(input.mentions, input.memberId);
+  return true;
+}
+
 /** `channel` is a named room. `dm` is exactly two people. `group_dm` is a
  * private conversation among three or more, without a public slug people join. */
 export type ChatChannelKind = 'channel' | 'dm' | 'group_dm';
+
+/** Who may start a message here. `everyone` is an ordinary channel;
+ * `admins` is an announcement channel — everyone reads it and may reply in a
+ * thread, but only organization admins can post to the channel itself. Reply
+ * is deliberately left open: an announcement nobody can question is a notice
+ * board, not a channel. */
+export type ChannelPostPolicy = 'everyone' | 'admins';
+
+export const CHANNEL_POST_POLICIES = ['everyone', 'admins'] as const;
 
 export interface ChatChannel {
   id: string;
@@ -57,6 +94,11 @@ export interface ChatChannel {
   messageCount: number;
   /** Messages the caller has not read. Absent for a channel they are not in. */
   unreadCount: number;
+  /** Of those, the ones that named the caller (or the whole room). A separate
+   * figure because bold and a red badge answer different questions: "there is
+   * something here" and "it is addressed to you". Mute suppresses the first
+   * and deliberately not the second. */
+  mentionCount: number;
   /** Whether the caller is a member. Public channels list for everyone, so
    * this is what the UI joins on. */
   joined: boolean;
@@ -64,6 +106,16 @@ export interface ChatChannel {
   starred: boolean;
   muted: boolean;
   notify: ChatNotifyLevel;
+  postPolicy: ChannelPostPolicy;
+  /** True while a huddle is running here, so the sidebar can show the dot
+   * without a second request per channel. */
+  huddleActive: boolean;
+  /** Days messages are kept, or null for forever. Surfaced on the channel so
+   * the transcript can say why history stops where it does. */
+  retentionDays: number | null;
+  /** The caller's sidebar section, or null when the channel sits in the
+   * default Channels / Direct messages group. Per viewer, like `starred`. */
+  sectionId: string | null;
 }
 
 export interface ChatChannelMember {
@@ -87,6 +139,7 @@ export const TEAM_CHAT_ATTACHMENT_KINDS = [
   'journal-entry',
   'file',
   'link',
+  'message',
 ] as const;
 
 export type TeamChatAttachmentKind = (typeof TEAM_CHAT_ATTACHMENT_KINDS)[number];
@@ -96,8 +149,10 @@ export type TeamChatAttachmentKind = (typeof TEAM_CHAT_ATTACHMENT_KINDS)[number]
 export const CHAT_FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 /** A reference from a message to something in the organization's data, a
- * uploaded file, or a pasted link. Record/app/page/event/proposal/journal-entry
- * keep chat inside the org; file/link are the media people actually send. */
+ * uploaded file, a pasted link, or another message. Record / app / page /
+ * event / proposal / journal-entry keep chat inside the org; file and link are
+ * the media people actually send; `message` is a forward, which quotes the
+ * original as it was rather than linking to something that can change. */
 export interface TeamChatAttachment {
   kind: TeamChatAttachmentKind;
   /** Record/app/page/event/proposal/journal-entry/file id, or the URL for a link. */
@@ -113,6 +168,15 @@ export interface TeamChatAttachment {
   fileName?: string;
   byteSize?: number;
   thumbnailUrl?: string;
+  /** Only for `kind: 'message'` — a snapshot of the forwarded message, so a
+   * later edit or delete of the original does not silently rewrite what was
+   * quoted. */
+  quote?: {
+    body: string;
+    authorName: string | null;
+    channelSlug: string;
+    createdAt: number;
+  };
 }
 
 export interface ChatFileUploadResponse {
@@ -176,9 +240,30 @@ export function sanitizeTeamChatAttachments(raw: unknown): TeamChatAttachment[] 
       });
       continue;
     }
+    if (kind === 'message') {
+      // A forward carries its own copy of what was said. Without the snapshot
+      // there is nothing to render, so an incomplete one is dropped rather
+      // than shown as an empty card.
+      const quote = rec.quote;
+      if (!id || !quote || typeof quote !== 'object' || Array.isArray(quote)) continue;
+      const q = quote as Record<string, unknown>;
+      const createdAt = typeof q.createdAt === 'number' && Number.isFinite(q.createdAt) ? q.createdAt : 0;
+      out.push({
+        kind: 'message',
+        id,
+        label: label || asTrimmed(q.body).slice(0, 80) || id,
+        quote: {
+          body: asTrimmed(q.body).slice(0, CHAT_MESSAGE_MAX_LENGTH),
+          authorName: asTrimmed(q.authorName) || null,
+          channelSlug: asTrimmed(q.channelSlug),
+          createdAt,
+        },
+      });
+      continue;
+    }
     if (!id || !label) continue;
     out.push({
-      kind: kind as Exclude<TeamChatAttachmentKind, 'file' | 'link'>,
+      kind: kind as Exclude<TeamChatAttachmentKind, 'file' | 'link' | 'message'>,
       id,
       label,
       ...(kind === 'record' && asTrimmed(rec.tableName) ? { tableName: asTrimmed(rec.tableName) } : {}),
@@ -208,8 +293,14 @@ export interface TeamChatMessage {
    * proposal decisions. Rendered differently and never editable. */
   system: boolean;
   attachments: TeamChatAttachment[];
-  /** Organization member ids mentioned with `@`. Drives the unread badge. */
+  /** Organization member ids mentioned with `@`. Drives the unread badge.
+   * A group mention is expanded into its members here, so every notification
+   * decision reads one list. */
   mentions: string[];
+  /** User-group ids named in the body (`@design`), kept alongside the expanded
+   * member ids so the renderer can show the group chip rather than a run of
+   * individual names. */
+  groupMentions: string[];
   /** The message this one replies to. A thread is a parent plus its replies;
    * there is no separate thread object to keep in sync. */
   parentMessageId: string | null;
@@ -220,6 +311,14 @@ export interface TeamChatMessage {
   createdAt: number;
   pinned: boolean;
   saved: boolean;
+  /** A thread reply that was also sent to the channel. Rendered in both
+   * places, stored once, so the two copies can never disagree. */
+  threadBroadcast: boolean;
+  /** Set on messages an incoming webhook posted. The name and icon travel with
+   * the message rather than being looked up, so a revoked webhook does not
+   * turn its history anonymous. */
+  botName: string | null;
+  botIcon: string | null;
 }
 
 // --- Requests -------------------------------------------------------------
@@ -231,6 +330,7 @@ export interface CreateChannelRequest {
   topic?: string;
   purpose?: string;
   visibility?: ChannelVisibility;
+  postPolicy?: ChannelPostPolicy;
   /** Organization member ids to add on creation. The creator is always added. */
   memberIds?: string[];
 }
@@ -240,6 +340,7 @@ export interface UpdateChannelRequest {
   topic?: string;
   purpose?: string;
   visibility?: ChannelVisibility;
+  postPolicy?: ChannelPostPolicy;
 }
 
 export interface PostMessageRequest {
@@ -249,6 +350,16 @@ export interface PostMessageRequest {
   parentMessageId?: string;
   /** When set, the message is held until this epoch-ms instead of posting now. */
   sendAt?: number;
+  /** Only meaningful with `parentMessageId`: show this reply in the channel as
+   * well as in its thread. */
+  threadBroadcast?: boolean;
+}
+
+export interface ForwardMessageRequest {
+  /** Channel id or slug to forward into. */
+  toChannel: string;
+  /** Optional note added above the quoted message. */
+  comment?: string;
 }
 
 export interface EditMessageRequest {
@@ -329,6 +440,9 @@ export interface ChannelListResponse {
   channels: ChatChannel[];
   /** Total unread across every channel the caller is in — the nav badge. */
   totalUnread: number;
+  /** Of those, the ones addressed to the caller. Drives the red count that
+   * sits on top of the badge. */
+  totalMentions: number;
 }
 
 export interface ChannelResponse {
@@ -350,17 +464,10 @@ export interface MessageResponse {
 }
 
 // --- Realtime -------------------------------------------------------------
-
-/** Chat events on the SSE stream. The union is closed so a client can switch
- * exhaustively; adding a case is a contract change, which is the point. */
-export type ChatStreamEvent =
-  | { type: 'message-posted'; channelId: string; message: TeamChatMessage }
-  | { type: 'message-edited'; channelId: string; message: TeamChatMessage }
-  | { type: 'message-deleted'; channelId: string; messageId: string }
-  | { type: 'channel-created'; channel: ChatChannel }
-  | { type: 'channel-updated'; channel: ChatChannel }
-  | { type: 'member-joined'; channelId: string; member: ChatChannelMember }
-  | { type: 'member-left'; channelId: string; memberId: string };
+//
+// The stream event union, presence, typing, and huddle signalling live in
+// `chat-realtime.ts`. They are imported from there rather than restated here,
+// so there is exactly one definition of what the wire carries.
 
 /** Channel slugs must be lowercase letters, digits, and single hyphens. Same
  * spirit as the workspace name pattern, but hyphens instead of underscores

@@ -9,6 +9,7 @@ This file is the single source of truth for agents entering this repository. Rea
 - Architecture and protocols: `docs/architecture.md`, `docs/skills-protocol.md`, `docs/agent-adapters.md`, `docs/modes.md`.
 - Historical product baseline: `docs/spec.md`, `docs/roadmap.md` (both explicitly archived; do not treat their dated decisions as current behavior).
 - References and current plans: `docs/references.md`, `docs/code-review-guidelines.md`, `specs/current/maintainability-roadmap.md`, `specs/current/ci.md` (CI scope confidence methodology — required before changing confidence or guard fields in `scripts/scopes.ts`).
+- Team chat realtime architecture: `specs/current/team-chat-realtime.md` — required before changing the chat event log, the SSE stream, presence/typing, huddles, or anything under `apps/web/src/components/team/`.
 - Directory-level agent guidance: `.github/AGENTS.md`, `apps/AGENTS.md`, `packages/AGENTS.md`, `tools/AGENTS.md`, `e2e/AGENTS.md`.
 - Packaged auto-update architecture and high-confidence local harness: read `tools/pack/AGENTS.md` section "Packaged auto-update architecture and harness" before touching packaged updater code, release-channel identity, installer behavior, or updater UI.
 - Packaged build cache contract: `tools/pack/CACHE.md` (determinant rules, materialization-time parameters, confidence grading — required before changing any build-cache node key).
@@ -308,6 +309,25 @@ root `pnpm tools-pr` script without a new explicit maintainer decision.
 - There is exactly one mechanism for clarifying user intent: the `<question-form>` markdown artifact the model emits inline. `AssistantMessage.tsx` renders `QuestionFormView` directly inside the originating assistant message, and answers flow back as the next user message (`formatFormAnswers` in `apps/web/src/artifacts/question-form.ts` → `POST /api/chat`). There is no separate Questions tab or native tool card.
 - `<question-form>` is valid on ANY turn, not just turn-1 discovery. Use it for turn-1 discovery briefs AND for mid-conversation clarification (e.g. an ambiguous annotation). The system-prompt guidance lives in `apps/daemon/src/prompts/system.ts` and `discovery.ts`; the API/BYOK-mode wording is mirrored through `packages/contracts/src/prompts/system.ts`.
 - `run-artifacts.ts:runAskedUserQuestion` powers the `run_finished.asked_user_question` analytics signal by scanning the run's streamed text for a `<question-form` marker (reassembled across `text_delta` chunks), not by detecting any tool call.
+
+## Team chat realtime
+
+Team chat (`/team`, and `/slack` which renders the same view) is driven by one
+authenticated SSE stream per organization, not by polling. The rules that must
+not be broken are in `specs/current/team-chat-realtime.md`; the two that decide
+whether a change is correct:
+
+- **Log, then fan out.** `ChatContext.emit` appends the event to `od_chat_events`
+  with its sequence number before telling any subscriber. Publishing first
+  leaves a window in which a reconnecting client is told nothing happened.
+- **Durable and ephemeral are different things.** Messages and channel changes
+  are logged and replayed on reconnect; presence, typing, huddle signalling, and
+  read markers are never logged. `isDurableChatEvent` is the only place that
+  decides, and `appendChatEvent` throws rather than store an ephemeral event.
+
+Channel events are filtered per subscriber by explicit audience, then by channel
+visibility — and an unresolvable visibility answer is "no". The same filter runs
+on replay, so resuming can never deliver what live delivery would have withheld.
 
 ## Chat UI conventions
 

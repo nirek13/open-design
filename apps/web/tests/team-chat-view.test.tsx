@@ -334,7 +334,12 @@ describe('TeamChatView', () => {
     expect(box.contains(composer)).toBe(true);
     expect(box.contains(emojiBtn)).toBe(true);
     expect(box.contains(screen.getByTestId('team-attach'))).toBe(true);
-    expect(screen.queryByRole('button', { name: 'Bold' })).toBeNull();
+    // The composer gained a formatting toolbar with the Slack revamp. This
+    // assertion previously pinned its absence; it now pins its presence, and
+    // that the toolbar lives inside the composer box rather than floating
+    // beside it. Schedule is still deliberately not a button — scheduling is
+    // reached through the send menu, not the chrome.
+    expect(box.contains(screen.getByRole('button', { name: 'Bold' }))).toBe(true);
     expect(screen.queryByRole('button', { name: 'Schedule' })).toBeNull();
 
     fireEvent.click(emojiBtn);

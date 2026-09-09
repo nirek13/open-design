@@ -12,43 +12,51 @@
   min-height: 0;
 }
 
+/* The company hub's surface — the pane-wide dawn.
+   The hub used to paint accent radials here, on top of the entry-canvas
+   wash, underneath WorkspaceHome's orb layer: three dawns compounding into
+   a muddy dome with a seam wherever one layer started and another did not.
+   There is exactly one dawn now, and it is this one, drawn on the element
+   that spans the whole pane so it has no edge to show. WorkspaceHome's
+   atmosphere layer adds the local light around the composer and the single
+   dither pass over all of it — do not add a second wash on either side of
+   that line, and do not add a second grain layer. */
 .studio {
-  --home-grain-fine: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.78'/%3E%3C/svg%3E");
-  --home-grain-soft: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 280 280'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.32' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
   background-color: var(--bg-app);
   background-image:
-    var(--home-grain-fine),
-    var(--home-grain-soft),
+    /* Floor. The lower third of the hub is deliberately empty; settling it
+       back to paper makes that read as composure rather than as an unpainted
+       gap. */
+    linear-gradient(
+      180deg,
+      transparent 44%,
+      color-mix(in srgb, var(--bg-app) 62%, transparent) 78%,
+      var(--bg-app) 100%
+    ),
+    /* Counterweights, barely there — without them the dawn reads as one flat
+       peach dome instead of light with a direction. */
     radial-gradient(
-      ellipse 110% 78% at 50% -18%,
-      color-mix(in srgb, var(--accent-tint) 90%, transparent),
-      color-mix(in srgb, var(--accent) 16%, transparent) 42%,
-      transparent 78%
+      ellipse 48% 44% at 0% 22%,
+      color-mix(in srgb, var(--accent) 9%, transparent),
+      transparent 74%
     ),
     radial-gradient(
-      ellipse 58% 52% at 4% 28%,
-      color-mix(in srgb, var(--accent) 12%, transparent),
-      transparent 78%
+      ellipse 46% 40% at 100% 10%,
+      color-mix(in srgb, var(--accent-soft) 34%, transparent),
+      transparent 74%
     ),
+    /* Dawn. Wide, low, and long-tailed: the extra mid stops are what keep a
+       gradient this large from banding across a big display. */
     radial-gradient(
-      ellipse 54% 48% at 98% 18%,
-      color-mix(in srgb, var(--accent) 10%, transparent),
-      transparent 76%
+      ellipse 122% 88% at 50% -32%,
+      color-mix(in srgb, var(--accent-tint) 92%, transparent) 0%,
+      color-mix(in srgb, var(--accent) 15%, transparent) 34%,
+      color-mix(in srgb, var(--accent) 6%, transparent) 56%,
+      color-mix(in srgb, var(--accent) 2%, transparent) 70%,
+      transparent 84%
     );
-  background-repeat: repeat, repeat, no-repeat, no-repeat, no-repeat;
-  background-size: 128px 128px, 280px 280px, auto, auto, auto;
-  background-position: 0 0, 0 0, 50% 0, 0 0, 100% 0;
-  background-blend-mode: overlay, soft-light, normal, normal, normal;
-}
-
-:global([data-theme='dark']) .studio {
-  background-blend-mode: soft-light, soft-light, normal, normal, normal;
-}
-
-@media (prefers-color-scheme: dark) {
-  :global(html:not([data-theme='light'])) .studio {
-    background-blend-mode: soft-light, soft-light, normal, normal, normal;
-  }
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat;
+  background-position: 50% 100%, 0 0, 100% 0, 50% 0;
 }
 
 /* One measure for every workspace surface. Wide enough for a five-column
@@ -95,6 +103,19 @@
   min-height: 0;
   overflow: hidden;
   gap: 16px;
+}
+
+/* The hub's atmosphere layer sits inside the stage but has to light the whole
+   pane. Clipping it to the content box meant a second dither layer had to
+   cover the remaining border strip, and the two of them stacking is what drew
+   a rectangle across the canvas. Let it out (the pane still clips, via
+   `.rootFill`) and lift the action row above it. */
+.studio .columnFill .body {
+  overflow: visible;
+}
+
+.studio .columnFill .head {
+  z-index: 2;
 }
 
 .launching .head {

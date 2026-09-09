@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, lazy, Suspense } from 'react';
 import { flushSync } from 'react-dom';
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
 import { useAnalytics } from './analytics/provider';
@@ -25,9 +25,40 @@ import {
   isToolEnabled,
 } from '@open-design/contracts';
 import { EntryView } from './components/EntryView';
+
+// Route-level code splitting. Only the entry view is on the path to first
+// paint; a marketplace the user may never open, the settings dialog, and
+// the project workspace all used to be pulled into the boot graph by these
+// imports. Each boundary below is rendered under the <Suspense> in
+// `appMain`, which shows the same workspace loader the app already used.
+const MarketplaceView = lazy(() =>
+  import('./components/MarketplaceView').then((m) => ({ default: m.MarketplaceView })),
+);
+const PluginDetailView = lazy(() =>
+  import('./components/PluginDetailView').then((m) => ({ default: m.PluginDetailView })),
+);
+const ProjectView = lazy(() =>
+  import('./components/ProjectView').then((m) => ({ default: m.ProjectView })),
+);
+const JoinOrgView = lazy(() =>
+  import('./components/org/JoinOrgView').then((m) => ({ default: m.JoinOrgView })),
+);
+const BookView = lazy(() =>
+  import('./components/calendar/BookView').then((m) => ({ default: m.BookView })),
+);
+const WorkspaceSetupView = lazy(() =>
+  import('./components/org/WorkspaceSetupView').then((m) => ({ default: m.WorkspaceSetupView })),
+);
+const DesignSystemCreationFlow = lazy(() =>
+  import('./components/DesignSystemFlow').then((m) => ({ default: m.DesignSystemCreationFlow })),
+);
+const DesignSystemDetailView = lazy(() =>
+  import('./components/DesignSystemFlow').then((m) => ({ default: m.DesignSystemDetailView })),
+);
+const SettingsDialog = lazy(() =>
+  import('./components/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
+);
 import type { IntegrationTab } from './components/IntegrationsView';
-import { MarketplaceView } from './components/MarketplaceView';
-import { PluginDetailView } from './components/PluginDetailView';
 import type { CreateInput, ImportClaudeDesignOutcome } from './components/NewProjectPanel';
 import { MemoryToast } from './components/MemoryToast';
 import { UpdateDialog } from './components/UpdateDialog';
@@ -36,7 +67,6 @@ import { CenteredLoader } from './components/Loading';
 import { PetOverlay, type PetTaskCenter } from './components/pet/PetOverlay';
 import { buildPetTaskCenter } from './components/pet/taskCenter';
 import { migrateCustomPetAtlas } from './components/pet/pets';
-import { ProjectView } from './components/ProjectView';
 import { RunningAppProvider, useOptionalRunningApp } from './components/apps/RunningAppContext';
 import { AmrArtifactUpgradeGate } from './components/AmrArtifactUpgradeGate';
 import { AmrArtifactUpgradeHomeCard } from './components/AmrArtifactUpgradeHomeCard';
@@ -53,20 +83,13 @@ import {
   isToggleSearchHotkey,
 } from './components/search/search-hotkey';
 import {
-  DesignSystemCreationFlow,
-  DesignSystemDetailView,
-} from './components/DesignSystemFlow';
-import {
   IframeKeepAliveProvider,
   useIframeKeepAlivePool,
 } from './components/IframeKeepAlivePool';
 import { OrgProvider, useOptionalOrg } from './org/OrgContext';
 import { AuthGate } from './auth/AuthGate';
-import { JoinOrgView } from './components/org/JoinOrgView';
-import { BookView } from './components/calendar/BookView';
-import { WorkspaceSetupView } from './components/org/WorkspaceSetupView';
+import { ChatPushSync } from './runtime/chat-push';
 import {
-  SettingsDialog,
   switchApiProtocolConfig,
   updateCurrentApiProtocolConfig,
   type SettingsSection,
@@ -190,6 +213,9 @@ const APP_CONFIG_CHANGED_EVENT = 'open-design:app-config-changed';
 const AMR_AGENT_ID = 'amr';
 const AMR_PROFILE_ENV_KEY = 'OPEN_DESIGN_AMR_PROFILE';
 const AGENT_FOCUS_REFRESH_THROTTLE_MS = 10_000;
+// Only a backstop for runs started outside this tab; in-app run changes
+// arrive on RUNS_CHANGED_EVENT, and hidden tabs skip the tick entirely.
+const PET_TASK_POLL_MS = 15_000;
 
 export function shouldSyncMediaProvidersOnSave(
   mediaProviders: AppConfig['mediaProviders'],
@@ -433,11 +459,18 @@ export function App() {
 function AppGate() {
   const route = useRoute();
   if (route.kind === 'book') {
-    return <BookView token={route.token} />;
+    // Public booking pages render above the auth gate, outside the shell's
+    // Suspense boundary, so this route carries its own.
+    return (
+      <Suspense fallback={null}>
+        <BookView token={route.token} />
+      </Suspense>
+    );
   }
   return (
     <AuthGate>
       <OrgProvider>
+        <ChatPushSync />
         <RunningAppProvider>
           <AppInner />
         </RunningAppProvider>
@@ -2160,24 +2193,42 @@ function AppInner() {
     }
 
     let cancelled = false;
+    // Read projects through the ref rather than closing over the array: as a
+    // dependency it tore down and rebuilt this poller on every project-list
+    // change, which is often.
     const refresh = async () => {
       const runs = await listProjectRuns();
       if (cancelled) return;
-      setPetTaskCenter(buildPetTaskCenter(projects, runs));
+      setPetTaskCenter(buildPetTaskCenter(projectsRef.current, runs));
     };
     const handleRunsChanged = () => {
       void refresh();
     };
 
+    // `RUNS_CHANGED_EVENT` already reports every run the app itself starts or
+    // stops, so the timer only exists to notice runs started elsewhere (the
+    // CLI, another tab). That does not need two-second resolution, and a
+    // hidden tab does not need it at all — this used to poll the daemon
+    // every two seconds forever in every background tab.
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      void refresh();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+
     void refresh();
     window.addEventListener(RUNS_CHANGED_EVENT, handleRunsChanged);
-    const id = window.setInterval(refresh, 2000);
+    document.addEventListener('visibilitychange', handleVisibility);
+    const id = window.setInterval(tick, PET_TASK_POLL_MS);
     return () => {
       cancelled = true;
       window.removeEventListener(RUNS_CHANGED_EVENT, handleRunsChanged);
+      document.removeEventListener('visibilitychange', handleVisibility);
       window.clearInterval(id);
     };
-  }, [config.pet?.enabled, daemonLive, projects]);
+  }, [config.pet?.enabled, daemonLive]);
 
   const handleOpenLiveArtifact = useCallback((projectId: string, artifactId: string) => {
     navigate({ kind: 'project', projectId, fileName: liveArtifactTabId(artifactId) });
@@ -2832,7 +2883,9 @@ function AppInner() {
           )}
         />
         <div className="workspace-shell__body">
-          {appMain}
+          <Suspense fallback={<CenteredLoader label={t('entry.loadingWorkspace')} />}>
+            {appMain}
+          </Suspense>
         </div>
       </div>
       {clientType === 'desktop' ? null : (
@@ -2868,6 +2921,7 @@ function AppInner() {
       />
       <AnimatePresence>
       {settingsOpen ? (
+        <Suspense fallback={null}>
         <SettingsDialog
           initial={config}
           agents={agents}
@@ -2920,6 +2974,7 @@ function AppInner() {
           providerModelsCache={providerModelsCache}
           onProviderModelsCacheChange={setProviderModelsCache}
         />
+        </Suspense>
       ) : null}
       </AnimatePresence>
       <MemoryToast onOpenMemory={() => openSettings('memory')} />

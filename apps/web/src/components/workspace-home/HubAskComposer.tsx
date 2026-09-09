@@ -2,13 +2,14 @@
 // Finding records lives on Search. A pasted public link still becomes an
 // import — that path is a URL, not a second field.
 
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Button, VisuallyHidden } from '@open-design/components';
 import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID, MIN_APPLY_CONFIDENCE } from '@open-design/contracts';
 import { useT } from '../../i18n';
+import type { Dict } from '../../i18n/types';
 import { applyIntent, interpretIntent } from '../../providers/registry';
 import { importUrlFromText } from '../../features/importUrl';
-import { Icon } from '../Icon';
+import { Icon, type IconName } from '../Icon';
 import type { PluginLoopSubmit } from '../PluginLoopHome';
 import styles from './WorkspaceHome.module.css';
 
@@ -26,6 +27,48 @@ interface Props {
   onImportUrl?: (url: string) => void;
   onStudioLaunch?: () => void;
 }
+
+/** A starting point offered under the empty composer. */
+interface Starter {
+  id: string;
+  icon: IconName;
+  labelKey: keyof Dict;
+  /** The text dropped into the box. Deliberately a full brief, not a stub —
+      a starter that still needs finishing is a worse blank page. */
+  promptKey: keyof Dict;
+}
+
+/* Four, and only four. The point of this row is to show the range of the
+   box in one glance — a landing page, a deck, a table, a document — not to
+   catalogue what the product can do. A fifth turns a decision into a menu.
+   They cover both halves of what Ask routes to: the first two open visual
+   work as a project, the last two are read by the workspace intent layer. */
+const STARTERS: readonly Starter[] = [
+  {
+    id: 'site',
+    icon: 'layout',
+    labelKey: 'workspace.starterSiteLabel',
+    promptKey: 'workspace.starterSitePrompt',
+  },
+  {
+    id: 'deck',
+    icon: 'slides',
+    labelKey: 'workspace.starterDeckLabel',
+    promptKey: 'workspace.starterDeckPrompt',
+  },
+  {
+    id: 'table',
+    icon: 'grid',
+    labelKey: 'workspace.starterTableLabel',
+    promptKey: 'workspace.starterTablePrompt',
+  },
+  {
+    id: 'doc',
+    icon: 'file-text',
+    labelKey: 'workspace.starterDocLabel',
+    promptKey: 'workspace.starterDocPrompt',
+  },
+];
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -60,6 +103,9 @@ export function HubAskComposer({
   const name = greetingName?.trim() ?? '';
   const greeting = name ? t('workspace.greetingNamed', { greeting: period, name }) : period;
   const greetingOpen = hero || focused || launching;
+  // Starting points are for an empty box. The moment there is a brief in it —
+  // typed or filled from a starter — they are noise competing with Send.
+  const startersHidden = Boolean(value.trim()) || busy || launching;
 
   useLayoutEffect(() => {
     const el = inputRef.current;
@@ -127,6 +173,10 @@ export function HubAskComposer({
       >
         <span className={styles.greetingInner}>
           <span className={styles.greetingText}>{greeting}</span>
+          {/* Inside the collapsing wrapper on purpose: the lead is part of
+              the welcome, so it must fold away with the greeting rather than
+              linger over a composer the user has already started using. */}
+          <span className={styles.heroLead}>{t('workspace.heroLead')}</span>
         </span>
       </p>
       <div
@@ -188,6 +238,40 @@ export function HubAskComposer({
           {error}
         </p>
       ) : null}
+
+      {/* Kept mounted and hidden by class rather than unmounted, so the row
+          has an exit transition to play when the box stops being empty
+          (see the animation philosophy in AGENTS.md). */}
+      <div
+        className={`${styles.starters}${startersHidden ? ` ${styles.startersHidden}` : ''}`}
+        data-testid="workspace-starters"
+        role="group"
+        aria-label={t('workspace.startersLabel')}
+        aria-hidden={startersHidden}
+      >
+        {STARTERS.map((starter, index) => (
+          <button
+            key={starter.id}
+            type="button"
+            className={styles.starter}
+            style={{ '--starter-index': index } as CSSProperties}
+            data-testid={`workspace-starter-${starter.id}`}
+            // The row is only faded out, not unmounted, so it has to be
+            // taken out of the tab order by hand or Tab lands on invisible
+            // buttons between the composer and everything after it.
+            tabIndex={startersHidden ? -1 : 0}
+            onClick={() => {
+              // Fill, never send. The first thing a new user does here should
+              // still be their own sentence, edited and confirmed.
+              onChange(t(starter.promptKey));
+              inputRef.current?.focus();
+            }}
+          >
+            <Icon name={starter.icon} size={15} className={styles.starterIcon} aria-hidden />
+            <span>{t(starter.labelKey)}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

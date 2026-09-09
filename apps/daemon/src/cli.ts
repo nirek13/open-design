@@ -383,8 +383,13 @@ const ERP_BOOLEAN_FLAGS = new Set([
 const TEAM_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'message', 'prompt-file', 'topic', 'purpose', 'limit', 'before',
   'member', 'emoji', 'query', 'q', 'file', 'note', 'at', 'notify', 'url', 'label', 'status',
+  'name', 'alias-for', 'handle', 'to', 'comment', 'channel', 'days', 'section',
+  'post-policy', 'timezone', 'start', 'end', 'snooze', 'state', 'since',
 ]);
-const TEAM_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'private', 'starred', 'muted']);
+const TEAM_BOOLEAN_FLAGS = new Set([
+  'help', 'h', 'json', 'private', 'starred', 'muted', 'announcement',
+  'follow', 'quiet', 'urgent', 'collapsed',
+]);
 const PAGES_STRING_FLAGS = new Set([
   'daemon-url', 'org', 'title', 'parent', 'icon', 'cover', 'data-file',
   'query', 'q', 'limit', 'type', 'target', 'table', 'record', 'path', 'url',
@@ -12559,6 +12564,8 @@ Subcommands:
   star <channel>                       Star a channel
   unstar <channel>                     Unstar a channel
   notify <channel> --notify all|mentions|nothing
+  push-status                          Whether this account can receive browser push
+  push-test                            Send a test push to registered browsers
   unread <channel>                     Mark a channel unread
   topic <channel> --topic <text>       Set the channel topic
   purpose <channel> --purpose <text>   Set the channel description
@@ -12570,6 +12577,41 @@ Subcommands:
   read <channel>                       Mark a channel read
   archive <channel>                    Archive a channel (admin)
   unarchive <channel>                  Unarchive a channel (admin)
+  catch-up                             What you missed, by channel
+  forward <message-id> --to <channel>  Forward a message, quoting it
+  announce <channel> --post-policy     everyone | admins (announcement channel)
+  export [channel]                     Transcript you can read, as JSON
+
+Live:
+  stream [--follow] [--since <seq>]    Watch events; resumes from a sequence
+  presence [--state active|away]       Who is connected, or say you are here
+  typing <channel> [--quiet]           Signal (or clear) a typing indicator
+  huddles                              Huddles running right now
+
+Emoji and groups:
+  emoji                                Custom emoji in this organization
+  emoji-add <name> --file <image>      Upload one (or --alias-for <name>)
+  emoji-remove <name>                  Delete one
+  groups                               User groups you can @mention
+  group-create <name> [--handle]       Create one (--member, repeatable)
+  group-set <id> [--name] [--member]   Rename it or replace its members
+  group-delete <id>                    Delete it
+
+Your setup:
+  sections                             Your sidebar sections
+  section-create <name> [--emoji]      Add one
+  section-set <id> [--channel <id>]    Rename, collapse, or fill it
+  section-delete <id>                  Remove it (its channels stay)
+  drafts                               Unsent messages, synced across devices
+  draft <channel> --message <text>     Save or clear one
+  dnd [--quiet --start 22:00 --end 8:00 --snooze <minutes>|off]
+                                       Quiet hours and snooze
+
+Admin:
+  webhooks                             Incoming webhooks
+  webhook-create <channel> --name <n>  Create one; the URL is shown once
+  webhook-revoke <id>                  Revoke one
+  retention <channel> [--days <n>|off] How long a channel keeps messages
 
 Options:
   --org <id>            Organization to operate in (default: your first)
@@ -12581,6 +12623,22 @@ Options:
   --query, --q <text>   Search query
   --file <path>         Attach a file (images, video, audio, PDFs, and more)
   --private             Create a private channel
+  --name <text>         Name for an emoji, group, section, or webhook
+  --handle <text>       Group handle (what you type after @)
+  --alias-for <name>    Point a new emoji name at an existing one
+  --to <channel>        Forward destination
+  --comment <text>      Note added above a forwarded message
+  --channel <id>        Channel to put in a section (repeatable)
+  --days <n|off>        Retention in days, or off for forever
+  --post-policy <p>     everyone | admins
+  --start/--end <hh:mm> Quiet hours window
+  --timezone <zone>     Zone the quiet-hours window is expressed in
+  --snooze <min|off>    Pause notifications for a while
+  --state <s>           active | away, for 'presence'
+  --since <seq>         Resume 'stream' from a sequence number
+  --follow              Keep 'stream' open instead of reading one batch
+  --quiet               Quiet hours on, or clear a typing indicator
+  --urgent              Let @mentions through during quiet hours
   --json                Machine-readable output
   --daemon-url <url>    Daemon base URL
 
@@ -12589,6 +12647,13 @@ Examples:
   od team post general --message "invoice INV-1042 is overdue"
   od team post incidents --prompt-file report.md
   od team show sales --limit 20
+  od team push-test
+  od team stream --follow --json | jq -r '.data.event.type'
+  od team emoji-add shipit --file ./shipit.png
+  od team group-create Design --handle design --member wsm-1 --member wsm-2
+  od team dnd --quiet --start 22:00 --end 08:00 --timezone Europe/Berlin
+  od team webhook-create incidents --name "Pager"
+  od team export incidents > incidents.json
 `);
 }
 
@@ -13053,9 +13118,508 @@ async function runTeam(args) {
     return;
   }
 
+  if (sub === 'push-status') {
+    const data = await request('GET', '/api/push');
+    if (flags.json) return writeJsonOut(data);
+    if (!data.enabled) {
+      console.log('[team] browser push is not available on this daemon');
+      return;
+    }
+    console.log(`[team] push on · ${data.subscriptionCount ?? 0} browser(s) registered`);
+    return;
+  }
+
+  if (sub === 'push-test') {
+    const data = await request('POST', '/api/push/test', {
+      ...(typeof flags.message === 'string' && flags.message.trim()
+        ? { body: flags.message }
+        : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] test push delivered to ${data.delivered ?? 0} of ${data.subscriptionCount ?? 0} browser(s)`);
+    return;
+  }
+
+  // --- Realtime -----------------------------------------------------------
+
+  if (sub === 'stream') {
+    // The CLI is not an EventSource, so it does the two things EventSource
+    // does for a browser by hand: read `id:` lines and resume from the last
+    // one. `--since` is the escape hatch for picking up where a previous run
+    // stopped, which is what makes this usable from a script.
+    const since = typeof flags.since === 'string' ? `?since=${encodeURIComponent(flags.since)}` : '';
+    const url = `${base}${scope}/stream${since}`;
+    let resp;
+    try {
+      resp = await fetch(url, { headers: { accept: 'text/event-stream' } });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let lastId = '';
+    for await (const chunk of resp.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        if (frame.startsWith(':')) continue;
+        let name = 'message';
+        let data = '';
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('id: ')) lastId = line.slice(4);
+          else if (line.startsWith('event: ')) name = line.slice(7);
+          else if (line.startsWith('data: ')) data += line.slice(6);
+        }
+        if (!data) continue;
+        if (flags.json) {
+          writeJsonOut({ event: name, id: lastId || null, data: JSON.parse(data) });
+          continue;
+        }
+        const parsed = JSON.parse(data);
+        if (name === 'hello') {
+          console.log(`[team] connected at seq ${parsed.seq}${parsed.truncated ? ' (history truncated)' : ''}`);
+          continue;
+        }
+        const event = parsed.event ?? {};
+        if (event.type === 'message-posted') {
+          const who = event.message?.authorName ?? 'someone';
+          console.log(`${when(event.message?.createdAt ?? Date.now())}  ${who}: ${event.message?.body ?? ''}`);
+        } else {
+          console.log(`[${event.type}] ${JSON.stringify(event).slice(0, 200)}`);
+        }
+      }
+      if (!flags.follow) break;
+    }
+    return;
+  }
+
+  if (sub === 'presence') {
+    if (typeof flags.state === 'string') {
+      const data = await request('POST', `${scope}/presence`, { state: flags.state });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[team] presence ${data.presence?.state ?? flags.state}`);
+      return;
+    }
+    const data = await request('GET', `${scope}/presence`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.roster?.length) console.log('[team] nobody is connected');
+    for (const row of data.roster ?? []) {
+      console.log(`${row.memberId}\t${row.state}\t${row.connections} connection(s)`);
+    }
+    return;
+  }
+
+  if (sub === 'typing') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error('usage: od team typing <channel> [--quiet]');
+      process.exit(2);
+    }
+    const data = flags.quiet
+      ? await request('POST', `${channelPath(ref)}/typing`, { typing: false })
+      : await request('POST', `${channelPath(ref)}/typing`, { typing: true });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] typing ${flags.quiet ? 'cleared' : 'signalled'} in #${String(ref).replace(/^#/, '')}`);
+    return;
+  }
+
+  // --- Custom emoji -------------------------------------------------------
+
+  if (sub === 'emoji') {
+    const data = await request('GET', `${scope}/emoji`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.emoji?.length) console.log('[team] no custom emoji yet');
+    for (const item of data.emoji ?? []) {
+      console.log(`:${item.name}:\t${item.aliasFor ? `alias for :${item.aliasFor}:` : item.url}`);
+    }
+    return;
+  }
+
+  if (sub === 'emoji-add') {
+    const name = flags.name ?? positionals[1];
+    if (!name) {
+      console.error('usage: od team emoji-add <name> --file <image> | --alias-for <name>');
+      process.exit(2);
+    }
+    if (flags['alias-for']) {
+      const data = await request('POST', `${scope}/emoji`, { name, aliasFor: flags['alias-for'] });
+      if (flags.json) return writeJsonOut(data);
+      console.log(`[team] :${name}: now means :${flags['alias-for']}:`);
+      return;
+    }
+    if (typeof flags.file !== 'string' || !flags.file.trim()) {
+      console.error('usage: od team emoji-add <name> --file <image> | --alias-for <name>');
+      process.exit(2);
+    }
+    // Same dynamic import as `uploadChatFile` above: the CLI keeps node:fs out
+    // of its top-level imports so the fast paths do not pay for it.
+    const { readFile } = await import('node:fs/promises');
+    const { basename: fileName } = await import('node:path');
+    const form = new FormData();
+    form.append('name', name);
+    form.append('image', new Blob([await readFile(flags.file)]), fileName(flags.file));
+    let resp;
+    try {
+      resp = await fetch(`${base}${scope}/emoji`, { method: 'POST', body: form });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) await structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] added :${data.emoji?.name ?? name}:`);
+    return;
+  }
+
+  if (sub === 'emoji-remove') {
+    const name = positionals[1];
+    if (!name) {
+      console.error('usage: od team emoji-remove <name>');
+      process.exit(2);
+    }
+    await request('DELETE', `${scope}/emoji/${encodeURIComponent(name)}`);
+    if (flags.json) return writeJsonOut({ ok: true });
+    console.log(`[team] removed :${name}:`);
+    return;
+  }
+
+  // --- User groups --------------------------------------------------------
+
+  if (sub === 'groups') {
+    const data = await request('GET', `${scope}/groups`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.groups?.length) console.log('[team] no user groups yet');
+    for (const group of data.groups ?? []) {
+      console.log(`@${group.handle}\t${group.name}\t${group.memberIds.length} people`);
+    }
+    return;
+  }
+
+  if (sub === 'group-create') {
+    const name = flags.name ?? positionals.slice(1).join(' ').trim();
+    if (!name) {
+      console.error('usage: od team group-create <name> [--handle <handle>] [--member <id>]');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/groups`, {
+      name,
+      ...(flags.handle ? { handle: flags.handle } : {}),
+      memberIds: asList(flags.member),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] created @${data.group?.handle}`);
+    return;
+  }
+
+  if (sub === 'group-set') {
+    const groupId = positionals[1];
+    if (!groupId) {
+      console.error('usage: od team group-set <group-id> [--name <name>] [--member <id>]');
+      process.exit(2);
+    }
+    const members = asList(flags.member);
+    const data = await request('PATCH', `${scope}/groups/${encodeURIComponent(groupId)}`, {
+      ...(flags.name ? { name: flags.name } : {}),
+      ...(members.length ? { memberIds: members } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] updated @${data.group?.handle}`);
+    return;
+  }
+
+  if (sub === 'group-delete') {
+    const groupId = positionals[1];
+    if (!groupId) {
+      console.error('usage: od team group-delete <group-id>');
+      process.exit(2);
+    }
+    await request('DELETE', `${scope}/groups/${encodeURIComponent(groupId)}`);
+    if (flags.json) return writeJsonOut({ ok: true });
+    console.log('[team] group deleted');
+    return;
+  }
+
+  // --- Sidebar sections ---------------------------------------------------
+
+  if (sub === 'sections') {
+    const data = await request('GET', `${scope}/sections`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.sections?.length) console.log('[team] no sections yet');
+    for (const section of data.sections ?? []) {
+      console.log(`${section.id}\t${section.emoji ?? ''} ${section.name}\t${section.channelIds.length} channel(s)`);
+    }
+    return;
+  }
+
+  if (sub === 'section-create') {
+    const name = flags.name ?? positionals.slice(1).join(' ').trim();
+    if (!name) {
+      console.error('usage: od team section-create <name> [--emoji <emoji>]');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/sections`, {
+      name,
+      ...(flags.emoji ? { emoji: flags.emoji } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] created section ${data.section?.name}`);
+    return;
+  }
+
+  if (sub === 'section-set') {
+    const sectionId = positionals[1];
+    if (!sectionId) {
+      console.error('usage: od team section-set <section-id> [--name <name>] [--channel <id>] [--collapsed]');
+      process.exit(2);
+    }
+    const channelIds = asList(flags.channel);
+    const data = await request('PATCH', `${scope}/sections/${encodeURIComponent(sectionId)}`, {
+      ...(flags.name ? { name: flags.name } : {}),
+      ...(flags.emoji ? { emoji: flags.emoji } : {}),
+      ...(flags.collapsed ? { collapsed: true } : {}),
+      ...(channelIds.length ? { channelIds } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] section updated (${data.sections?.length ?? 0} total)`);
+    return;
+  }
+
+  if (sub === 'section-delete') {
+    const sectionId = positionals[1];
+    if (!sectionId) {
+      console.error('usage: od team section-delete <section-id>');
+      process.exit(2);
+    }
+    await request('DELETE', `${scope}/sections/${encodeURIComponent(sectionId)}`);
+    if (flags.json) return writeJsonOut({ ok: true });
+    console.log('[team] section deleted');
+    return;
+  }
+
+  // --- Drafts -------------------------------------------------------------
+
+  if (sub === 'drafts') {
+    const data = await request('GET', `${scope}/drafts`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.drafts?.length) console.log('[team] no drafts');
+    for (const draft of data.drafts ?? []) {
+      console.log(`${draft.channelId}\t${when(draft.updatedAt)}\t${draft.body.slice(0, 60)}`);
+    }
+    return;
+  }
+
+  if (sub === 'draft') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error('usage: od team draft <channel> --message <text>');
+      process.exit(2);
+    }
+    const body = await readMessageBody(true);
+    const data = await request('PUT', `${channelPath(ref)}/draft`, { body, parentMessageId: null });
+    if (flags.json) return writeJsonOut(data);
+    console.log(data.draft ? '[team] draft saved' : '[team] draft cleared');
+    return;
+  }
+
+  // --- Quiet hours --------------------------------------------------------
+
+  if (sub === 'dnd') {
+    const changing =
+      flags.quiet
+      || flags.urgent
+      || flags.timezone
+      || flags.start
+      || flags.end
+      || flags.snooze !== undefined;
+    if (!changing) {
+      const data = await request('GET', `${scope}/dnd`);
+      if (flags.json) return writeJsonOut(data);
+      const dnd = data.dnd ?? {};
+      console.log(`[team] quiet hours ${dnd.scheduleEnabled ? 'on' : 'off'} ${minutesLabel(dnd.startMinute)}–${minutesLabel(dnd.endMinute)} ${dnd.timezone}`);
+      console.log(`[team] snoozed ${dnd.snoozeUntil ? `until ${when(dnd.snoozeUntil)}` : 'no'} · currently ${data.active ? 'suppressing' : 'delivering'}`);
+      return;
+    }
+    const data = await request('PATCH', `${scope}/dnd`, {
+      ...(flags.quiet ? { scheduleEnabled: true } : {}),
+      ...(flags.timezone ? { timezone: flags.timezone } : {}),
+      ...(flags.start ? { startMinute: parseClockMinutes(flags.start) } : {}),
+      ...(flags.end ? { endMinute: parseClockMinutes(flags.end) } : {}),
+      ...(flags.urgent ? { allowUrgent: true } : {}),
+      ...(flags.snooze !== undefined
+        ? { snoozeUntil: flags.snooze === 'off' ? null : Date.now() + Number(flags.snooze) * 60_000 }
+        : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] quiet hours updated · currently ${data.active ? 'suppressing' : 'delivering'}`);
+    return;
+  }
+
+  // --- Huddles ------------------------------------------------------------
+
+  if (sub === 'huddles') {
+    const data = await request('GET', `${scope}/huddles`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.huddles?.length) console.log('[team] no huddles running');
+    for (const huddle of data.huddles ?? []) {
+      const who = huddle.participants.map((p) => p.displayName ?? p.memberId).join(', ');
+      console.log(`${huddle.id}\t${huddle.channelId}\t${who}`);
+    }
+    return;
+  }
+
+  // --- Forwarding ---------------------------------------------------------
+
+  if (sub === 'forward') {
+    const messageId = positionals[1];
+    if (!messageId || !flags.to) {
+      console.error('usage: od team forward <message-id> --to <channel> [--comment <text>]');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/messages/${encodeURIComponent(messageId)}/forward`, {
+      toChannel: String(flags.to).replace(/^#/, ''),
+      ...(flags.comment ? { comment: flags.comment } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] forwarded to #${String(flags.to).replace(/^#/, '')}`);
+    return;
+  }
+
+  // --- Incoming webhooks --------------------------------------------------
+
+  if (sub === 'webhooks') {
+    const data = await request('GET', `${scope}/webhooks`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.webhooks?.length) console.log('[team] no webhooks');
+    for (const hook of data.webhooks ?? []) {
+      console.log(`${hook.id}\t${hook.name}\t#${hook.channelSlug}\t${hook.lastUsedAt ? `used ${when(hook.lastUsedAt)}` : 'never used'}`);
+    }
+    return;
+  }
+
+  if (sub === 'webhook-create') {
+    const ref = positionals[1];
+    if (!ref || !flags.name) {
+      console.error('usage: od team webhook-create <channel> --name <name> [--emoji <icon>]');
+      process.exit(2);
+    }
+    const data = await request('POST', `${scope}/webhooks`, {
+      channelId: String(ref).replace(/^#/, ''),
+      name: flags.name,
+      ...(flags.emoji ? { icon: flags.emoji } : {}),
+    });
+    if (flags.json) return writeJsonOut(data);
+    // Shown once. There is deliberately no endpoint that can print it again.
+    console.log(`[team] webhook ${data.webhook?.name} created`);
+    console.log(`[team] POST ${base}${data.url}  — save this now, it is not shown again`);
+    return;
+  }
+
+  if (sub === 'webhook-revoke') {
+    const webhookId = positionals[1];
+    if (!webhookId) {
+      console.error('usage: od team webhook-revoke <webhook-id>');
+      process.exit(2);
+    }
+    await request('DELETE', `${scope}/webhooks/${encodeURIComponent(webhookId)}`);
+    if (flags.json) return writeJsonOut({ ok: true });
+    console.log('[team] webhook revoked');
+    return;
+  }
+
+  // --- Retention and export -----------------------------------------------
+
+  if (sub === 'retention') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error('usage: od team retention <channel> [--days <n>|--days off]');
+      process.exit(2);
+    }
+    if (flags.days === undefined) {
+      const data = await request('GET', `${channelPath(ref)}/retention`);
+      if (flags.json) return writeJsonOut(data);
+      const days = data.retention?.days;
+      console.log(`[team] #${String(ref).replace(/^#/, '')} keeps messages ${days ? `${days} day(s)` : 'forever'}`);
+      return;
+    }
+    const data = await request('PUT', `${channelPath(ref)}/retention`, {
+      days: flags.days === 'off' ? null : Number(flags.days),
+    });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] retention set to ${data.retention?.days ? `${data.retention.days} day(s)` : 'forever'}`);
+    return;
+  }
+
+  if (sub === 'export') {
+    const ref = positionals[1];
+    const query = ref ? `?channel=${encodeURIComponent(String(ref).replace(/^#/, ''))}` : '';
+    const data = await request('GET', `${scope}/export${query}`);
+    // An export is a document, not a status line: it is JSON whether or not
+    // --json was passed, because there is no sensible plain-text form of a
+    // whole transcript that is not just worse JSON.
+    return writeJsonOut(data);
+  }
+
+  if (sub === 'catch-up') {
+    const data = await request('GET', `${scope}/catch-up`);
+    if (flags.json) return writeJsonOut(data);
+    if (!data.items?.length) {
+      console.log('[team] you are all caught up');
+      return;
+    }
+    for (const item of data.items) {
+      const mentions = item.mentionCount ? ` · ${item.mentionCount} mention(s)` : '';
+      console.log(`#${item.channelSlug}\t${item.unreadCount} unread${mentions}`);
+      for (const line of item.preview) {
+        console.log(`    ${line.authorName ?? 'someone'}: ${line.body.slice(0, 100)}`);
+      }
+    }
+    console.log(`[team] ${data.totalUnread} unread, ${data.totalMentions} mention(s)`);
+    return;
+  }
+
+  if (sub === 'announce') {
+    const ref = positionals[1];
+    if (!ref) {
+      console.error('usage: od team announce <channel> [--post-policy everyone|admins]');
+      process.exit(2);
+    }
+    const policy = flags['post-policy'] ?? (flags.announcement ? 'admins' : 'everyone');
+    const data = await request('PATCH', channelPath(ref), { postPolicy: policy });
+    if (flags.json) return writeJsonOut(data);
+    console.log(`[team] #${data.channel?.slug} is now ${policy === 'admins' ? 'admins-only' : 'open to everyone'}`);
+    return;
+  }
+
   console.error(`unknown subcommand: ${sub}`);
   printTeamHelp();
   process.exit(2);
+}
+
+/** `--member a --member b` and `--member a,b` mean the same thing. Repeatable
+ * flags are what a shell makes easy; a comma list is what a script produces. */
+function asList(value) {
+  if (Array.isArray(value)) return value.flatMap((item) => String(item).split(',')).map((item) => item.trim()).filter(Boolean);
+  if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
+  return [];
+}
+
+/** `22:30` and `2230` and `1350` all mean the same minute-of-day. */
+function parseClockMinutes(raw) {
+  const text = String(raw).trim();
+  const colon = /^(\d{1,2}):(\d{2})$/.exec(text);
+  if (colon) return (Number(colon[1]) % 24) * 60 + Number(colon[2]);
+  const n = Number(text);
+  return Number.isFinite(n) ? Math.max(0, Math.min(1439, Math.trunc(n))) : 0;
+}
+
+function minutesLabel(minutes) {
+  const value = Number(minutes) || 0;
+  return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
 }
 
 // od calendar — organization calendar + Google / Notion / Apple import (same HTTP as the Calendar UI).

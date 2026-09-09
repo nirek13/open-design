@@ -9,54 +9,25 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { de } from './locales/de';
 import { en } from './locales/en';
-import { id } from './locales/id';
-import { esES } from './locales/es-ES';
-import { fa } from './locales/fa';
-import { ar } from './locales/ar';
-import { ja } from './locales/ja';
-import { ko } from './locales/ko';
-import { ptBR } from './locales/pt-BR';
-import { ru } from './locales/ru';
-import { zhCN } from './locales/zh-CN';
-import { zhTW } from './locales/zh-TW';
-import { pl } from './locales/pl';
-import { hu } from './locales/hu';
-import { fr } from './locales/fr';
-import { uk } from './locales/uk';
-import { tr } from './locales/tr';
-import { th } from './locales/th';
-import { it } from './locales/it';
 import { getOpenDesignHost } from '@open-design/host';
 import { LOCALES, type Dict, type Locale } from './types';
+import { fallbackDict, loadDict, loadedDict, subscribeToDicts } from './registry';
 
 export { LOCALES, LOCALE_LABEL } from './types';
 export type { Locale } from './types';
 
 type DictKey = keyof Dict;
 
-const DICTS: Record<Locale, Dict> = {
-  'en': en,
-  'id': id,
-  'de': de,
-  'zh-CN': zhCN,
-  'zh-TW': zhTW,
-  'pt-BR': ptBR,
-  'es-ES': esES,
-  'ru': ru,
-  'fa': fa,
-  'ar': ar,
-  'ja': ja,
-  'ko': ko,
-  'pl': pl,
-  'hu': hu,
-  'fr': fr,
-  'uk': uk,
-  'tr': tr,
-  'th': th,
-  'it': it,
-};
+/** Substitute `{name}` placeholders, leaving unknown names visible. */
+function interpolate(raw: string, vars?: Record<string, string | number>): string {
+  if (!vars) return raw;
+  return raw.replace(/\{(\w+)\}/g, (_, name: string) => {
+    const value = vars[name];
+    return value == null ? `{${name}}` : String(value);
+  });
+}
+
 
 const LS_KEY = 'open-design:locale';
 // Marker that says "the value in LS_KEY came from a deliberate user
@@ -104,15 +75,13 @@ export function tForLanguageTag(
   if (!tag || !tag.trim()) return null;
   const locale = resolveSystemLocale([tag]);
   if (!locale) return null;
-  const dict = DICTS[locale] ?? en;
-  return (key, vars) => {
-    const raw = dict[key] ?? en[key] ?? key;
-    if (!vars) return raw;
-    return raw.replace(/\{(\w+)\}/g, (_, name: string) => {
-      const v = vars[name];
-      return v == null ? `{${name}}` : String(v);
-    });
-  };
+  // Dictionaries load on demand, so a content language the UI has never
+  // rendered may not be here yet. Translate with what we have and request
+  // the rest; `subscribeToDicts` re-renders the tree when it lands.
+  const dict = loadedDict(locale);
+  if (!dict) void loadDict(locale);
+  return (key, vars) =>
+    interpolate((dict ?? fallbackDict)[key] ?? fallbackDict[key] ?? key, vars);
 }
 
 // Read the OS locale the desktop host attached to its client descriptor.
@@ -179,8 +148,57 @@ interface ProviderProps {
 
 const RTL_LOCALES: Locale[] = ['ar', 'fa'];
 
+const ARABIC_FONT_ID = 'od-rtl-font';
+const ARABIC_FONT_HREF =
+  'https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap';
+
+/**
+ * Request Cairo, and only for the readers who see it. The RTL type stack in
+ * `styles/viewer/library.css` names it first but falls through to Vazirmatn,
+ * Noto Sans Arabic and Tahoma, so a blocked or offline request costs nothing
+ * but the preferred face. Injected once and left in place — switching away
+ * from Arabic mid-session does not need to undo a cached stylesheet.
+ */
+function ensureRtlFontLoaded(): void {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById(ARABIC_FONT_ID)) return;
+  const link = document.createElement('link');
+  link.id = ARABIC_FONT_ID;
+  link.rel = 'stylesheet';
+  link.href = ARABIC_FONT_HREF;
+  document.head.appendChild(link);
+}
+
 export function I18nProvider({ initial, children }: ProviderProps) {
   const [locale, setLocaleState] = useState<Locale>(() => initial ?? detectInitialLocale());
+  const [dict, setDict] = useState<Dict>(() => loadedDict(locale) ?? fallbackDict);
+  // The very first paint must not show English to a Japanese reader, so it
+  // waits for the active dictionary's chunk. Later switches keep rendering
+  // the outgoing language instead of blanking the app mid-session.
+  const [booted, setBooted] = useState(() => loadedDict(locale) != null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const cachedDict = loadedDict(locale);
+    if (cachedDict) {
+      setDict(cachedDict);
+      setBooted(true);
+      return;
+    }
+    void loadDict(locale).then((next) => {
+      if (cancelled) return;
+      setDict(next);
+      setBooted(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [locale]);
+
+  // A dictionary fetched for some *other* language (a question form rendered
+  // in the model's language) has to reach the components already mounted.
+  const [dictVersion, setDictVersion] = useState(0);
+  useEffect(() => subscribeToDicts(() => setDictVersion((n) => n + 1)), []);
 
   // Keep <html lang="…" dir="…"> in sync so screen readers and CSS hooks
   // pick the right language token and direction without each component
@@ -190,6 +208,7 @@ export function I18nProvider({ initial, children }: ProviderProps) {
       const dir = RTL_LOCALES.includes(locale) ? 'rtl' : 'ltr';
       document.documentElement.setAttribute('lang', locale);
       document.documentElement.setAttribute('dir', dir);
+      if (dir === 'rtl') ensureRtlFontLoaded();
     }
   }, [locale]);
 
@@ -206,22 +225,26 @@ export function I18nProvider({ initial, children }: ProviderProps) {
   }, []);
 
   const t = useCallback(
-    (key: DictKey, vars?: Record<string, string | number>): string => {
-      const dict = DICTS[locale] ?? en;
-      const raw = dict[key] ?? en[key] ?? key;
-      if (!vars) return raw;
-      return raw.replace(/\{(\w+)\}/g, (_, name: string) => {
-        const v = vars[name];
-        return v == null ? `{${name}}` : String(v);
-      });
-    },
-    [locale],
+    (key: DictKey, vars?: Record<string, string | number>): string =>
+      interpolate(dict[key] ?? fallbackDict[key] ?? key, vars),
+    // `dictVersion` is not read here; it is in the dependency list so a
+    // dictionary landing for another language produces a fresh `t`
+    // identity and re-runs the memos downstream of it.
+    [dict, dictVersion],
   );
 
   const value = useMemo<I18nContextValue>(
     () => ({ locale, setLocale, t }),
     [locale, setLocale, t],
   );
+
+  // Hold the boot shell rather than flashing English at a reader who asked
+  // for something else. This is the same markup `app/[[...slug]]/client-app.tsx`
+  // shows while the App chunk loads, so the two waits read as one and the
+  // screen never goes blank in between. The dictionary is a same-origin
+  // chunk — a tick, not a round trip — and `en` is resident, so the common
+  // case never reaches this at all.
+  if (!booted) return <div className="od-loading-shell">Loading Plyxl…</div>;
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
@@ -235,14 +258,7 @@ export function useI18n(): I18nContextValue {
     return {
       locale: 'en',
       setLocale: () => { },
-      t: (key, vars) => {
-        const raw = en[key] ?? key;
-        if (!vars) return raw;
-        return raw.replace(/\{(\w+)\}/g, (_, n: string) => {
-          const v = vars[n];
-          return v == null ? `{${n}}` : String(v);
-        });
-      },
+      t: (key, vars) => interpolate(en[key] ?? key, vars),
     };
   }
   return ctx;

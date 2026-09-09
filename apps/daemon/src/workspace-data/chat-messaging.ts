@@ -546,6 +546,7 @@ export async function deliverDueScheduled(
   db: SqlExecutor,
   orgId: string,
   resolveMemberName?: ResolveMemberName,
+  onPosted?: (message: TeamChatMessage) => void,
 ): Promise<number> {
   const due = await db.all<{
     id: string;
@@ -585,7 +586,7 @@ export async function deliverDueScheduled(
           return [];
         }
       })();
-      await postMessage(
+      const postedMessage = await postMessage(
         db,
         orgId,
         row.channelId,
@@ -597,8 +598,15 @@ export async function deliverDueScheduled(
           ...(row.parentMessageId ? { parentMessageId: row.parentMessageId } : {}),
         },
         resolveMemberName,
+        // Whether this person may post here was settled when they scheduled
+        // it. Asking again at delivery has no author to ask about — this runs
+        // on a timer, not on a request — and a channel that became
+        // admins-only in the meantime would silently swallow the message
+        // forever, retried on every tick and never sent.
+        { isAdmin: true },
       );
       await db.run('DELETE FROM od_chat_scheduled WHERE id = ?', [row.id]);
+      onPosted?.(postedMessage);
       posted += 1;
     } catch {
       // Leave it queued; a later tick can retry.

@@ -64,6 +64,9 @@ interface Props {
 }
 
 const AUTOSAVE_MS = 700;
+/** How long opening a note waits for the previous note's save. Past this the
+ * save is already in flight with its own snapshot, so the switch is safe. */
+const FLUSH_WAIT_MS = 2500;
 const ICONS = [
   '📄', '📝', '📘', '📚', '✨', '⚡️', '💡', '🧠', '🎯', '📌',
   '🚀', '🌱', '🪐', '🧪', '🛠️', '📦', '🏠', '💼', '📊', '📈',
@@ -334,7 +337,22 @@ export function PagesView({
   const iconRef = useRef(icon);
   const coverRef = useRef(cover);
   const styleRef = useRef(style);
-  const openedInitial = useRef<string | null>(null);
+  const bootedOrgRef = useRef<string | null>(null);
+  /** Last page id this view pushed into the URL, so our own replaceState
+   * does not read back as a deep link asking us to re-open the page. */
+  const routeSyncedIdRef = useRef<string | null>(null);
+  const initialPageIdRef = useRef<string | undefined>(initialPageId);
+  /** True once the reader has picked a note themselves. From then on nothing
+   * in the background may move them off it. */
+  const readerPickedPageRef = useRef(false);
+  const agentOpenedPageRef = useRef(false);
+  const autoExpandedRef = useRef<Set<string>>(new Set());
+  /** Bumped on every open. A slower fetch that lands after a newer one must
+   * not paint the note the reader has already moved past. */
+  const showGenerationRef = useRef(0);
+  const articleRef = useRef<HTMLDivElement | null>(null);
+  const tabStripRef = useRef<HTMLElement | null>(null);
+  const titleFieldRef = useRef<HTMLTextAreaElement | null>(null);
   const persistInFlight = useRef(false);
   const saveStateRef = useRef(saveState);
   const currentIdRef = useRef(currentId);
@@ -356,6 +374,7 @@ export function PagesView({
   styleRef.current = style;
   saveStateRef.current = saveState;
   currentIdRef.current = currentId;
+  initialPageIdRef.current = initialPageId;
   openTabIdsRef.current = openTabIds;
   agentSessionRef.current = agentSession;
 
@@ -367,7 +386,25 @@ export function PagesView({
   useEffect(() => {
     if (!activeOrgId) return;
     if (pagesOrgRef.current && pagesOrgRef.current !== activeOrgId) {
+      showGenerationRef.current += 1;
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
       setOpenTabIds([]);
+      setCurrentId(null);
+      setPage(null);
+      setTitle('');
+      setIcon(null);
+      setCover(null);
+      setStyle({});
+      setDraft([emptyBlock()]);
+      setLoaded(false);
+      setSaveState('saved');
+      setExpanded(new Set());
+      autoExpandedRef.current = new Set();
+      readerPickedPageRef.current = false;
+      routeSyncedIdRef.current = null;
     }
     pagesOrgRef.current = activeOrgId;
   }, [activeOrgId]);
@@ -403,24 +440,72 @@ export function PagesView({
     () => allPages.filter((item) => item.parentPageId === currentId),
     [allPages, currentId],
   );
+  /** The open note and everything under it: the server rejects those parents,
+   * so offering them in "Move to" only ever produced an error. */
+  const invalidMoveTargets = useMemo(() => {
+    const blocked = new Set<string>();
+    if (!currentId) return blocked;
+    blocked.add(currentId);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const item of allPages) {
+        if (item.parentPageId && blocked.has(item.parentPageId) && !blocked.has(item.id)) {
+          blocked.add(item.id);
+          grew = true;
+        }
+      }
+    }
+    return blocked;
+  }, [allPages, currentId]);
 
   const loadTree = useCallback(async () => {
     if (!activeOrgId) return [];
     const next = await fetchPageTree(activeOrgId);
     setTree(next);
     setLoaded(true);
+    // Roots open the first time we meet them. Re-adding them on every reload
+    // would silently re-open anything the reader had collapsed, and would
+    // republish a fresh Set on every autosave.
     setExpanded((prev) => {
+      let changed = false;
       const nextSet = new Set(prev);
-      for (const node of next) nextSet.add(node.page.id);
-      return nextSet;
+      for (const node of next) {
+        if (autoExpandedRef.current.has(node.page.id)) continue;
+        autoExpandedRef.current.add(node.page.id);
+        if (!nextSet.has(node.page.id)) {
+          nextSet.add(node.page.id);
+          changed = true;
+        }
+      }
+      return changed ? nextSet : prev;
     });
     return next;
   }, [activeOrgId]);
 
+  /** Write out whatever the open note still owes the server. Called before
+   * we swap notes: a timer that fires after the swap would otherwise save the
+   * new note's title and body onto the one the reader just left. */
+  const flushPendingSave = useCallback(async () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    if (saveStateRef.current === 'saved' && !persistInFlight.current) return;
+    await Promise.race([
+      persistRef.current(),
+      new Promise((resolve) => setTimeout(resolve, FLUSH_WAIT_MS)),
+    ]);
+  }, []);
+
   const showPage = useCallback(
     async (pageId: string, syncUrl = true) => {
       if (!activeOrgId) return;
+      const generation = (showGenerationRef.current += 1);
+      if (pageId !== currentIdRef.current) await flushPendingSave();
+      if (showGenerationRef.current !== generation) return;
       const detail = await fetchWorkspacePage(activeOrgId, pageId);
+      if (showGenerationRef.current !== generation) return;
       const fromServer = blocksFromServer(detail.blocks);
       setCurrentId(pageId);
       setPage(detail);
@@ -441,9 +526,12 @@ export function PagesView({
       if (detail.parentPageId) {
         setExpanded((prev) => new Set(prev).add(detail.parentPageId!));
       }
-      if (syncUrl) navigate({ kind: 'home', view: 'pages', pageId }, { replace: true });
+      if (syncUrl) {
+        routeSyncedIdRef.current = pageId;
+        navigate({ kind: 'home', view: 'pages', pageId }, { replace: true });
+      }
     },
-    [activeOrgId],
+    [activeOrgId, flushPendingSave],
   );
 
   const openPage = useCallback(
@@ -452,6 +540,16 @@ export function PagesView({
       await showPage(pageId, syncUrl);
     },
     [showPage],
+  );
+
+  /** Every open the reader asked for. Pins them: from here on, an agent run
+   * finding new pages in the background must not move the view. */
+  const openPageByReader = useCallback(
+    (pageId: string) => {
+      readerPickedPageRef.current = true;
+      void openPage(pageId).catch((err) => setError(errorMessage(err)));
+    },
+    [openPage],
   );
 
   const closeTab = useCallback(
@@ -472,36 +570,69 @@ export function PagesView({
       setIcon(null);
       setCover(null);
       setDraft([emptyBlock()]);
+      routeSyncedIdRef.current = null;
       navigate({ kind: 'home', view: 'pages' }, { replace: true });
     },
     [showPage],
   );
 
+  // First look at this organization's notes: honour a deep link, else open
+  // the top note. Deliberately keyed on the organization, not on the route —
+  // re-running this on every URL change is what used to snap the reader back
+  // to the first note whenever the path lost its page id.
   useEffect(() => {
     if (!active || !activeOrgId) return;
+    if (bootedOrgRef.current === activeOrgId) return;
+    bootedOrgRef.current = activeOrgId;
+    let cancelled = false;
     void (async () => {
       try {
         const next = await loadTree();
-        const prefer =
-          initialPageId && initialPageId !== openedInitial.current ? initialPageId : null;
-        const first = prefer ?? next[0]?.page.id ?? null;
-        if (prefer) openedInitial.current = prefer;
-        if (first) await openPage(first, Boolean(prefer));
+        if (cancelled) return;
+        const deepLink = initialPageIdRef.current;
+        const first = deepLink ?? next[0]?.page.id ?? null;
+        if (first) await openPage(first, Boolean(deepLink));
         else {
           setCurrentId(null);
           setPage(null);
           setDraft([emptyBlock()]);
         }
       } catch (err) {
+        if (cancelled) return;
+        // Let a failed first read be retried when they come back to Notes.
+        bootedOrgRef.current = null;
         setError(errorMessage(err));
       }
     })();
-  }, [active, activeOrgId, initialPageId, loadTree, openPage]);
+    return () => {
+      cancelled = true;
+    };
+  }, [active, activeOrgId, loadTree, openPage]);
+
+  // A URL that names a different note — a shared link, browser back/forward, a
+  // jump from chat or search — opens it. A URL that drops the id leaves the
+  // reader exactly where they are.
+  useEffect(() => {
+    if (!active || !activeOrgId || !initialPageId) return;
+    if (bootedOrgRef.current !== activeOrgId) return;
+    if (initialPageId === currentIdRef.current) return;
+    if (initialPageId === routeSyncedIdRef.current) return;
+    readerPickedPageRef.current = true;
+    void openPage(initialPageId).catch((err) => setError(errorMessage(err)));
+  }, [active, activeOrgId, initialPageId, openPage]);
 
   const persist = useCallback(async () => {
     if (!activeOrgId || !currentId) return;
+    const savingPageId = currentId;
     await pageWriteQueueRef.current.enqueue(async () => {
       if (persistInFlight.current) return;
+      // The reader moved on while this save waited its turn. Writing now would
+      // put the note they opened into the note they left.
+      if (currentIdRef.current !== savingPageId) return;
+      /** The note this save belongs to is still the one on screen. Anything
+       * that writes view state or per-note bookkeeping has to check: the
+       * request outlives the reader's click. */
+      const stillOpen = () => currentIdRef.current === savingPageId;
       persistInFlight.current = true;
       setSaveState('saving');
       const snapshotTitle = titleRef.current;
@@ -544,9 +675,17 @@ export function PagesView({
           saved = await setWorkspacePageBlocks(activeOrgId, currentId, {
             blocks: blocksToServer(toWrite),
           });
-          savedBlocksJsonRef.current = nextBlocksJson;
+          // Record what the server now holds, not the payload we sent: the
+          // reply carries the ids it minted for new blocks. Every other guard
+          // here compares against this string, so it has to be server truth,
+          // and it has to be normalized the same way `showPage` normalizes it.
+          if (stillOpen()) {
+            savedBlocksJsonRef.current = JSON.stringify(
+              blocksToServer(blocksFromServer(saved.blocks)),
+            );
+          }
         }
-        if (saved && (wroteBlocks || wroteMeta)) {
+        if (saved && (wroteBlocks || wroteMeta) && stillOpen()) {
           setPage(saved);
           pageUpdatedAtRef.current = saved.updatedAt;
           setDraft((current) => {
@@ -559,13 +698,20 @@ export function PagesView({
             return next;
           });
         }
+        // Compare by value. The draft is rebuilt when server ids are stamped
+        // onto it, so an identity check reported a change whenever that
+        // rebuild happened to land first — a save that re-ran, or settled, on
+        // React's scheduling rather than on whether anything actually changed.
         const drifted =
           titleRef.current !== snapshotTitle ||
           iconRef.current !== snapshotIcon ||
           coverRef.current !== snapshotCover ||
-          styleRef.current !== snapshotStyle ||
-          draftRef.current !== snapshotBlocks;
-        await loadTree();
+          JSON.stringify(styleRef.current ?? {}) !== JSON.stringify(snapshotStyle ?? {}) ||
+          JSON.stringify(blocksToServer(draftRef.current)) !== savedBlocksJsonRef.current;
+        // Only a title/icon change alters what the sidebar shows; reloading the
+        // whole tree after every body save republished it for nothing.
+        if (wroteMeta) await loadTree();
+        if (!stillOpen()) return;
         if (drifted) {
           setSaveState('dirty');
           if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -577,7 +723,7 @@ export function PagesView({
         }
         setError(null);
       } catch (err) {
-        setSaveState('dirty');
+        if (stillOpen()) setSaveState('dirty');
         setError(errorMessage(err));
       } finally {
         persistInFlight.current = false;
@@ -601,6 +747,17 @@ export function PagesView({
     [],
   );
 
+  const fitTitleField = useCallback(() => {
+    const field = titleFieldRef.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    field.style.height = `${field.scrollHeight}px`;
+  }, []);
+
+  useEffect(() => {
+    fitTitleField();
+  }, [currentId, fitTitleField, style.fullWidth, title]);
+
   useEffect(() => {
     if (!iconOpen && !coverOpen && !moreOpen && !customizeOpen && !moveOpen && !shareOpen) return;
     const onDoc = (event: MouseEvent) => {
@@ -613,9 +770,33 @@ export function PagesView({
       setCustomizeOpen(false);
       setMoveOpen(false);
     };
+    const closeAll = () => {
+      setIconOpen(false);
+      setCoverOpen(false);
+      setMoreOpen(false);
+      setShareOpen(false);
+      setCustomizeOpen(false);
+      setMoveOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeAll();
+    };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [iconOpen, coverOpen, moreOpen, customizeOpen, moveOpen, shareOpen]);
+
+  // The tab strip scrolls sideways once a few notes are open; without this the
+  // note you just picked can sit off the end of it.
+  useEffect(() => {
+    if (!currentId) return;
+    const strip = tabStripRef.current;
+    const tab = strip?.querySelector(`[data-testid="pages-tab-${CSS.escape(currentId)}"]`);
+    tab?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [currentId, openTabIds]);
 
   const onCreate = async (
     parentPageId: string | null = null,
@@ -676,17 +857,26 @@ export function PagesView({
     setSaveState('saved');
   }, []);
 
+  /** True while the reader's caret is inside the note. Replacing the document
+   * from a poll at that moment drops the caret to the top of the page. */
+  const readerIsEditing = useCallback(() => {
+    const active = document.activeElement;
+    return Boolean(active && articleRef.current?.contains(active));
+  }, []);
+
   const refreshOpenPage = useCallback(async (): Promise<boolean> => {
     if (!activeOrgId || !currentIdRef.current) return false;
     if (saveStateRef.current !== 'saved' || persistInFlight.current) return false;
+    if (readerIsEditing()) return false;
     const pageId = currentIdRef.current;
     const detail = await fetchWorkspacePage(activeOrgId, pageId);
     if (currentIdRef.current !== pageId) return false;
     if (saveStateRef.current !== 'saved' || persistInFlight.current) return false;
+    if (readerIsEditing()) return false;
     if (pageUpdatedAtRef.current != null && detail.updatedAt <= pageUpdatedAtRef.current) return false;
     applyServerPage(detail);
     return true;
-  }, [activeOrgId, applyServerPage]);
+  }, [activeOrgId, applyServerPage, readerIsEditing]);
 
   const absorbServerEmbeds = useCallback((detail: WorkspacePageDetail) => {
     if (currentIdRef.current !== detail.id) return;
@@ -782,8 +972,13 @@ export function PagesView({
       }
       const currentChanged = await refreshOpenPage();
       if (currentChanged || created.length === 0 || saveStateRef.current !== 'saved') return;
+      // Show the reader the first page the run lands on, then stop. Following
+      // every new page turned a wiki build into the view hopping from note to
+      // note on its own; and once the reader has chosen a note, it is theirs.
+      if (agentOpenedPageRef.current || readerPickedPageRef.current) return;
       const openId = pickNewlyCreatedPage(created, currentIdRef.current);
       if (openId && openId !== currentIdRef.current) {
+        agentOpenedPageRef.current = true;
         await openPage(openId);
       }
     } catch {
@@ -794,6 +989,7 @@ export function PagesView({
   useEffect(() => {
     if (!agentSession) {
       sessionKnownPageIdsRef.current = null;
+      agentOpenedPageRef.current = false;
       return;
     }
     if (!sessionKnownPageIdsRef.current) {
@@ -863,6 +1059,8 @@ export function PagesView({
             projectId: created.project.id,
           }),
         });
+        readerPickedPageRef.current = false;
+        agentOpenedPageRef.current = false;
         setBuilderLayout('docked');
         setBuilderOpen(true);
         setTreePeek(false);
@@ -942,13 +1140,11 @@ export function PagesView({
 
   const toggleFavorite = () => {
     if (!activeOrgId || !currentId) return;
-    setFavorites((prev) => {
-      const next = prev.includes(currentId)
-        ? prev.filter((id) => id !== currentId)
-        : [...prev, currentId];
-      writeFavorites(activeOrgId, next);
-      return next;
-    });
+    const next = favorites.includes(currentId)
+      ? favorites.filter((id) => id !== currentId)
+      : [...favorites, currentId];
+    setFavorites(next);
+    writeFavorites(activeOrgId, next);
   };
 
   const setIconValue = (next: string | null) => {
@@ -981,7 +1177,7 @@ export function PagesView({
       return;
     }
     if (pageId && pageId !== currentId) {
-      void openPage(pageId).catch((err) => setError(errorMessage(err)));
+      openPageByReader(pageId);
     }
     window.requestAnimationFrame(() => aiInputRef.current?.focus());
   };
@@ -1033,7 +1229,7 @@ export function PagesView({
                         })
                       }
                       onSelect={(id) => {
-                        void openPage(id).catch((err) => setError(errorMessage(err)));
+                        openPageByReader(id);
                         setTreePeek(false);
                       }}
                       onCreateChild={(id) => void onCreate(id)}
@@ -1092,6 +1288,7 @@ export function PagesView({
             {t('pages.newPage')}
           </button>
 
+          <div className={styles.tree} data-testid="pages-tree">
           {favoritePages.length > 0 ? (
             <section className={styles.section}>
               <h2 className={styles.sectionTitle}>{t('pages.favorites')}</h2>
@@ -1100,7 +1297,7 @@ export function PagesView({
                   key={item.id}
                   type="button"
                   className={`${styles.favButton}${currentId === item.id ? ` ${styles.pageActive}` : ''}`}
-                  onClick={() => void openPage(item.id).catch((err) => setError(errorMessage(err)))}
+                  onClick={() => openPageByReader(item.id)}
                 >
                   <span>{item.icon ?? '📄'}</span>
                   <span className={styles.pageTitle}>{item.title || t('pages.untitled')}</span>
@@ -1140,7 +1337,7 @@ export function PagesView({
                       return next;
                     })
                   }
-                  onSelect={(id) => void openPage(id).catch((err) => setError(errorMessage(err)))}
+                  onSelect={(id) => openPageByReader(id)}
                   onCreateChild={(id) => void onCreate(id)}
                   onAskAi={(id) => focusAskComposer(id)}
                   askLabel={t('pages.askAi')}
@@ -1179,7 +1376,7 @@ export function PagesView({
                       return next;
                     })
                   }
-                  onSelect={(id) => void openPage(id).catch((err) => setError(errorMessage(err)))}
+                  onSelect={(id) => openPageByReader(id)}
                   onCreateChild={(id) => void onCreate(id)}
                   onAskAi={(id) => focusAskComposer(id)}
                   askLabel={t('pages.askAi')}
@@ -1187,6 +1384,7 @@ export function PagesView({
               </div>
             ) : null}
           </section>
+          </div>
 
           <form
             className={styles.sidebarAsk}
@@ -1244,7 +1442,13 @@ export function PagesView({
               <Icon name="panel-left" size={16} />
             </button>
           ) : null}
-          <nav className={styles.tabs} role="tablist" aria-label={t('pages.openTabs')} data-testid="pages-tab-bar">
+          <nav
+            ref={tabStripRef}
+            className={styles.tabs}
+            role="tablist"
+            aria-label={t('pages.openTabs')}
+            data-testid="pages-tab-bar"
+          >
             {openTabs.map((item) => {
               const selected = item.id === currentId;
               const label = item.title || t('pages.untitled');
@@ -1260,7 +1464,7 @@ export function PagesView({
                     aria-selected={selected}
                     className={styles.tabBtn}
                     title={label}
-                    onClick={() => void openPage(item.id).catch((err) => setError(errorMessage(err)))}
+                    onClick={() => openPageByReader(item.id)}
                   >
                     <span aria-hidden>{item.icon ?? '📄'}</span>
                     <span className={styles.tabLabel}>{label}</span>
@@ -1492,11 +1696,12 @@ export function PagesView({
                   {t('pages.moveToRoot')}
                 </button>
                 {allPages
-                  .filter((item) => item.id !== currentId)
+                  .filter((item) => !invalidMoveTargets.has(item.id))
                   .map((item) => (
                     <button
                       key={item.id}
                       type="button"
+                      className={styles.menuItemTruncate}
                       onClick={() => {
                         if (!activeOrgId || !currentId) return;
                         void updateWorkspacePage(activeOrgId, currentId, { parentPageId: item.id }).then(() => {
@@ -1558,6 +1763,7 @@ export function PagesView({
                 </div>
               ) : null}
               <div
+                ref={articleRef}
                 className={`${styles.article}${cover ? ` ${styles.articleWithCover}` : ''}`}
                 data-font={style.font ?? DEFAULT_PAGE_STYLE.font}
                 data-small={style.smallText ? 'true' : undefined}
@@ -1615,6 +1821,7 @@ export function PagesView({
                   ) : null}
                 </div>
                 <textarea
+                  ref={titleFieldRef}
                   className={styles.titleInput}
                   value={title === 'Untitled' ? '' : title}
                   placeholder={t('pages.untitled')}
@@ -1624,8 +1831,7 @@ export function PagesView({
                   disabled={Boolean(style.locked)}
                   onChange={(event) => {
                     setTitle(event.target.value);
-                    event.target.style.height = 'auto';
-                    event.target.style.height = `${event.target.scrollHeight}px`;
+                    fitTitleField();
                     scheduleSave();
                   }}
                 />
@@ -1636,7 +1842,7 @@ export function PagesView({
                   pages={pageIndex}
                   crumbs={crumbs.map((item) => ({ id: item.id, title: item.title, icon: item.icon }))}
                   readOnly={Boolean(style.locked)}
-                  onOpenPage={(id) => void openPage(id).catch((err) => setError(errorMessage(err)))}
+                  onOpenPage={(id) => openPageByReader(id)}
                   onCreateSubpage={async () => {
                     const created = await onCreate(page.id, { open: false, linkOnParent: false });
                     return created
@@ -1694,7 +1900,7 @@ export function PagesView({
                         key={child.id}
                         type="button"
                         className={styles.childCard}
-                        onClick={() => void openPage(child.id).catch((err) => setError(errorMessage(err)))}
+                        onClick={() => openPageByReader(child.id)}
                       >
                         <span>{child.icon ?? '📄'}</span>
                         <span>{child.title || t('pages.untitled')}</span>

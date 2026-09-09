@@ -575,6 +575,16 @@
   overflow: hidden;
 }
 
+/* The hub paints its own light edge to edge. Below 900px `.entry-main__inner`
+   picks up a responsive gutter that beats `--fullscreen`'s `padding: 0` on
+   source order, which framed the canvas in a band of bare page. Scoped to the
+   hub: the other fullscreen views keep whatever they inherit today. */
+@media (max-width: 900px) {
+  .entry-main--scroll:has([data-testid='entry-view-workspace'][data-active='true']) .entry-main__inner--fullscreen {
+    padding: 0;
+  }
+}
+
 .entry-main__inner--fullscreen > [data-testid='entry-view-mail'],
 .entry-main__inner--fullscreen > [data-testid='entry-view-team'],
 .entry-main__inner--fullscreen > [data-testid='entry-view-slack'],

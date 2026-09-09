@@ -206,6 +206,26 @@ const DIRECTORY_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
       );
     `);
   },
+  // v9 — Web Push endpoints for the signed-in user. Team chat (and later
+  // other surfaces) look these up by user_id so a closed browser still
+  // receives a mention. One row per browser endpoint; the same person on
+  // two laptops has two rows.
+  (db) => {
+    db.exec(`
+      CREATE TABLE od_push_subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES od_users(id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL UNIQUE,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        user_agent TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX odx_push_subscriptions_user
+        ON od_push_subscriptions(user_id);
+    `);
+  },
 ];
 
 const WORKSPACE_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
@@ -954,6 +974,187 @@ const WORKSPACE_MIGRATIONS: ReadonlyArray<(db: SqliteDb) => void> = [
       CREATE INDEX odx_pages_visibility
         ON od_pages(workspace_id, visibility, created_by);
     `);
+  },
+
+  // v23 — realtime chat. The durable event log that makes reconnects lossless,
+  // plus the organization-level chat furniture: custom emoji, user groups,
+  // per-person sidebar sections and drafts, quiet hours, incoming webhooks,
+  // huddles, and retention.
+  (db) => {
+    db.exec(`
+      -- The log. Every state change a client could have missed is appended
+      -- here with a per-organization sequence number BEFORE any subscriber is
+      -- told, so "give me everything after 4182" is answerable and a laptop
+      -- that slept through a conversation catches up instead of guessing.
+      CREATE TABLE od_chat_events (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        channel_id TEXT,
+        -- JSON array of member ids, or NULL for "everyone who can see the
+        -- channel". Set for events that are nobody else's business.
+        audience_json TEXT,
+        payload_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX odx_chat_events_seq ON od_chat_events(workspace_id, seq);
+      CREATE INDEX odx_chat_events_age ON od_chat_events(workspace_id, created_at);
+
+      -- One row per organization holding the last sequence handed out. A
+      -- counter in its own table rather than MAX(seq) so two concurrent posts
+      -- cannot be handed the same number.
+      CREATE TABLE od_chat_event_cursor (
+        workspace_id TEXT PRIMARY KEY,
+        seq INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE od_chat_emoji (
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        url TEXT,
+        alias_for TEXT,
+        created_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (workspace_id, name)
+      );
+
+      CREATE TABLE od_chat_user_groups (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        handle TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        members_json TEXT NOT NULL DEFAULT '[]',
+        created_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX odx_chat_group_handle
+        ON od_chat_user_groups(workspace_id, handle);
+
+      CREATE TABLE od_chat_sections (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        emoji TEXT,
+        position INTEGER NOT NULL DEFAULT 0,
+        collapsed INTEGER NOT NULL DEFAULT 0,
+        channels_json TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX odx_chat_sections_member
+        ON od_chat_sections(workspace_id, member_id, position);
+
+      -- thread_key is the parent message id, or '' for the channel composer.
+      -- A NULL would make the primary key useless, since NULL never equals
+      -- NULL and every save would insert a second row.
+      CREATE TABLE od_chat_drafts (
+        workspace_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        thread_key TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '',
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (member_id, channel_id, thread_key)
+      );
+      CREATE INDEX odx_chat_drafts_member ON od_chat_drafts(workspace_id, member_id);
+
+      CREATE TABLE od_chat_dnd (
+        member_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        schedule_enabled INTEGER NOT NULL DEFAULT 0,
+        start_minute INTEGER NOT NULL DEFAULT 1320,
+        end_minute INTEGER NOT NULL DEFAULT 480,
+        timezone TEXT NOT NULL DEFAULT 'UTC',
+        snooze_until INTEGER,
+        allow_urgent INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE od_chat_webhooks (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        icon TEXT,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER,
+        revoked_at INTEGER
+      );
+      CREATE INDEX odx_chat_webhooks_ws ON od_chat_webhooks(workspace_id, channel_id);
+
+      CREATE TABLE od_chat_huddles (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        started_by TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER
+      );
+      CREATE INDEX odx_chat_huddles_live
+        ON od_chat_huddles(workspace_id, channel_id, ended_at);
+
+      CREATE TABLE od_chat_huddle_participants (
+        huddle_id TEXT NOT NULL REFERENCES od_chat_huddles(id) ON DELETE CASCADE,
+        member_id TEXT NOT NULL,
+        joined_at INTEGER NOT NULL,
+        left_at INTEGER,
+        muted INTEGER NOT NULL DEFAULT 0,
+        sharing INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (huddle_id, member_id)
+      );
+
+      CREATE TABLE od_chat_retention (
+        channel_id TEXT PRIMARY KEY REFERENCES od_chat_channels(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL,
+        days INTEGER,
+        include_files INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+
+      ALTER TABLE od_chat_channels ADD COLUMN post_policy TEXT NOT NULL DEFAULT 'everyone';
+      ALTER TABLE od_chat_messages ADD COLUMN thread_broadcast INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE od_chat_messages ADD COLUMN bot_name TEXT;
+      ALTER TABLE od_chat_messages ADD COLUMN bot_icon TEXT;
+      ALTER TABLE od_chat_messages ADD COLUMN group_mentions_json TEXT NOT NULL DEFAULT '[]';
+
+      -- Search used to be LIKE '%needle%', which cannot use an index and gets
+      -- slower with every message ever sent. These two make the common
+      -- filters (this organization, this window of time) indexable even when
+      -- the full-text index below is unavailable.
+      CREATE INDEX odx_chat_messages_ws_time
+        ON od_chat_messages(workspace_id, created_at DESC);
+      CREATE INDEX odx_chat_messages_author
+        ON od_chat_messages(workspace_id, author_member_id, created_at DESC);
+    `);
+
+    // FTS5 is compiled into the SQLite that ships with better-sqlite3, but a
+    // rebuilt or system SQLite may not have it. Search falls back to LIKE when
+    // the index is missing, so a build without FTS5 is slower, not broken —
+    // and the migration must not fail because of it.
+    try {
+      db.exec(`
+        CREATE VIRTUAL TABLE od_chat_fts USING fts5(body, message_id UNINDEXED);
+        INSERT INTO od_chat_fts(rowid, body, message_id)
+          SELECT rowid, body, id FROM od_chat_messages;
+        CREATE TRIGGER od_chat_fts_insert AFTER INSERT ON od_chat_messages BEGIN
+          INSERT INTO od_chat_fts(rowid, body, message_id) VALUES (new.rowid, new.body, new.id);
+        END;
+        CREATE TRIGGER od_chat_fts_update AFTER UPDATE OF body ON od_chat_messages BEGIN
+          UPDATE od_chat_fts SET body = new.body WHERE rowid = new.rowid;
+        END;
+        CREATE TRIGGER od_chat_fts_delete AFTER DELETE ON od_chat_messages BEGIN
+          DELETE FROM od_chat_fts WHERE rowid = old.rowid;
+        END;
+      `);
+    } catch {
+      // No FTS5 in this build. `searchMessages` detects the missing table.
+    }
   },
 ];
 

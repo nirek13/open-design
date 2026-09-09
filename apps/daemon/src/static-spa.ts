@@ -30,6 +30,10 @@ export function registerStaticSpaFallback(app: Express, staticDir: string): void
   app.get('/*splat', (req, res, next) => {
     const indexPath = resolveStaticSpaFallbackPath(req, staticDir);
     if (indexPath == null) return next();
+    // Same shell at every deep link, and its URL never changes with the
+    // build. Without this the hashed asset URLs it points at could be a
+    // release behind in an open tab.
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(indexPath);
   });
 }

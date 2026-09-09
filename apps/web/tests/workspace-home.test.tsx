@@ -112,6 +112,40 @@ describe('WorkspaceHome', () => {
     expect(greeting.textContent).toContain('Local');
   });
 
+  it('offers starting points under an empty ask box', async () => {
+    renderHome();
+    await screen.findByTestId('workspace-ask-input');
+    const starters = screen.getByTestId('workspace-starters');
+    expect(starters.getAttribute('aria-hidden')).toBe('false');
+    expect(screen.getByTestId('workspace-starter-site')).toBeTruthy();
+    expect(screen.getByTestId('workspace-starter-deck')).toBeTruthy();
+    expect(screen.getByTestId('workspace-starter-table')).toBeTruthy();
+    expect(screen.getByTestId('workspace-starter-doc')).toBeTruthy();
+  });
+
+  it('fills the ask box from a starting point instead of sending it', async () => {
+    const interpretIntent = vi.spyOn(registry, 'interpretIntent');
+    renderHome();
+    await screen.findByTestId('workspace-ask-input');
+    fireEvent.click(screen.getByTestId('workspace-starter-deck'));
+    const input = screen.getByTestId('workspace-ask-input') as HTMLTextAreaElement;
+    expect(input.value).toContain('pitch deck');
+    // The first action stays the user's to confirm: filling must not submit.
+    expect(interpretIntent).not.toHaveBeenCalled();
+  });
+
+  it('retreats the starting points once the ask box has a brief in it', async () => {
+    renderHome();
+    await screen.findByTestId('workspace-ask-input');
+    fireEvent.change(screen.getByTestId('workspace-ask-input'), {
+      target: { value: 'Design a landing page' },
+    });
+    const starters = screen.getByTestId('workspace-starters');
+    expect(starters.getAttribute('aria-hidden')).toBe('true');
+    // Faded out rather than unmounted, so it must leave the tab order by hand.
+    expect(screen.getByTestId('workspace-starter-deck').getAttribute('tabindex')).toBe('-1');
+  });
+
   it('does not search records from the hub ask box', async () => {
     const searchWorkspace = vi.spyOn(registry, 'searchWorkspace');
     renderHome();

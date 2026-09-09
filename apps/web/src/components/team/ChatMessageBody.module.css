@@ -87,3 +87,40 @@
   font: inherit;
   cursor: pointer;
 }
+
+/* Being named yourself is the one thing in a transcript worth catching the
+   eye across a screen of text, so it is warm rather than the accent colour
+   every other mention uses. */
+.mentionSelf {
+  background: color-mix(in srgb, #e8912d 26%, transparent);
+  color: color-mix(in srgb, #b3620a 90%, var(--text-1, #1d1c1d));
+}
+
+/* A custom emoji sits on the text baseline at cap height, so a line with one
+   in it is exactly as tall as a line without. */
+.customEmoji {
+  display: inline-block;
+  width: 1.375em;
+  height: 1.375em;
+  margin: 0 1px;
+  vertical-align: -0.3em;
+  object-fit: contain;
+}
+
+/* A forwarded message. The rule and the inset say "this is a quotation" the
+   way an email client does, without pretending to be the original. */
+.forward {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--border-1, rgba(127, 127, 127, 0.32));
+  border-radius: 0 8px 8px 0;
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+  max-width: 36rem;
+}
+
+.forwardMeta {
+  margin: 0 0 4px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-2, rgba(127, 127, 127, 0.9));
+}
