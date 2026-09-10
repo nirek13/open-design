@@ -35,6 +35,7 @@ import {
   type UpdateProfileRequest,
 } from '@open-design/contracts';
 import { sendApiError } from '../http/response.js';
+import { readHostedModelCatalog } from '../byok/hosted-model-catalog.js';
 import type { RouteDeps } from '../server-context.js';
 import type { IdentityService, Viewer } from '../auth/identity.js';
 import type { ConnectorService } from '../connectors/service.js';
@@ -301,6 +302,7 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
   // sign-in screen until it has read this.
   app.get('/api/auth/context', handle(async (req, res) => {
     const viewer = await identity.resolveViewer(req, directory());
+    const hostedModel = readHostedModelCatalog();
     res.json({
       mode: identity.config.mode,
       ...(identity.config.publishableKey ? { publishableKey: identity.config.publishableKey } : {}),
@@ -316,6 +318,7 @@ export function registerOrganizationRoutes(app: Express, ctx: RegisterOrganizati
           }
         : null,
       organizations: viewer ? await listOrganizationsForUser(directory(), viewer.userId) : [],
+      ...(hostedModel ? { hostedModel } : {}),
     });
   }));
 

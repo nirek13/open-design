@@ -65,6 +65,7 @@ import {
 } from '../runtime/amr-guidance';
 import { isVisibleLocalCliAgent } from '../utils/visibleAgents';
 import { effectiveExecutionMode, isLocalCliUsageEnabled } from '../utils/local-cli-usage';
+import { restrictModelsToHostedCatalog, useHostedModelCatalog } from '../runtime/hosted-model-catalog';
 import { ExportDiagnosticsRow } from './ExportDiagnosticsButton';
 import { Icon } from './Icon';
 import { defaultAgentModelId, effectiveAgentModelChoice } from './agentModelSelection';
@@ -1498,6 +1499,7 @@ export function SettingsDialog({
 }: Props) {
   const { t, locale, setLocale } = useI18n();
   const analytics = useAnalytics();
+  const hostedCatalog = useHostedModelCatalog();
   // Backfill the fixed-origin base URL on mount too, so a config persisted with
   // an empty baseUrl (e.g. selected AIHubMix before this resolution existed)
   // isn't stuck blocking the live model fetch until the user re-selects the tab.
@@ -3564,6 +3566,7 @@ export function SettingsDialog({
     [fetchedApiModelOptions],
   );
   const pendingProviderModelReconciliation = (() => {
+    if (hostedCatalog) return null;
     if (cfg.mode !== 'api' || apiModelCustomEditing) return null;
     if (apiModelUserSelectedRef.current) return null;
     if (fetchedApiModelOptions.length === 0) return null;
@@ -3774,11 +3777,14 @@ export function SettingsDialog({
     [apiProtocol, selectedProvider, providerModelDiscoveryUnavailable],
   );
   const apiModelOptions = useMemo(
-    () => mergeProviderModelOptions(
-      fetchedApiModelOptions,
-      suggestedApiModelIds,
+    () => restrictModelsToHostedCatalog(
+      mergeProviderModelOptions(
+        fetchedApiModelOptions,
+        suggestedApiModelIds,
+      ),
+      hostedCatalog,
     ),
-    [fetchedApiModelOptions, suggestedApiModelIds],
+    [fetchedApiModelOptions, suggestedApiModelIds, hostedCatalog],
   );
   // Shared hook: live AIHubMix catalogue for aihubmix, static registry for
   // other providers (same list the chat composer's image picker uses).
@@ -4561,7 +4567,7 @@ export function SettingsDialog({
                 </button>
               </div>
               ) : null}
-              {executionMode === 'api' ? (
+              {executionMode === 'api' && !hostedCatalog ? (
                 <div
                   className="protocol-chips protocol-chips--providers"
                   role="tablist"
@@ -5582,6 +5588,12 @@ export function SettingsDialog({
                 />
                 <p className="hint">{t('settings.maxTokensHint')}</p>
               </label>
+              {hostedCatalog ? (
+                <label className="field">
+                  <span className="field-label">{t('settings.model')}</span>
+                  <input type="text" value={hostedCatalog.label} readOnly />
+                </label>
+              ) : (
               <ByokModelField
                 customActive={apiModelCustomActive}
                 customInputRef={customModelInputRef}
@@ -5660,6 +5672,7 @@ export function SettingsDialog({
                   updateApiConfig({ model: nextValue });
                 }}
               />
+              )}
               <details className="agent-cli-env settings-memory-advanced">
                 <summary className="agent-cli-env-summary">
                   <span className="agent-cli-env-summary-title">

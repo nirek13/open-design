@@ -33,6 +33,7 @@ import {
 import { isMacPlatform } from '../utils/platform';
 import { isVisibleLocalCliAgent } from '../utils/visibleAgents';
 import { effectiveExecutionMode, isLocalCliUsageEnabled } from '../utils/local-cli-usage';
+import { restrictModelsToHostedCatalog, useHostedModelCatalog } from '../runtime/hosted-model-catalog';
 
 interface Props {
   config: AppConfig;
@@ -79,6 +80,7 @@ export function AvatarMenu({
 }: Props) {
   const t = useT();
   const analytics = useAnalytics();
+  const hostedCatalog = useHostedModelCatalog();
   const executionMode = effectiveExecutionMode(config.mode);
   const localCliUsageEnabled = isLocalCliUsageEnabled();
   const [open, setOpen] = useState(false);
@@ -292,6 +294,7 @@ export function AvatarMenu({
 
   useEffect(() => {
     if (!open || config.mode !== 'api') return;
+    if (hostedCatalog) return;
     if (fetchedByokModels.length > 0) return;
     if (apiProtocol === 'azure' || apiProtocol === 'ollama') return;
     const baseUrl = config.baseUrl?.trim() ?? '';
@@ -320,13 +323,17 @@ export function AvatarMenu({
     config.apiKey,
     byokProviderModelsKey,
     fetchedByokModels.length,
+    hostedCatalog,
   ]);
 
-  const byokModelOptions = mergeProviderModelOptions(
-    fetchedByokModels,
-    byokProvider?.preferredModels.length
-      ? byokProvider.preferredModels
-      : SUGGESTED_MODELS_BY_PROTOCOL[apiProtocol] ?? [],
+  const byokModelOptions = restrictModelsToHostedCatalog(
+    mergeProviderModelOptions(
+      fetchedByokModels,
+      byokProvider?.preferredModels.length
+        ? byokProvider.preferredModels
+        : SUGGESTED_MODELS_BY_PROTOCOL[apiProtocol] ?? [],
+    ),
+    hostedCatalog,
   );
 
   return (
@@ -668,6 +675,9 @@ export function AvatarMenu({
                 <span className="avatar-select-label">
                   {t('avatar.modelLabel')}
                 </span>
+                {hostedCatalog ? (
+                  <span className="avatar-select">{hostedCatalog.label}</span>
+                ) : (
                 <SearchableModelSelect
                   className="inline-switcher__select avatar-select"
                   value={config.model ?? ''}
@@ -690,6 +700,7 @@ export function AvatarMenu({
                   popoverTestId="avatar-byok-model-popover"
                   minSearchableOptions={5}
                 />
+                )}
               </label>
             </div>
           ) : null}

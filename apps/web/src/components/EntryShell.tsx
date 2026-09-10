@@ -145,6 +145,7 @@ import {
 import { LanguageMenu } from './LanguageMenu';
 import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
 import { InlineModelSwitcher } from './InlineModelSwitcher';
+import { restrictModelsToHostedCatalog, useHostedModelCatalog } from '../runtime/hosted-model-catalog';
 import { enterpriseUrl } from './enterpriseUrl';
 import type { EntrySettingsSection } from './EntrySettingsMenu';
 import { NewProjectModal } from './NewProjectModal';
@@ -1378,6 +1379,7 @@ function OnboardingView({
     step,
   });
   const apiProtocol = config.apiProtocol ?? 'anthropic';
+  const hostedCatalog = useHostedModelCatalog();
   const providerTestInputKey = [
     apiProtocol,
     config.baseUrl.trim(),
@@ -1863,15 +1865,18 @@ function OnboardingView({
     })) ?? [];
   const fetchedProviderModels =
     activeProviderModelsCache[providerModelsInputKey] ?? [];
-  const byokModelOptions = mergeOnboardingProviderModelOptions(
-    fetchedProviderModels,
-    selectedProvider?.preferredModels.length
-      ? selectedProvider.preferredModels
-      : SUGGESTED_MODELS_BY_PROTOCOL[apiProtocol],
-    config.model,
+  const byokModelOptions = restrictModelsToHostedCatalog(
+    mergeOnboardingProviderModelOptions(
+      fetchedProviderModels,
+      selectedProvider?.preferredModels.length
+        ? selectedProvider.preferredModels
+        : SUGGESTED_MODELS_BY_PROTOCOL[apiProtocol],
+      config.model,
+    ),
+    hostedCatalog,
   ).map((model) => ({
     value: model.id,
-    label: onboardingProviderModelLabel(model),
+    label: hostedCatalog ? model.label : onboardingProviderModelLabel(model),
   }));
 
   function updateApiConfig(patch: Partial<ApiProtocolConfig>) {
@@ -3651,6 +3656,7 @@ function OnboardingByokSetupPanel({
   onFetchModels: () => void;
 }) {
   const t = useT();
+  const hostedCatalog = useHostedModelCatalog();
   const running = testState.status === 'running';
   const fetchingModels = modelsState.status === 'running';
   const useDeploymentInput = apiProtocol === 'azure';
@@ -3682,6 +3688,9 @@ function OnboardingByokSetupPanel({
           </button>
         </div>
       </div>
+      {hostedCatalog ? (
+        <p className="onboarding-view__hint">{hostedCatalog.label}</p>
+      ) : (
       <div
         className="onboarding-view__protocol-strip"
         role="tablist"
@@ -3700,6 +3709,7 @@ function OnboardingByokSetupPanel({
           </button>
         ))}
       </div>
+      )}
       <OnboardingDropdown
         label={t('settings.quickFillProvider')}
         placeholder={t('settings.customProvider')}

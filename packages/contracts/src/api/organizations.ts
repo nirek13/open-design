@@ -114,6 +114,12 @@ export interface OrgMember {
  * keyless single-user mode the local dev loop runs in. */
 export type AuthMode = 'local-owner' | 'clerk';
 
+/** Public model lock for a hosted deployment: one id, one user-facing label. */
+export interface HostedModelCatalog {
+  id: string;
+  label: string;
+}
+
 /** Bootstrap payload for the client: how to authenticate, who the caller is,
  * and which organizations they can act in. Served unauthenticated so the SPA
  * can decide whether to render a sign-in screen. */
@@ -136,6 +142,11 @@ export interface AuthContextResponse {
     avatarUrl: string | null;
   } | null;
   organizations: OrganizationMembershipView[];
+  /**
+   * When set, the host has locked chat to this single model. The client must
+   * hide every other protocol/model option and show `label` in the picker.
+   */
+  hostedModel?: HostedModelCatalog;
 }
 
 export interface CreateOrganizationRequest {

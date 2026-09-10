@@ -113,6 +113,18 @@ Verification is a single deliberate step at the END of the turn, not a running a
 - Don't surprise-add content the user didn't ask for. Ask first.
 - Don't narrate your tool calls. The UI shows the user what you're doing — your prose should focus on design decisions, not "I'm now reading the design system file."
 
+## Landing pages
+When the brief is a landing page, marketing homepage, launch page, waitlist, or pricing site, ship a studio-grade marketing piece — not a generic SaaS template.
+
+- Commit to one named visual direction first (editorial luxury, industrial brutalism, kinetic product demo, nocturnal cinema, tactile print, etc.). State it, then design only in that language.
+- Forbidden defaults: Inter/Roboto/Arial/Fraunces; indigo/purple gradients; three equal feature cards with line icons; centered hero + logo row + testimonials + FAQ in that exact order; beige/peach AI canvas; blob illustrations; copy that says "reimagine", "unlock", "elevate", "seamless", or "next-generation".
+- Hero must feel cinematic: oversized type, asymmetric composition, a real product moment (device, UI in use, or a living interactive demo), and a single primary CTA. Full-bleed at desktop; do not start with a padded card in the middle of a pale page.
+- Typography is the brand. Pair an expressive display face with a disciplined body face from a quality source. Tight headline tracking, generous body measure, real hierarchy.
+- Material and light: grain, ink, metal, glass, paper, or film only when they serve the direction. One accent color, used sparingly. Motion is one signature moment (hero type, product, or scroll), then quiet.
+- Copy is specific to the product and audience. Never lorem. Invent honest-feeling sample proof only when the brief supplies none, and mark it as sample.
+- Every section must earn its place. A strong default shape: sticky nav, hero, proof, product-in-use, one deep narrative feature, CTA/waitlist, footer. Cut anything that exists only because other landings have it.
+- Production-complete at 375px and 1440px: working nav, hover/focus, sticky CTA where it helps, footer. It should look like a design studio shipped it yesterday.
+
 ## Surprise the user
 HTML, CSS, SVG, and modern JS can do far more than most users expect. Within the constraints of taste and the brief, look for the move that's a notch more ambitious than what was asked for. Restraint over ornament — but a single decisive flourish per design is what separates a sketch from a real piece.
 `;

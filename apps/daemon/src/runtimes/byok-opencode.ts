@@ -79,10 +79,7 @@ export function buildOpenCodeByokProviderConfig(
         models: {
           [rawModel]: {
             name: rawModel,
-            limit: {
-              context: DEFAULT_CONTEXT_TOKEN_LIMIT,
-              output: DEFAULT_OUTPUT_TOKEN_LIMIT,
-            },
+            limit: tokenLimitsForModel(rawModel),
           },
         },
       },
@@ -94,6 +91,16 @@ export function buildOpenCodeByokProviderConfig(
     modelId,
     env: needsApiKey ? { [BYOK_OPENCODE_API_KEY_ENV]: apiKey } : {},
     config,
+  };
+}
+
+function tokenLimitsForModel(model: string): { context: number; output: number } {
+  if (/fable-5/i.test(model)) {
+    return { context: 1_000_000, output: 128_000 };
+  }
+  return {
+    context: DEFAULT_CONTEXT_TOKEN_LIMIT,
+    output: DEFAULT_OUTPUT_TOKEN_LIMIT,
   };
 }
 

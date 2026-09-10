@@ -87,6 +87,10 @@ import {
   useIframeKeepAlivePool,
 } from './components/IframeKeepAlivePool';
 import { OrgProvider, useOptionalOrg } from './org/OrgContext';
+import {
+  applyHostedModelToConfig,
+  hostedModelCatalogFromAuth,
+} from './runtime/hosted-model-catalog';
 import { AuthGate } from './auth/AuthGate';
 import { ChatPushSync } from './runtime/chat-push';
 import {
@@ -1152,15 +1156,18 @@ function AppInner() {
           baseConfig.mediaProviders,
           daemonMediaProvidersLoaded,
         );
-        const next = mergeByokCredentialProfiles(
-          mergeDaemonMediaProviders(
-            clearStaleAmrModelChoiceOnProfileChange(
-              baseConfig,
-              mergeDaemonConfig(baseConfig, daemonConfig),
+        const next = applyHostedModelToConfig(
+          mergeByokCredentialProfiles(
+            mergeDaemonMediaProviders(
+              clearStaleAmrModelChoiceOnProfileChange(
+                baseConfig,
+                mergeDaemonConfig(baseConfig, daemonConfig),
+              ),
+              daemonMediaProvidersLoaded,
             ),
-            daemonMediaProvidersLoaded,
+            byokCredentialProfiles,
           ),
-          byokCredentialProfiles,
+          hostedModelCatalogFromAuth(org?.auth),
         );
         const hasLocalComposioKey = Boolean(next.composio?.apiKey?.trim());
         if (!hasLocalComposioKey && daemonComposioConfig) {
@@ -1216,6 +1223,24 @@ function AppInner() {
     isCurrentAgentStreamRequest,
     reconcileFetchedProjects,
   ]);
+
+  const hostedCatalogId = org?.auth?.hostedModel?.id;
+  const hostedCatalogLabel = org?.auth?.hostedModel?.label;
+  const hostedCatalog = useMemo(
+    () => hostedModelCatalogFromAuth(org?.auth),
+    [hostedCatalogId, hostedCatalogLabel],
+  );
+  useEffect(() => {
+    if (!hostedCatalog) return;
+    setConfig((current) => {
+      const next = applyHostedModelToConfig(current, hostedCatalog);
+      if (next === current) return current;
+      saveConfig(next);
+      latestPersistedConfigRef.current = next;
+      void syncConfigToDaemon(next);
+      return next;
+    });
+  }, [hostedCatalog]);
 
   // Auto-pick the first available agent once both the daemon-stored config
   // and the agents listing have landed. Splitting this out of bootstrap

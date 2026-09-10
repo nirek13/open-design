@@ -18,6 +18,10 @@ describe('modelMaxTokensDefault', () => {
     expect(modelMaxTokensDefault('claude-haiku-4-5')).toBe(64000);
   });
 
+  it('uses the Fable 5.1 output cap from OVERRIDES', () => {
+    expect(modelMaxTokensDefault('claude-fable-5-1')).toBe(128000);
+  });
+
   it('lets OVERRIDES win over LiteLLM data', () => {
     // mimo-v2.5-pro is not in LiteLLM, so this asserts the OVERRIDES path
     // (not the LiteLLM path) supplied the answer.

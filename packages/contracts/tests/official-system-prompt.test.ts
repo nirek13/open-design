@@ -25,4 +25,9 @@ describe('official designer prompt', () => {
     expect(OFFICIAL_DESIGNER_PROMPT).toMatch(/feature-card-2|numeric suffix/i);
     expect(OFFICIAL_DESIGNER_PROMPT).toMatch(/decorative elements|spacers?|dividers?/is);
   });
+
+  it('asks for studio-grade landing pages instead of generic SaaS templates', () => {
+    expect(OFFICIAL_DESIGNER_PROMPT).toContain('## Landing pages');
+    expect(OFFICIAL_DESIGNER_PROMPT).toMatch(/studio-grade/i);
+  });
 });

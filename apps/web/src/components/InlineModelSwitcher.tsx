@@ -45,6 +45,9 @@ import { KNOWN_PROVIDERS } from '../state/config';
 import { fetchProviderModels } from '../providers/provider-models';
 import { SUGGESTED_MODELS_BY_PROTOCOL } from '../state/apiProtocols';
 import {
+  restrictModelsToHostedCatalog,
+} from '../runtime/hosted-model-catalog';
+import {
   canUpgradeVelaPlan,
   cancelVelaLogin,
   fetchAmrWalletSnapshot,
@@ -57,6 +60,7 @@ import type { AgentInfo, ApiProtocol, AppConfig, ExecMode } from '../types';
 import { apiProtocolLabel } from '../utils/apiProtocol';
 import { isVisibleLocalCliAgent } from '../utils/visibleAgents';
 import { effectiveExecutionMode, isLocalCliUsageEnabled } from '../utils/local-cli-usage';
+import { useHostedModelCatalog } from '../runtime/hosted-model-catalog';
 import { AgentIcon } from './AgentIcon';
 import { Icon } from './Icon';
 import { PlanBadge } from './PlanBadge';
@@ -174,6 +178,7 @@ export function InlineModelSwitcher({
 }: Props) {
   const t = useT();
   const analytics = useAnalytics();
+  const hostedCatalog = useHostedModelCatalog();
   const executionMode = effectiveExecutionMode(config.mode);
   const localCliUsageEnabled = isLocalCliUsageEnabled();
   const [open, setOpen] = useState(false);
@@ -776,6 +781,7 @@ export function InlineModelSwitcher({
   // serves both surfaces and replaces any stale slot.
   useEffect(() => {
     if (!open || config.mode !== 'api' || !onProviderModelsCacheChange) return;
+    if (hostedCatalog) return;
     if (apiProtocol === 'azure' || apiProtocol === 'ollama') return;
     if (apiProtocol !== 'aihubmix' && !config.apiKey.trim()) return;
     const baseUrl = config.baseUrl.trim();
@@ -816,6 +822,7 @@ export function InlineModelSwitcher({
     providerModelsKey,
     fetchedApiModelOptions.length,
     onProviderModelsCacheChange,
+    hostedCatalog,
   ]);
 
   const suggestedApiModelIds = useMemo(
@@ -830,8 +837,11 @@ export function InlineModelSwitcher({
     [apiProtocol, providerForProtocol],
   );
   const apiModelOptions = useMemo(
-    () => mergeProviderModelOptions(fetchedApiModelOptions, suggestedApiModelIds),
-    [fetchedApiModelOptions, suggestedApiModelIds],
+    () => restrictModelsToHostedCatalog(
+      mergeProviderModelOptions(fetchedApiModelOptions, suggestedApiModelIds),
+      hostedCatalog,
+    ),
+    [fetchedApiModelOptions, suggestedApiModelIds, hostedCatalog],
   );
   const apiModelIds = useMemo(
     () => apiModelOptions.map((model) => model.id),
@@ -845,23 +855,30 @@ export function InlineModelSwitcher({
   // Chip text — keep it tight so the pill doesn't wrap on small viewports.
   // CLI: "Claude · Sonnet 4.5"; BYOK: "Anthropic · sonnet-4.5".
   const chipMode =
-    executionMode === 'daemon'
-      ? t('inlineSwitcher.chipCli')
-      : t('inlineSwitcher.chipByok');
+    hostedCatalog
+      ? null
+      : executionMode === 'daemon'
+        ? t('inlineSwitcher.chipCli')
+        : t('inlineSwitcher.chipByok');
   const chipPrimary =
-    executionMode === 'daemon'
-      ? currentAgent
-        ? displayAgentChipName(currentAgent)
-        : t('inlineSwitcher.noAgent')
-      : apiProtocolLabel(apiProtocol);
+    hostedCatalog
+      ? hostedCatalog.label
+      : executionMode === 'daemon'
+        ? currentAgent
+          ? displayAgentChipName(currentAgent)
+          : t('inlineSwitcher.noAgent')
+        : apiProtocolLabel(apiProtocol);
   const chipModel =
-    executionMode === 'daemon'
-      ? currentModelLabel && currentModelId !== 'default'
-        ? currentModelLabel
-        : t('inlineSwitcher.modelDefault')
-      : config.model.trim() || t('inlineSwitcher.modelDefault');
+    hostedCatalog
+      ? null
+      : executionMode === 'daemon'
+        ? currentModelLabel && currentModelId !== 'default'
+          ? currentModelLabel
+          : t('inlineSwitcher.modelDefault')
+        : config.model.trim() || t('inlineSwitcher.modelDefault');
 
   const handleChipClick = useCallback(() => {
+    if (hostedCatalog) return;
     const nextOpen = !open;
     if (nextOpen && showAmrReminder) {
       setShowAmrReminderInPopover(true);
@@ -871,7 +888,7 @@ export function InlineModelSwitcher({
       setShowAmrReminderInPopover(false);
     }
     setOpen(nextOpen);
-  }, [open, showAmrReminder]);
+  }, [hostedCatalog, open, showAmrReminder]);
 
   useEffect(() => {
     if (!open || config.mode !== 'daemon' || config.agentId === 'amr') {
@@ -894,10 +911,18 @@ export function InlineModelSwitcher({
         }
         data-testid="inline-model-switcher-chip"
         onClick={handleChipClick}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`${chipMode} · ${chipPrimary} · ${chipModel}`}
-        data-tooltip={`${chipMode} · ${chipPrimary} · ${chipModel}`}
+        aria-haspopup={hostedCatalog ? undefined : 'menu'}
+        aria-expanded={hostedCatalog ? undefined : open}
+        aria-label={
+          hostedCatalog
+            ? hostedCatalog.label
+            : `${chipMode} · ${chipPrimary} · ${chipModel}`
+        }
+        data-tooltip={
+          hostedCatalog
+            ? hostedCatalog.label
+            : `${chipMode} · ${chipPrimary} · ${chipModel}`
+        }
         data-tooltip-placement="bottom"
       >
         {showAmrReminder ? (
@@ -917,24 +942,34 @@ export function InlineModelSwitcher({
           )}
         </span>
         <span className="inline-switcher__chip-text">
-          <span className="inline-switcher__chip-mode">{chipMode}</span>
-          <span className="inline-switcher__chip-sep" aria-hidden="true">
-            ·
-          </span>
+          {chipMode ? (
+            <>
+              <span className="inline-switcher__chip-mode">{chipMode}</span>
+              <span className="inline-switcher__chip-sep" aria-hidden="true">
+                ·
+              </span>
+            </>
+          ) : null}
           <span className="inline-switcher__chip-primary">{chipPrimary}</span>
-          <span className="inline-switcher__chip-sep" aria-hidden="true">
-            ·
-          </span>
-          <span className="inline-switcher__chip-model">{chipModel}</span>
+          {chipModel ? (
+            <>
+              <span className="inline-switcher__chip-sep" aria-hidden="true">
+                ·
+              </span>
+              <span className="inline-switcher__chip-model">{chipModel}</span>
+            </>
+          ) : null}
         </span>
+        {hostedCatalog ? null : (
         <Icon
           name="chevron-down"
           size={12}
           className="inline-switcher__chip-chevron"
         />
+        )}
       </button>
 
-      {open ? (
+      {open && !hostedCatalog ? (
         <div
           className="inline-switcher__popover"
           role="menu"

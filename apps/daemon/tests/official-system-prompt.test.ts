@@ -40,4 +40,10 @@ describe('official designer prompt', () => {
     expect(rendered).toContain(WEB_CLONE_COPYRIGHT_GUARDRAIL_BULLET);
     expect(rendered).not.toContain('Help the user build something original instead');
   });
+
+  it('asks for studio-grade landing pages instead of generic SaaS templates', () => {
+    expect(OFFICIAL_DESIGNER_PROMPT).toContain('## Landing pages');
+    expect(OFFICIAL_DESIGNER_PROMPT).toMatch(/studio-grade/i);
+    expect(OFFICIAL_DESIGNER_PROMPT).toMatch(/indigo\/purple gradients/i);
+  });
 });

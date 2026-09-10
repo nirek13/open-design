@@ -224,6 +224,8 @@ import {
   buildOpenCodeByokProviderConfig,
   BYOK_OPENCODE_PROVIDER_REQUIRED_MESSAGE,
 } from './runtimes/byok-opencode.js';
+import { ENV_ANTHROPIC_BYOK_PROFILE_ID } from './byok/env-anthropic.js';
+import { readHostedModelCatalog } from './byok/hosted-model-catalog.js';
 import {
   extractPlainStreamArtifacts,
   persistPlainStreamArtifactList,
@@ -4743,12 +4745,27 @@ export async function startServer({
       } catch {
         resolvedByokCredential = null;
       }
+      const hostedCatalog = readHostedModelCatalog();
+      if (hostedCatalog) {
+        try {
+          const hostedAnthropic = await byokCredentialService.resolve(
+            ENV_ANTHROPIC_BYOK_PROFILE_ID,
+          );
+          if (hostedAnthropic) resolvedByokCredential = hostedAnthropic;
+        } catch {
+          // Keep the previously resolved profile; the hosted model id still
+          // overrides below so the picker cannot select a different Claude.
+        }
+      }
     }
+    const hostedCatalog = readHostedModelCatalog();
+    const byokModel = hostedCatalog?.id
+      ?? resolvedByokCredential?.profile.model
+      ?? (typeof model === 'string' ? model : null);
     const byokOpenCodeProvider = def.id === 'byok-opencode'
       ? buildOpenCodeByokProviderConfig(
           resolvedByokCredential?.provider,
-          resolvedByokCredential?.profile.model
-            ?? (typeof model === 'string' ? model : null),
+          byokModel,
         )
       : null;
     if (def.id === 'byok-opencode' && !byokOpenCodeProvider) {
@@ -4759,7 +4776,7 @@ export async function startServer({
       );
     }
     const requestedRuntimeModel = def.id === 'byok-opencode'
-      ? resolvedByokCredential?.profile.model ?? null
+      ? byokModel
       : model;
     // Validate the checked-in `inactivityTimeoutMs` hint immediately
     // after the runtime def is selected and before any side-effectful

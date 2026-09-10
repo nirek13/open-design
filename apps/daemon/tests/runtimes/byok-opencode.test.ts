@@ -78,6 +78,28 @@ describe('byok-opencode runtime config', () => {
     });
   });
 
+  it('gives Claude Fable 5.1 a 1M context and 128k output window', () => {
+    const out = buildOpenCodeByokProviderConfig(
+      { protocol: 'anthropic', apiKey: 'sk-ant', baseUrl: 'https://api.anthropic.com' },
+      'claude-fable-5-1',
+    );
+    expect(out?.config).toMatchObject({
+      provider: {
+        [BYOK_OPENCODE_PROVIDER_ID]: {
+          models: {
+            'claude-fable-5-1': {
+              name: 'claude-fable-5-1',
+              limit: {
+                context: 1_000_000,
+                output: 128_000,
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+
   it('maps native OpenAI BYOK to the OpenAI provider package', () => {
     const out = buildOpenCodeByokProviderConfig(
       { protocol: 'openai', apiKey: 'sk-openai', baseUrl: 'https://api.openai.com/v1' },

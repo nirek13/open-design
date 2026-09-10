@@ -43,6 +43,7 @@ const OVERRIDES: Record<string, number> = {
   'devstral-2:123b': 131072,
   'devstral-small-2:24b': 131072,
   'gemini-3-flash-preview': 131072,
+  'claude-fable-5-1': 128000,
   'gemma3:4b': 131072,
   'gemma3:12b': 131072,
   'gemma3:27b': 131072,

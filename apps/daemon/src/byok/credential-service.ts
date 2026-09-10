@@ -11,8 +11,8 @@ import {
   ENV_ANTHROPIC_BYOK_LABEL,
   ENV_ANTHROPIC_BYOK_PROFILE_ID,
   ENV_ANTHROPIC_DEFAULT_BASE_URL,
-  ENV_ANTHROPIC_DEFAULT_MODEL,
   readEnvAnthropicApiKey,
+  readEnvAnthropicDefaultModel,
 } from './env-anthropic.js';
 import {
   ENV_OPENAI_BYOK_LABEL,
@@ -319,7 +319,7 @@ export class ByokCredentialService {
       label: ENV_ANTHROPIC_BYOK_LABEL,
       protocol: 'anthropic',
       baseUrl: ENV_ANTHROPIC_DEFAULT_BASE_URL,
-      model: ENV_ANTHROPIC_DEFAULT_MODEL,
+      model: readEnvAnthropicDefaultModel(),
       requiresApiKey: true,
       createdAt: 0,
       updatedAt: 0,

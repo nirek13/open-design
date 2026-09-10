@@ -225,6 +225,9 @@ for c in td["containerDefinitions"]:
         env["HOME"] = {"name": "HOME", "value": "/app/.od/home"}
         env["OD_AGENT_HOME"] = {"name": "OD_AGENT_HOME", "value": "/app/.od/agent-home"}
         env["OPENCODE_BIN"] = {"name": "OPENCODE_BIN", "value": "/usr/local/bin/opencode-cli"}
+        env["OD_HOSTED_MODEL_ID"] = {"name": "OD_HOSTED_MODEL_ID", "value": "claude-fable-5-1"}
+        env["OD_HOSTED_MODEL_LABEL"] = {"name": "OD_HOSTED_MODEL_LABEL", "value": "Gemini Flash"}
+        env["OD_DEFAULT_ANTHROPIC_MODEL"] = {"name": "OD_DEFAULT_ANTHROPIC_MODEL", "value": "claude-fable-5-1"}
         c["environment"] = list(env.values())
         secrets = {s["name"]: s for s in c.get("secrets") or []}
         openai_from = openai_arn or (secrets.get("OPENAI_API_KEY") or {}).get("valueFrom") or (secrets.get("OD_OPENAI_API_KEY") or {}).get("valueFrom")
